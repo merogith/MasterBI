@@ -1,0 +1,17 @@
+# Line endings are load-bearing for the launchers.
+#
+# A .command file checked out with CRLF fails on macOS with
+# "bad interpreter: /usr/bin/env bash^M" — the carriage return becomes part of
+# the interpreter path. cmd.exe is the mirror case and wants CRLF. Neither can
+# be left to the client's autocrlf setting, because the ZIP that users download
+# is built from whatever is in the repo.
+*.command text eol=lf
+*.sh      text eol=lf
+*.bat     text eol=crlf
+
+# Generated binaries in a run directory, if one is ever committed by accident.
+*.png  binary
+*.pdf  binary
+*.pptx binary
+*.docx binary
+*.xlsx binary

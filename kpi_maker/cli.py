@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -172,12 +173,36 @@ def main(argv: Optional[List[str]] = None) -> int:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--reload", action="store_true", help="auto-reload on code changes")
+    serve.add_argument("--open", action="store_true", dest="open_browser",
+                       help="open the UI in a browser once the server is up")
 
     args = parser.parse_args(argv)
 
     if args.command == "serve":
         import uvicorn
-        print(f"KPI Dashboard Maker  ->  http://{args.host}:{args.port}")
+        url = f"http://{args.host}:{args.port}"
+        print(f"KPI Dashboard Maker  ->  {url}")
+
+        if args.open_browser:
+            # uvicorn.run blocks, so the opener waits on the port from a side
+            # thread rather than a fixed sleep — on a cold start the import of
+            # pandas and plotly can outlast any delay short enough to feel
+            # responsive.
+            import socket
+            import threading
+            import webbrowser
+
+            def open_when_ready() -> None:
+                for _ in range(120):                     # ~60s ceiling
+                    with socket.socket() as probe:
+                        probe.settimeout(0.4)
+                        if probe.connect_ex((args.host, args.port)) == 0:
+                            webbrowser.open(url)
+                            return
+                    time.sleep(0.5)
+
+            threading.Thread(target=open_when_ready, daemon=True).start()
+
         uvicorn.run("kpi_maker.api.server:app", host=args.host, port=args.port,
                     reload=args.reload, log_level="warning")
         return 0

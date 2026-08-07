@@ -187,10 +187,23 @@
 
   /* ------------------------------------------------------------ status UI */
 
-  const RUN_STEPS = [
+  const ZIP = 'https://github.com/merogith/MasterBI/archive/refs/heads/main.zip';
+
+  /* Three terminal commands is not "simple" for most of the people who reach
+   * this dialog. The download path needs no terminal at all; the commands stay
+   * as a second option for those who would rather type them. */
+  const EASY = [
+    ['Download the app', `<a class="primary" href="${ZIP}" download style="display:inline-block;margin-top:8px;text-decoration:none">Download MasterBI.zip</a>`],
+    ['Unzip it', 'Right-click the downloaded file &rarr; <em>Extract All</em>.'],
+    ['Open the folder and double-click <b>start.bat</b>',
+     'On a Mac, double-click <b>start.command</b> instead. The first run installs what it needs and takes a few minutes; after that it starts in seconds. Your browser opens on its own.'],
+  ];
+
+  const TYPED = [
     'git clone https://github.com/merogith/MasterBI.git',
-    'cd MasterBI && pip install -r requirements.txt',
-    'python -m kpi_maker serve',
+    'cd MasterBI',
+    'pip install -r requirements.txt',
+    'python -m kpi_maker serve --open',
   ];
 
   function injectStyles() {
@@ -215,6 +228,13 @@
       .bridge-box li{margin-bottom:9px;font-size:14px}
       .bridge-box code{display:block;background:var(--bg,#f7f7f4);border:1px solid var(--line,#e4e4de);
         border-radius:7px;padding:9px 11px;font-size:12.5px;overflow-x:auto;white-space:pre;margin-top:5px}
+      .bridge-easy li{margin-bottom:14px}
+      .bridge-easy b{font-weight:600}
+      .bridge-detail{color:var(--muted,#6b6b64);font-size:13.5px;line-height:1.5;margin-top:3px}
+      .bridge-need{font-size:13px;margin-top:2px}
+      .bridge-alt{margin-top:4px;border-top:1px solid var(--line,#e4e4de);padding-top:12px}
+      .bridge-alt summary{cursor:pointer;font-size:13.5px;color:var(--muted,#6b6b64)}
+      .bridge-alt ol{margin-top:12px}
       .bridge-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}`;
     document.head.appendChild(css);
   }
@@ -264,16 +284,20 @@
     sheet.innerHTML = `
       <div class="bridge-box" role="dialog" aria-modal="true" aria-label="Run locally">
         <h2>Unlock every mode</h2>
-        <p>This page is showing three pre-built companies. Building your own,
-           uploading a spreadsheet and Surprise me all run a Python pipeline,
-           which a static host cannot do — so they run on your machine instead.
-           Start the app locally and <strong>this same page</strong> connects to
-           it automatically. Your runs are then saved in your own
-           <code style="display:inline;padding:1px 5px">runs/</code> folder and
-           stay there.</p>
-        <ol>${RUN_STEPS.map((s) => `<li><code>${s}</code></li>`).join('')}</ol>
-        <p>Needs Python 3.9 or newer. Then reload this page, or press
-           <em>Check again</em>.</p>
+        <p>Building your own company, uploading a spreadsheet and <em>Surprise
+           me</em> run a pipeline this host cannot. Run it on your own computer
+           and <strong>this same page</strong> connects to it by itself — nothing
+           to configure, and nothing you make gets uploaded anywhere.</p>
+        <ol class="bridge-easy">
+          ${EASY.map(([title, detail]) => `<li><b>${title}</b><div class="bridge-detail">${detail}</div></li>`).join('')}
+        </ol>
+        <p class="bridge-need">Needs Python 3.9 or newer — the launcher tells you
+           if it is missing and where to get it. Once it is running, come back
+           and press <em>Check again</em>.</p>
+        <details class="bridge-alt">
+          <summary>Prefer the terminal?</summary>
+          <ol>${TYPED.map((s) => `<li><code>${s}</code></li>`).join('')}</ol>
+        </details>
         <div class="bridge-actions">
           <button class="ghost" data-close>Close</button>
           <button class="primary" data-retry>Check again</button>

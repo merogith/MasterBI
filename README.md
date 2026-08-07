@@ -28,27 +28,33 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 | Ingestion (M6) | `api/upload` | profiling only; no mapping |
 | AI Builder (M7) | — | not started |
 
-## Setup
+## Run it
 
-The repo ships a venv-less checkout; create one and install:
+**Double-click `start.bat`** (Windows) or **`start.command`** (macOS, Linux).
+That is the whole procedure. It finds Python, builds the environment, installs
+the dependencies, starts the server and opens your browser — and on a network
+that intercepts TLS it retries pip with the trusted-host flags rather than
+dying on a certificate error. Only the first run is slow.
 
-```bash
-py -3.9 -m venv .venv && ./.venv/Scripts/python.exe -m pip install -r requirements.txt
-```
+Needs Python 3.9 or newer. If it is missing, the launcher says so and where to
+get it.
 
-If your network intercepts TLS (corporate proxy), pip needs:
-
-```bash
-./.venv/Scripts/python.exe -m pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.txt
-```
-
-## Run the app
+<details>
+<summary>By hand, if you would rather</summary>
 
 ```bash
-./.venv/Scripts/python.exe -m kpi_maker serve
+py -3 -m venv .venv
+./.venv/Scripts/python.exe -m pip install -r requirements.txt
+./.venv/Scripts/python.exe -m kpi_maker serve --open
 ```
 
-Then open **http://127.0.0.1:8000**. Three modes on the home screen:
+Behind a TLS-intercepting proxy, pip needs
+`--trusted-host pypi.org --trusted-host files.pythonhosted.org`.
+</details>
+
+The app is then at **http://127.0.0.1:8000**, and
+[the hosted page](https://merogith.github.io/MasterBI/) will find it too.
+Three modes on the home screen:
 
 | Mode | State | Cost |
 |---|---|---|
