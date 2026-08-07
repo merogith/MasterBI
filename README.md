@@ -60,6 +60,25 @@ Then open **http://127.0.0.1:8000**. Three modes on the home screen:
 Results open in a workspace with five tabs: Overview (findings), Dashboard
 (embedded), Scorecard (filterable), Data (every fact table), Downloads.
 
+## The static gallery (GitHub Pages)
+
+**https://merogith.github.io/MasterBI/** runs the real UI with the three sample
+companies pre-rendered — dashboard, scorecard, all eight fact tables and every
+download. `.github/workflows/pages.yml` rebuilds it on each push to `main`.
+
+Pages serves files and cannot execute Python, so only Mode 1 can work there.
+`tools/build_pages.py` pre-renders those runs and writes the same JSON shapes
+the API returns; `tools/static_shim.js` patches `fetch` so `ui/app.js` is
+served byte-identical in both places rather than forked into a second front end
+that would drift. Modes 2, 3 and Surprise return an explanation instead of a
+network error.
+
+Build it locally exactly as CI does:
+
+```bash
+./.venv/Scripts/python.exe -m tools.build_pages --out site
+```
+
 ## Deploy a live instance
 
 `render.yaml` is a Render blueprint. Connect the repo once (render.com → New →

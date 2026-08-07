@@ -9,6 +9,10 @@
  * they eventually disagree. */
 
 const API = '';
+// Empty when the FastAPI server serves the app from the domain root. The
+// static GitHub Pages build lives under /MasterBI/, so the shim sets this and
+// the one hand-built download link below stays correct in both.
+const FILES = window.KPI_FILES_BASE ?? '';
 const $  = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
@@ -606,7 +610,7 @@ async function loadTable(name) {
         <strong>${esc(titleCase(data.table))}</strong>
         <span style="color:var(--muted)"> · ${data.rows.toLocaleString()} rows · ${data.columns.length} columns${data.truncated ? ` · showing first ${data.preview.length}` : ''}</span>
       </div>
-      <a class="ghost" href="/files/${state.runId}/data/${esc(data.table)}.csv" download>Download CSV</a>`;
+      <a class="ghost" href="${FILES}/files/${state.runId}/data/${esc(data.table)}.csv" download>Download CSV</a>`;
     table.innerHTML = `
       <thead><tr>${data.columns.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>
       <tbody>${data.preview.map((row) => `

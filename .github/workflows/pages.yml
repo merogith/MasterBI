@@ -1,0 +1,81 @@
+# Build the static sample gallery and publish it to GitHub Pages.
+#
+# The site is generated, never committed: a run produces ~22 MB of dashboards,
+# PDFs, decks and workbooks, and committing regenerable binaries would bloat
+# the history permanently for no benefit.
+#
+# This also runs the full pipeline on Linux, so a failure here is a real
+# portability signal — kaleido's static chart export in particular is the part
+# most likely to behave differently off Windows.
+
+name: Deploy sample gallery to Pages
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'render.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let an in-flight deploy finish rather than cancelling it half-published.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build the static site
+        run: python -m tools.build_pages --out site
+
+      - name: Check the build produced what the front end expects
+        run: |
+          set -e
+          for f in index.html app.js styles.css static_shim.js .nojekyll \
+                   data/samples.json data/survey.json data/runs.json; do
+            test -s "site/$f" || { echo "missing or empty: $f"; exit 1; }
+          done
+          for id in northwind_saas meridian_early atlas_enterprise; do
+            test -s "site/data/runs/$id/summary.json" || { echo "no summary: $id"; exit 1; }
+            test -s "site/data/runs/$id/tables.json"  || { echo "no tables: $id";  exit 1; }
+            # The chart export is the fragile step; assert it actually ran.
+            test -s "site/files/$id/dashboard.html"   || { echo "no dashboard: $id"; exit 1; }
+            test -s "site/files/$id/report.pdf"       || { echo "no pdf: $id";       exit 1; }
+            count=$(ls site/files/$id/charts/*.png 2>/dev/null | wc -l)
+            test "$count" -gt 0 || { echo "no chart PNGs for $id — kaleido failed"; exit 1; }
+          done
+          echo "OK — $(find site -type f | wc -l) files, $(du -sh site | cut -f1)"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

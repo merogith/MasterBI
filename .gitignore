@@ -16,6 +16,10 @@ dist/
 out/
 runs/
 
+# Static Pages build. CI regenerates it on every push (~22 MB of binaries);
+# committing it would bloat history permanently.
+site/
+
 # Local-only editor / tooling state
 .claude/settings.local.json
 .vscode/

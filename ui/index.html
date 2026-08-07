@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>KPI Dashboard Maker</title>
-<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="styles.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
 </head>
 <body>
@@ -232,6 +232,8 @@
   <div class="toast" id="toast" hidden></div>
 </main>
 
-<script src="/app.js"></script>
+<!-- Relative on purpose: the static build is served from a subdirectory. The
+     build step injects static_shim.js immediately above this line. -->
+<script src="app.js"></script>
 </body>
 </html>
