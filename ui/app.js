@@ -9,10 +9,13 @@
  * they eventually disagree. */
 
 const API = '';
-// Empty when the FastAPI server serves the app from the domain root. The
-// static GitHub Pages build lives under /MasterBI/, so the shim sets this and
-// the one hand-built download link below stays correct in both.
-const FILES = window.KPI_FILES_BASE ?? '';
+// Empty when the FastAPI server serves this from the domain root. The hosted
+// build sets it — to its own subdirectory, or to the loopback address once it
+// detects a local server — so the one hand-built download link below stays
+// correct in all three cases. Read at call time, not at load: the hosted build
+// probes for a local server in the background and may set it after this file
+// has already been parsed.
+const filesBase = () => window.KPI_FILES_BASE ?? '';
 const $  = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
@@ -610,7 +613,7 @@ async function loadTable(name) {
         <strong>${esc(titleCase(data.table))}</strong>
         <span style="color:var(--muted)"> · ${data.rows.toLocaleString()} rows · ${data.columns.length} columns${data.truncated ? ` · showing first ${data.preview.length}` : ''}</span>
       </div>
-      <a class="ghost" href="${FILES}/files/${state.runId}/data/${esc(data.table)}.csv" download>Download CSV</a>`;
+      <a class="ghost" href="${filesBase()}/files/${state.runId}/data/${esc(data.table)}.csv" download>Download CSV</a>`;
     table.innerHTML = `
       <thead><tr>${data.columns.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>
       <tbody>${data.preview.map((row) => `

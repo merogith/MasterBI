@@ -66,6 +66,25 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def allow_private_network(request, call_next):
+    """Let the GitHub Pages build talk to this server.
+
+    The published site is HTTPS on a public origin; this server is plain HTTP
+    on a loopback one. Browsers permit that (loopback counts as a trustworthy
+    origin, so it is not blocked as mixed content), but Chrome's Private
+    Network Access rules additionally require a public page's preflight to be
+    answered with this header before it may reach a local address.
+
+    Loopback-only by nature: the server binds 127.0.0.1 unless told otherwise,
+    so this widens what the *browser* permits, not what the network exposes.
+    """
+    response = await call_next(request)
+    if request.headers.get("access-control-request-private-network"):
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
+
+
 # --------------------------------------------------------------------------
 # Models
 # --------------------------------------------------------------------------

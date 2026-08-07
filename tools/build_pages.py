@@ -32,14 +32,14 @@ from kpi_maker.cli import load_profile, run_pipeline  # noqa: E402
 
 # The banner the static site shows under the hero. The live app never sees it.
 STATIC_NOTICE = """
-    <div class="notice" style="margin:0 0 28px">
-      <strong>Static showcase.</strong> This is GitHub Pages, which serves files
-      but cannot run Python. The three sample companies below are pre-rendered
-      and fully explorable — dashboard, scorecard, every fact table, every
-      download. <em>Build your own</em>, <em>Bring your data</em> and
-      <em>Surprise me</em> need the generator running live, so they will tell
-      you so rather than fail silently. To use those, run it locally
-      (<code>python -m kpi_maker serve</code>) or open the hosted app.
+    <div class="notice static-notice" style="margin:0 0 28px">
+      <strong>Demo mode.</strong> The three companies below are pre-rendered and
+      fully explorable — dashboard, scorecard, every fact table, every download.
+      Building your own, uploading a spreadsheet and <em>Surprise me</em> run a
+      Python pipeline, which a static host cannot do. Start the app on your own
+      machine and <strong>this page connects to it automatically</strong>: every
+      mode unlocks and your runs are saved in your own <code>runs/</code> folder.
+      Press <em>Run locally</em> in the header for the commands.
     </div>
 """
 
@@ -119,9 +119,13 @@ def build(out_dir: Path) -> int:
         shutil.copy2(api.UI_DIR / name, site / name)
 
     html = (api.UI_DIR / "index.html").read_text(encoding="utf-8")
-    html = html.replace('<script src="app.js"></script>',
-                        '<script src="static_shim.js"></script>\n'
-                        '<script src="app.js"></script>')
+    # The shim loads app.js itself once it knows whether a local server is
+    # there, so app.js sees a settled KPI_FILES_BASE rather than one that
+    # changes after it has already read it.
+    marker = '<script src="app.js"></script>'
+    if marker not in html:
+        raise SystemExit("index.html no longer loads app.js the expected way")
+    html = html.replace(marker, '<script src="static_shim.js"></script>')
     # Anchor the banner to the hero block rather than a line number.
     html = re.sub(r'(<div class="mode-grid">)', STATIC_NOTICE.strip() + r"\n\n    \1",
                   html, count=1)

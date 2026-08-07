@@ -60,18 +60,38 @@ Then open **http://127.0.0.1:8000**. Three modes on the home screen:
 Results open in a workspace with five tabs: Overview (findings), Dashboard
 (embedded), Scorecard (filterable), Data (every fact table), Downloads.
 
-## The static gallery (GitHub Pages)
+## The hosted app (GitHub Pages)
 
-**https://merogith.github.io/MasterBI/** runs the real UI with the three sample
-companies pre-rendered — dashboard, scorecard, all eight fact tables and every
-download. `.github/workflows/pages.yml` rebuilds it on each push to `main`.
+**https://merogith.github.io/MasterBI/** — one URL with two capabilities.
 
-Pages serves files and cannot execute Python, so only Mode 1 can work there.
-`tools/build_pages.py` pre-renders those runs and writes the same JSON shapes
-the API returns; `tools/static_shim.js` patches `fetch` so `ui/app.js` is
-served byte-identical in both places rather than forked into a second front end
-that would drift. Modes 2, 3 and Surprise return an explanation instead of a
-network error.
+| | Nothing running locally | Local server running |
+|---|---|---|
+| Three sample companies | yes, pre-rendered | yes |
+| Build your own · Bring your data · Surprise me | explained, not offered | yes |
+| Where runs are stored | nowhere — read only | your `runs/` folder |
+| Past runs | — | Recent runs, across restarts |
+
+The page probes `127.0.0.1` on ports 8000, 8001 and 8080 at startup. Finding a
+server, it proxies every call there and the header pill turns green; finding
+nothing, it serves the pre-rendered samples. A loopback address is a
+trustworthy origin, so HTTPS→`http://127.0.0.1` is not mixed content; the
+server answers the Private Network Access preflight Chrome additionally wants.
+
+Nothing needs configuring and nothing is uploaded — the hosted page is the
+front end, the user's own machine is the engine, and their data never leaves it.
+
+Three constraints shaped the design:
+
+- **One front end.** `tools/static_shim.js` patches `fetch` rather than forking
+  the UI, so `ui/app.js` is byte-identical in all three contexts. A hosted copy
+  and a local copy would have drifted within a release.
+- **Detection never blocks.** `app.js` loads immediately and the probe catches
+  up behind it. Blocking on it cost 6s of dead page whenever nobody was running
+  anything locally, which is the common case.
+- **No silent switching mid-session.** A pre-built run's id exists only in the
+  hosted build. If the probe lands after one is already open, the pill offers
+  the switch instead of taking it, because routing the next call to the local
+  server would 404 on a page that looks fine.
 
 Build it locally exactly as CI does:
 
