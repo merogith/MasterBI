@@ -60,6 +60,24 @@ Then open **http://127.0.0.1:8000**. Three modes on the home screen:
 Results open in a workspace with five tabs: Overview (findings), Dashboard
 (embedded), Scorecard (filterable), Data (every fact table), Downloads.
 
+## Deploy a live instance
+
+`render.yaml` is a Render blueprint. Connect the repo once (render.com → New →
+Blueprint → `merogith/MasterBI` → Apply) and every push to `main` redeploys
+automatically. It serves the same FastAPI app, so the hosted URL behaves
+exactly like `serve` does locally.
+
+Two free-tier facts worth knowing: the service sleeps after 15 minutes idle
+(~30s to wake), and the disk is ephemeral — `runs/` is wiped on each deploy, so
+past runs vanish. Both are fine for testing; neither is acceptable for
+production storage.
+
+The equivalent command by hand, on any host:
+
+```bash
+uvicorn kpi_maker.api.server:app --host 0.0.0.0 --port $PORT
+```
+
 ## Run from the CLI
 
 ```bash

@@ -1,0 +1,36 @@
+# Render blueprint — https://render.com/docs/blueprint-spec
+#
+# What this does: Render watches the `main` branch of this repo. Every push
+# rebuilds and redeploys automatically. No manual upload step.
+#
+# Setup (one time, in Render's web UI — cannot be scripted):
+#   1. render.com -> sign in with GitHub
+#   2. New -> Blueprint -> pick merogith/MasterBI
+#   3. Apply. First build takes ~5 minutes (pandas/numpy wheels).
+#
+# Free-tier caveats, both fine for testing:
+#   - The service sleeps after 15 min with no traffic; next request takes
+#     ~30s to wake it. Upgrade to Starter ($7/mo) to remove this.
+#   - Disk is ephemeral. `runs/` is wiped on every deploy and on wake from
+#     sleep, so past runs disappear. The app regenerates them on demand, so
+#     nothing breaks — but don't treat a hosted run as durable storage.
+
+services:
+  - type: web
+    name: masterbi
+    runtime: python
+    plan: free
+    region: frankfurt
+    branch: main
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    # $PORT is injected by Render. 0.0.0.0 is required — 127.0.0.1 would only
+    # be reachable from inside the container.
+    startCommand: uvicorn kpi_maker.api.server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      # 3.11 per requirements.txt ("3.11+ recommended for anything new").
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      # Unbuffered stdout, so print() shows up in Render's live log tail.
+      - key: PYTHONUNBUFFERED
+        value: "1"
