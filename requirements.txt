@@ -1,0 +1,28 @@
+# Core engine. Deliberately small — everything here earns its place.
+# Python 3.9+ (the code avoids PEP 604 unions so it runs on the system 3.9;
+# 3.11+ is recommended for anything new).
+
+pandas>=1.5,<2.3
+numpy<2
+pydantic>=2,<3
+PyYAML>=6.0
+
+# Charts. Pinned to plotly 5.x: plotly 6 requires kaleido v1, which drives an
+# external Chrome install. kaleido 0.2.1 ships its own renderer, so static
+# export works offline with no browser dependency.
+plotly>=5.18,<6
+kaleido==0.2.1
+
+# Deliverables
+XlsxWriter>=3.1          # writing formatted workbooks
+openpyxl>=3.1            # reading them back (and, later, ingesting uploads)
+fpdf2>=2.7               # PDF — pure Python, no GTK/Cairo/browser needed
+python-pptx>=0.6.23      # board deck
+python-docx>=1.1         # editable report
+Jinja2>=3.1
+
+# Web UI
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9  # file uploads
+

@@ -1,0 +1,361 @@
+# SaaS pack, extension 1 — public-company and board reporting standards.
+#
+# Everything here closes a gap against what SaaS issuers actually disclose and
+# what a board pack is criticised for omitting:
+#
+#   * Forward revenue   — billings, cRPO (an ASC 606 required disclosure)
+#   * Cash quality      — FCF margin, the metric public markets now price on
+#   * Growth efficiency — SaaS Quick Ratio, S&M as % of revenue
+#   * Enterprise mix    — customers above $100k ARR
+#   * Product health    — activation, engagement, time to value (all LEADING)
+#   * Sales capacity    — quota attainment, ramp, pipeline created (all LEADING)
+#
+# The library was 27% leading indicators, which makes a scorecard a post-mortem
+# rather than a tracker. Most of the additions below are deliberately leading.
+#
+# Benchmarks carry the same health warning as the base pack: illustrative
+# placeholders assembled from public commentary, not a licensed dataset.
+
+- id: billings
+  name: Billings
+  perspective: financial
+  tier: 1
+  timing: leading
+  direction: higher_is_better
+  driver_parent: arr
+  formula: "revenue + change in deferred revenue"
+  unit: currency
+  owner_role: CFO
+  source_systems: [gl, billing]
+  interpretation: >
+    What was invoiced rather than what was recognised. Billings turns before
+    revenue does, which makes it the earliest reliable read on demand.
+  pitfalls: >
+    Lumpy for enterprise books, where a single large annual prepay can move a
+    quarter. Read the trailing-twelve-month figure, never a single month.
+  serves_objectives: [growth, cash_liquidity, fundraise]
+  applies_when: "'subscription' in business_model.revenue_model"
+
+- id: crpo_growth
+  name: cRPO Growth (YoY)
+  short_name: cRPO Growth
+  perspective: financial
+  tier: 1
+  timing: leading
+  direction: higher_is_better
+  driver_parent: billings
+  formula: "(current_rpo_now / current_rpo_12mo_ago) - 1"
+  unit: pct
+  owner_role: CFO
+  source_systems: [billing, gl]
+  benchmark:
+    p25: 0.12
+    p50: 0.25
+    p75: 0.45
+    source: "Illustrative; cRPO is a standard SaaS issuer disclosure under ASC 606"
+  alert_bands: {green: 0.25, red: 0.10}
+  interpretation: >
+    Contracted revenue due within twelve months. The best forward indicator of
+    next year's revenue, and the one public investors watch most closely
+    because it is contractually committed rather than forecast.
+  pitfalls: >
+    Sensitive to contract-duration mix: a shift from annual to multi-year
+    inflates total RPO while leaving cRPO flat. Always read the two together.
+  serves_objectives: [growth, fundraise, exit_prep]
+  applies_when: "'subscription' in business_model.revenue_model"
+
+- id: fcf_margin
+  name: Free Cash Flow Margin
+  perspective: financial
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: ebitda_margin
+  formula: "free_cash_flow_ttm / revenue_ttm"
+  unit: pct
+  owner_role: CFO
+  source_systems: [gl]
+  benchmark:
+    p25: -0.10
+    p50: 0.08
+    p75: 0.25
+    source: "Illustrative public SaaS composite"
+  alert_bands: {green: 0.05, red: -0.20}
+  interpretation: >
+    Cash generated after capital expenditure, as a share of revenue. Has
+    largely replaced operating margin as the profitability measure public
+    markets price on.
+  pitfalls: >
+    Flattered by prepaid billings. A growing annual-prepay business collects
+    cash ahead of recognition, so FCF can look strong while the P&L is loss
+    making. Read alongside EBITDA margin, never instead of it.
+  serves_objectives: [margin_expansion, cash_liquidity, exit_prep, fundraise]
+
+- id: quick_ratio
+  name: SaaS Quick Ratio
+  perspective: customer
+  tier: 2
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: nrr
+  formula: "(new_arr + expansion_arr) / (churned_arr + contraction_arr)"
+  unit: ratio
+  owner_role: CRO
+  source_systems: [billing]
+  benchmark:
+    p25: 1.5
+    p50: 2.5
+    p75: 4.0
+    source: "SaaS Quick Ratio, Social Capital formulation"
+  alert_bands: {green: 2.5, red: 1.0}
+  interpretation: >
+    Growth efficiency in one number: dollars won for every dollar lost. Below
+    1.0 the business is shrinking however strong new sales look.
+  pitfalls: >
+    Treats a dollar of new logo and a dollar of expansion as equivalent, though
+    expansion is several times cheaper to win. Read with expansion share.
+  serves_objectives: [growth, retention]
+
+- id: sm_pct_revenue
+  name: S&M as % of Revenue
+  perspective: financial
+  tier: 2
+  timing: lagging
+  direction: lower_is_better
+  driver_parent: ebitda_margin
+  formula: "(sales_cost + marketing_cost) / revenue"
+  unit: pct
+  owner_role: CFO
+  source_systems: [gl]
+  benchmark:
+    p25: 0.55
+    p50: 0.40
+    p75: 0.28
+    source: "Illustrative public SaaS composite"
+  alert_bands: {green: 0.40, red: 0.60}
+  interpretation: >
+    The standard go-to-market efficiency line in every public filing. Falling
+    S&M intensity at constant growth is the clearest sign of a maturing motion.
+  pitfalls: >
+    Not comparable across sales motions. A self-serve business and a field
+    sales business have structurally different ratios by design.
+  serves_objectives: [margin_expansion, cost_reduction]
+
+- id: enterprise_customers
+  name: Customers above 100k ARR
+  perspective: customer
+  tier: 2
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: arpa
+  formula: "count of customers with ARR >= 100,000 (reporting currency)"
+  unit: count
+  owner_role: CRO
+  source_systems: [billing, crm]
+  interpretation: >
+    The standard disclosure for enterprise penetration. Growth here signals a
+    move upmarket, which usually brings better retention and worse CAC payback.
+  pitfalls: >
+    A fixed threshold is currency- and era-dependent. Hold it constant over
+    time or the trend means nothing.
+  serves_objectives: [growth, exit_prep, retention]
+  applies_when: "business_model.customer_type != 'B2C'"
+
+- id: activation_rate
+  name: New Customer Activation Rate
+  perspective: internal_process
+  tier: 2
+  timing: leading
+  direction: higher_is_better
+  driver_parent: grr
+  formula: "activated_accounts / new_accounts"
+  unit: pct
+  owner_role: CPO
+  source_systems: [product_analytics]
+  benchmark:
+    p25: 0.45
+    p50: 0.62
+    p75: 0.78
+    source: "Illustrative B2B SaaS composite"
+  alert_bands: {green: 0.65, red: 0.45}
+  interpretation: >
+    The share of new customers reaching first value. The strongest leading
+    indicator of first-year churn there is — customers who never activate
+    almost never renew.
+  pitfalls: >
+    Entirely dependent on how "activated" is defined; a generous definition
+    makes the number meaningless. Fix the definition before tracking the trend.
+  serves_objectives: [retention, quality, growth]
+  requires_data: [product_analytics]
+
+- id: engagement_ratio
+  name: DAU / MAU Engagement
+  perspective: internal_process
+  tier: 2
+  timing: leading
+  direction: higher_is_better
+  driver_parent: activation_rate
+  formula: "daily_active_users / monthly_active_users"
+  unit: pct
+  owner_role: CPO
+  source_systems: [product_analytics]
+  benchmark:
+    p25: 0.20
+    p50: 0.32
+    p75: 0.50
+    source: "Illustrative; varies widely between daily-use and periodic-use products"
+  alert_bands: {green: 0.30, red: 0.15}
+  interpretation: >
+    How habitual the product is. Declining engagement precedes churn by one to
+    two renewal cycles, which makes it early warning rather than vanity.
+  pitfalls: >
+    Only comparable within a product category. A payroll tool used monthly is
+    not unhealthy at 5%; a messaging tool at 5% is dying.
+  serves_objectives: [retention, quality]
+  requires_data: [product_analytics]
+
+- id: time_to_value_days
+  name: Time to First Value
+  perspective: internal_process
+  tier: 3
+  timing: leading
+  direction: lower_is_better
+  driver_parent: activation_rate
+  formula: "median days from signup to first value milestone"
+  unit: days
+  owner_role: CCO
+  source_systems: [product_analytics]
+  benchmark:
+    p25: 45
+    p50: 25
+    p75: 10
+    source: "Illustrative B2B SaaS composite"
+  alert_bands: {green: 21, red: 45}
+  interpretation: >
+    Every day before first value is a day the customer can still walk away.
+    Shortening onboarding usually beats any downstream retention campaign.
+  pitfalls: >
+    A median hides a long tail. If a quarter of customers take three months,
+    that tail is the churn risk, not the median.
+  serves_objectives: [retention, quality, growth]
+  requires_data: [product_analytics]
+
+- id: quota_attainment
+  name: Sales Quota Attainment
+  perspective: internal_process
+  tier: 2
+  timing: leading
+  direction: higher_is_better
+  driver_parent: win_rate
+  formula: "bookings_per_productive_rep / quota_per_rep"
+  unit: pct
+  owner_role: CRO
+  source_systems: [crm]
+  benchmark:
+    p25: 0.55
+    p50: 0.72
+    p75: 0.90
+    source: "Illustrative B2B composite; a healthy team has most reps near plan"
+  alert_bands: {green: 0.75, red: 0.50}
+  interpretation: >
+    Whether the plan is achievable. Persistently low attainment usually means
+    the quota is wrong rather than the team is, and it drives rep attrition.
+  pitfalls: >
+    An average hides the distribution: two overperformers can mask a team where
+    most reps miss. Read the median and the share of reps above plan.
+  serves_objectives: [growth, quality]
+  applies_when: "business_model.sales_motion != 'self_serve'"
+
+- id: arr_per_rep
+  name: New ARR per Productive Rep
+  perspective: internal_process
+  tier: 3
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: quota_attainment
+  formula: "new_arr_booked / productive_reps"
+  unit: currency
+  owner_role: CRO
+  source_systems: [crm, hris]
+  interpretation: >
+    Sales capacity productivity. Excludes ramping reps deliberately — counting
+    them makes a hiring quarter look like a performance problem.
+  pitfalls: >
+    Depends on where the ramped/ramping line is drawn. Keep the definition
+    stable or the series is not comparable period to period.
+  serves_objectives: [growth, margin_expansion]
+  applies_when: "business_model.sales_motion != 'self_serve'"
+
+- id: rep_ramp_months
+  name: Sales Rep Ramp Time
+  perspective: learning_growth
+  tier: 3
+  timing: leading
+  direction: lower_is_better
+  driver_parent: arr_per_rep
+  formula: "mean months from rep start to full quota productivity"
+  unit: months
+  owner_role: CRO
+  source_systems: [crm, hris]
+  benchmark:
+    p25: 7
+    p50: 5
+    p75: 3
+    source: "Illustrative B2B composite"
+  alert_bands: {green: 4, red: 7}
+  interpretation: >
+    Determines how quickly hiring converts into bookings, and therefore how far
+    ahead of demand you have to hire.
+  pitfalls: >
+    Lengthens quietly as the product gets more complex; a rising ramp is often
+    the first measurable symptom of sales-process debt.
+  serves_objectives: [growth, cost_reduction]
+  applies_when: "business_model.sales_motion != 'self_serve'"
+
+- id: pipeline_created
+  name: New Pipeline Created
+  perspective: internal_process
+  tier: 2
+  timing: leading
+  direction: higher_is_better
+  driver_parent: pipeline_coverage
+  formula: "value of opportunities created in the period"
+  unit: currency
+  owner_role: CRO
+  source_systems: [crm]
+  interpretation: >
+    The earliest measurable point in the revenue chain. Pipeline created today
+    is bookings one sales cycle from now, so a dip here is the first warning
+    that is still cheap to act on.
+  pitfalls: >
+    Easily inflated by lowering the bar for what counts as an opportunity.
+    Track with win rate — rising pipeline at falling win rate is noise.
+  serves_objectives: [growth]
+  applies_when: "business_model.sales_motion != 'self_serve'"
+
+- id: employee_enps
+  name: Employee Net Promoter Score
+  short_name: eNPS
+  perspective: learning_growth
+  tier: 3
+  timing: leading
+  direction: higher_is_better
+  driver_parent: employee_attrition
+  formula: "%promoters - %detractors among employees"
+  unit: score
+  owner_role: CPO
+  source_systems: [survey]
+  benchmark:
+    p25: 0
+    p50: 20
+    p75: 40
+    source: "Illustrative technology-sector composite"
+  alert_bands: {green: 20, red: 0}
+  interpretation: >
+    Leads voluntary attrition by roughly two quarters, which makes it one of
+    the few people metrics that is actionable before the damage is done.
+  pitfalls: >
+    Response rates below about 60% self-select toward the engaged. Report the
+    response rate beside the score or neither means much.
+  serves_objectives: [quality, retention]
+  requires_data: [survey]

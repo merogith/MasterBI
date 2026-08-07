@@ -1,0 +1,619 @@
+"""Metrics engine: KPISet + generated tables -> MetricResult per KPI.
+
+One registered function per KPI id. Each returns a monthly pandas Series (or
+None if the metric cannot be computed from the available tables — which is
+recorded, never silently hidden).
+
+This module is the ONLY place a KPI's arithmetic lives. The YAML `formula`
+field is documentation for humans; this is the implementation.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable, Dict, List, Optional
+
+import numpy as np
+import pandas as pd
+
+from ..kpi.schema import KPI, KPISet
+from ..profile.schema import CompanyProfile
+
+# LTV horizon cap. Without this, low churn sends LTV to infinity and the
+# LTV/CAC ratio becomes fiction. See the `pitfalls` note on ltv_cac_ratio.
+LTV_HORIZON_MONTHS = 36
+
+_REGISTRY: Dict[str, Callable[["MetricContext"], Optional[pd.Series]]] = {}
+
+
+def metric(kpi_id: str):
+    def wrap(fn):
+        _REGISTRY[kpi_id] = fn
+        return fn
+    return wrap
+
+
+@dataclass
+class MetricContext:
+    profile: CompanyProfile
+    tables: Dict[str, pd.DataFrame]
+
+    @property
+    def fin(self) -> pd.DataFrame:
+        return self.tables["monthly_financials"].set_index("month")
+
+    @property
+    def mov(self) -> pd.DataFrame:
+        return self.tables["mrr_movements"]
+
+    @property
+    def cust(self) -> pd.DataFrame:
+        return self.tables["customers"]
+
+    @property
+    def pipe(self) -> pd.DataFrame:
+        return self.tables["pipeline"].set_index("month")
+
+    @property
+    def mkt(self) -> pd.DataFrame:
+        return self.tables["marketing"]
+
+    @property
+    def hc(self) -> pd.DataFrame:
+        return self.tables["headcount"]
+
+    def movement(self, kind: str) -> pd.Series:
+        """Monthly total for one movement type, reindexed onto the full timeline."""
+        s = (
+            self.mov[self.mov["movement_type"] == kind]
+            .groupby("month")["delta_mrr"].sum()
+        )
+        return s.reindex(self.fin.index, fill_value=0.0)
+
+    def customer_mrr_matrix(self) -> pd.DataFrame:
+        """month x customer_id MRR. The basis for all cohort retention maths."""
+        if not hasattr(self, "_matrix"):
+            pivot = self.mov.pivot_table(
+                index="month", columns="customer_id", values="delta_mrr",
+                aggfunc="sum", fill_value=0.0,
+            )
+            self._matrix = pivot.cumsum().clip(lower=0.0)
+        return self._matrix
+
+    def fte(self) -> pd.Series:
+        return self.hc.groupby("month")["fte"].sum().reindex(self.fin.index).ffill()
+
+
+@dataclass
+class MetricResult:
+    kpi: KPI
+    series: Optional[pd.Series]
+    current: Optional[float]
+    prior_year: Optional[float]
+    prior_month: Optional[float]
+    target: Optional[float]
+    status: str
+    benchmark_position: Optional[str]
+    computed: bool
+    reason: str = ""
+
+    @property
+    def yoy_change(self) -> Optional[float]:
+        if self.current is None or self.prior_year in (None, 0):
+            return None
+        return self.current - self.prior_year
+
+    @property
+    def vs_target(self) -> Optional[float]:
+        if self.current is None or self.target in (None, 0):
+            return None
+        return self.current - self.target
+
+
+# --------------------------------------------------------------------------
+# Financial
+# --------------------------------------------------------------------------
+
+@metric("arr")
+def _arr(ctx):
+    return ctx.fin["arr"]
+
+
+@metric("arr_growth_yoy")
+def _arr_growth(ctx):
+    arr = ctx.fin["arr"]
+    return (arr / arr.shift(12) - 1).replace([np.inf, -np.inf], np.nan)
+
+
+@metric("net_new_arr")
+def _net_new_arr(ctx):
+    return ctx.mov.groupby("month")["delta_mrr"].sum().reindex(ctx.fin.index, fill_value=0.0) * 12
+
+
+@metric("gross_margin_pct")
+def _gross_margin(ctx):
+    return ctx.fin["gross_margin_pct"]
+
+
+@metric("ebitda_margin")
+def _ebitda_margin(ctx):
+    # Trailing 12 months: a single month of EBITDA margin is mostly noise.
+    return ctx.fin["ebitda"].rolling(12).sum() / ctx.fin["revenue"].rolling(12).sum()
+
+
+@metric("rule_of_40")
+def _rule_of_40(ctx):
+    return _arr_growth(ctx) + _ebitda_margin(ctx)
+
+
+@metric("cac_payback_months")
+def _cac_payback(ctx):
+    # Trailing 3-month smoothing; a single month is dominated by hiring timing.
+    sm = (ctx.fin["sales_cost"] + ctx.fin["marketing_cost"]).rolling(3).mean()
+    new_mrr = ctx.movement("new").rolling(3).mean()
+    gross_new_mrr = new_mrr * ctx.fin["gross_margin_pct"]
+    return (sm / gross_new_mrr).replace([np.inf, -np.inf], np.nan)
+
+
+@metric("ltv_cac_ratio")
+def _ltv_cac(ctx):
+    arpa = _arpa(ctx)
+    churn = _logo_churn(ctx)
+    gm = ctx.fin["gross_margin_pct"]
+    monthly_churn = (churn / 12).clip(lower=1e-4)
+    lifetime = (1 / monthly_churn).clip(upper=LTV_HORIZON_MONTHS)   # capped, see note
+    ltv = arpa * gm * lifetime
+    cac = _blended_cac(ctx)
+    return (ltv / cac).replace([np.inf, -np.inf], np.nan)
+
+
+@metric("magic_number")
+def _magic_number(ctx):
+    # ARR added over the quarter against the PRIOR quarter's S&M spend.
+    # No x4 here: the classic formula annualises a quarterly *GAAP revenue*
+    # increase, but an ARR delta is already a run-rate figure. Multiplying
+    # again overstates sales efficiency by a third.
+    quarterly_arr_added = _net_new_arr(ctx).rolling(3).sum()
+    prior_sm = (ctx.fin["sales_cost"] + ctx.fin["marketing_cost"]).rolling(3).sum().shift(3)
+    return (quarterly_arr_added / prior_sm).replace([np.inf, -np.inf], np.nan)
+
+
+# A burn smaller than this share of revenue is rounding, not a cash problem.
+# Dividing by it produces technically-correct nonsense like "2,005 months of
+# runway", which is worse than reporting nothing.
+MATERIAL_BURN_PCT_OF_REVENUE = 0.005
+RUNWAY_MEANINGFUL_CEILING_MONTHS = 120
+
+
+@metric("burn_multiple")
+def _burn_multiple(ctx):
+    burn_ttm = ctx.fin["net_burn"].rolling(12).sum()
+    net_new_ttm = _net_new_arr(ctx).rolling(12).sum()
+    result = (burn_ttm / net_new_ttm).replace([np.inf, -np.inf], np.nan)
+    # A profitable business has no burn multiple; NaN is the honest answer.
+    material = burn_ttm > ctx.fin["revenue"].rolling(12).sum() * MATERIAL_BURN_PCT_OF_REVENUE
+    return result.where(material & (net_new_ttm > 0))
+
+
+@metric("cash_runway_months")
+def _runway(ctx):
+    burn = ctx.fin["net_burn"].rolling(3).mean()
+    material = burn > ctx.fin["revenue"] * MATERIAL_BURN_PCT_OF_REVENUE
+    runway = (ctx.fin["cash"] / burn).replace([np.inf, -np.inf], np.nan)
+    runway = runway.where(material)
+    # Beyond ten years the number stops being a runway and starts being an
+    # artefact of a near-zero denominator. Report nothing rather than fiction.
+    return runway.where(runway <= RUNWAY_MEANINGFUL_CEILING_MONTHS)
+
+
+# --------------------------------------------------------------------------
+# Customer
+# --------------------------------------------------------------------------
+
+@metric("nrr")
+def _nrr(ctx):
+    m = ctx.customer_mrr_matrix()
+    out = {}
+    for i, month in enumerate(m.index):
+        if i < 12:
+            continue
+        base_month = m.index[i - 12]
+        base = m.loc[base_month]
+        cohort = base[base > 0].index          # customers present 12 months ago
+        if len(cohort) == 0:
+            continue
+        start = base[cohort].sum()
+        end = m.loc[month, cohort].sum()       # includes their expansion and churn
+        out[month] = end / start if start else np.nan
+    return pd.Series(out).reindex(ctx.fin.index)
+
+
+@metric("grr")
+def _grr(ctx):
+    m = ctx.customer_mrr_matrix()
+    out = {}
+    for i, month in enumerate(m.index):
+        if i < 12:
+            continue
+        base_month = m.index[i - 12]
+        base = m.loc[base_month]
+        cohort = base[base > 0].index
+        if len(cohort) == 0:
+            continue
+        start = base[cohort].sum()
+        # Cap each customer at their starting MRR: expansion gets no credit.
+        end = np.minimum(m.loc[month, cohort].values, base[cohort].values).sum()
+        out[month] = end / start if start else np.nan
+    return pd.Series(out).reindex(ctx.fin.index)
+
+
+@metric("logo_churn_rate")
+def _logo_churn(ctx):
+    churned = (
+        ctx.mov[ctx.mov["movement_type"] == "churn"]
+        .groupby("month").size().reindex(ctx.fin.index, fill_value=0)
+    )
+    active = _customer_count(ctx)
+    churned_ttm = churned.rolling(12).sum()
+    # Denominator is the AVERAGE active base over the window, not the base 12
+    # months ago. On a fast-growing book the starting count is much smaller
+    # than the population actually exposed to churn, which inflates the rate.
+    base = active.rolling(12).mean()
+    return (churned_ttm / base).replace([np.inf, -np.inf], np.nan)
+
+
+@metric("expansion_share")
+def _expansion_share(ctx):
+    new = ctx.movement("new").rolling(12).sum()
+    exp = ctx.movement("expansion").rolling(12).sum()
+    total = new + exp
+    return (exp / total).replace([np.inf, -np.inf], np.nan)
+
+
+@metric("arpa")
+def _arpa(ctx):
+    return (ctx.fin["mrr"] / _customer_count(ctx)).replace([np.inf, -np.inf], np.nan)
+
+
+@metric("customer_count")
+def _customer_count(ctx):
+    m = ctx.customer_mrr_matrix()
+    return (m > 0).sum(axis=1).reindex(ctx.fin.index).astype(float)
+
+
+@metric("revenue_concentration_top10")
+def _concentration(ctx):
+    m = ctx.customer_mrr_matrix()
+    out = {}
+    for month in m.index:
+        row = m.loc[month]
+        row = row[row > 0].sort_values(ascending=False)
+        out[month] = row.head(10).sum() / row.sum() if row.sum() else np.nan
+    return pd.Series(out).reindex(ctx.fin.index)
+
+
+# --------------------------------------------------------------------------
+# Internal process
+# --------------------------------------------------------------------------
+
+@metric("win_rate")
+def _win_rate(ctx):
+    return ctx.pipe["win_rate"].rolling(3).mean()
+
+
+@metric("pipeline_coverage")
+def _pipeline_coverage(ctx):
+    return ctx.pipe["pipeline_coverage"]
+
+
+@metric("sales_cycle_days")
+def _sales_cycle(ctx):
+    return ctx.pipe["sales_cycle_days"].rolling(3).mean()
+
+
+@metric("blended_cac")
+def _blended_cac(ctx):
+    sm = (ctx.fin["sales_cost"] + ctx.fin["marketing_cost"]).rolling(3).mean()
+    won = ctx.pipe["opps_won"].rolling(3).mean()
+    return (sm / won).replace([np.inf, -np.inf], np.nan)
+
+
+@metric("lead_to_mql_rate")
+def _lead_to_mql(ctx):
+    g = ctx.mkt.groupby("month")[["leads", "mqls"]].sum()
+    return (g["mqls"] / g["leads"]).replace([np.inf, -np.inf], np.nan).reindex(ctx.fin.index)
+
+
+@metric("mql_to_sql_rate")
+def _mql_to_sql(ctx):
+    g = ctx.mkt.groupby("month")[["mqls", "sqls"]].sum()
+    return (g["sqls"] / g["mqls"]).replace([np.inf, -np.inf], np.nan).reindex(ctx.fin.index)
+
+
+# --------------------------------------------------------------------------
+# Learning & growth
+# --------------------------------------------------------------------------
+
+@metric("arr_per_fte")
+def _arr_per_fte(ctx):
+    return (ctx.fin["arr"] / ctx.fte()).replace([np.inf, -np.inf], np.nan)
+
+
+@metric("headcount_growth")
+def _headcount_growth(ctx):
+    fte = ctx.fte()
+    return (fte / fte.shift(12) - 1).replace([np.inf, -np.inf], np.nan)
+
+
+@metric("employee_attrition")
+def _attrition(ctx):
+    if "leavers" not in ctx.hc.columns:
+        return None
+    leavers = ctx.hc.groupby("month")["leavers"].sum().reindex(ctx.fin.index, fill_value=0)
+    avg_fte = ctx.fte().rolling(12).mean()
+    return (leavers.rolling(12).sum() / avg_fte).replace([np.inf, -np.inf], np.nan)
+
+
+@metric("rnd_pct_revenue")
+def _rnd_pct(ctx):
+    return ctx.fin["rnd_cost"] / ctx.fin["revenue"]
+
+
+# --------------------------------------------------------------------------
+# Forward revenue and cash quality (public-company reporting standards)
+# --------------------------------------------------------------------------
+
+@metric("billings")
+def _billings(ctx):
+    if "billings" not in ctx.fin.columns:
+        return None
+    # Trailing twelve months: a single month of billings is dominated by
+    # renewal timing, especially on an enterprise book.
+    return ctx.fin["billings"].rolling(12).sum()
+
+
+@metric("crpo_growth")
+def _crpo_growth(ctx):
+    if "crpo" not in ctx.fin.columns:
+        return None
+    crpo = ctx.fin["crpo"]
+    return (crpo / crpo.shift(12) - 1).replace([np.inf, -np.inf], np.nan)
+
+
+@metric("fcf_margin")
+def _fcf_margin(ctx):
+    if "free_cash_flow" not in ctx.fin.columns:
+        return None
+    return (ctx.fin["free_cash_flow"].rolling(12).sum()
+            / ctx.fin["revenue"].rolling(12).sum()).replace([np.inf, -np.inf], np.nan)
+
+
+@metric("sm_pct_revenue")
+def _sm_pct(ctx):
+    sm = (ctx.fin["sales_cost"] + ctx.fin["marketing_cost"]).rolling(12).sum()
+    return (sm / ctx.fin["revenue"].rolling(12).sum()).replace([np.inf, -np.inf], np.nan)
+
+
+@metric("quick_ratio")
+def _quick_ratio(ctx):
+    gained = (ctx.movement("new") + ctx.movement("expansion")).rolling(12).sum()
+    lost = (ctx.movement("churn").abs() + ctx.movement("contraction").abs()).rolling(12).sum()
+    return (gained / lost.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan)
+
+
+@metric("enterprise_customers")
+def _enterprise_customers(ctx, threshold: float = 100_000.0):
+    """Customers above the $100k ARR line, month by month."""
+    m = ctx.customer_mrr_matrix()
+    arr = m * 12.0
+    return (arr >= threshold).sum(axis=1).reindex(ctx.fin.index).astype(float)
+
+
+# --------------------------------------------------------------------------
+# Product engagement — the leading half of the scorecard
+# --------------------------------------------------------------------------
+
+def _usage(ctx) -> Optional[pd.DataFrame]:
+    table = ctx.tables.get("product_usage")
+    return None if table is None or table.empty else table.set_index("month")
+
+
+@metric("activation_rate")
+def _activation(ctx):
+    usage = _usage(ctx)
+    if usage is None:
+        return None
+    new = usage["new_accounts"].rolling(3).sum()
+    activated = usage["activated_accounts"].rolling(3).sum()
+    return (activated / new.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan)
+
+
+@metric("engagement_ratio")
+def _engagement(ctx):
+    usage = _usage(ctx)
+    if usage is None:
+        return None
+    return (usage["dau"] / usage["mau"].replace(0, np.nan)).replace([np.inf, -np.inf], np.nan)
+
+
+@metric("time_to_value_days")
+def _time_to_value(ctx):
+    usage = _usage(ctx)
+    if usage is None:
+        return None
+    return usage["median_time_to_value_days"].rolling(3).mean()
+
+
+# --------------------------------------------------------------------------
+# Sales capacity
+# --------------------------------------------------------------------------
+
+def _capacity(ctx) -> Optional[pd.DataFrame]:
+    table = ctx.tables.get("sales_capacity")
+    return None if table is None or table.empty else table.set_index("month")
+
+
+@metric("quota_attainment")
+def _quota_attainment(ctx):
+    cap = _capacity(ctx)
+    if cap is None:
+        return None
+    return cap["quota_attainment"].rolling(3).mean()
+
+
+@metric("arr_per_rep")
+def _arr_per_rep(ctx):
+    cap = _capacity(ctx)
+    if cap is None:
+        return None
+    # Annualised from a trailing quarter of bookings per productive rep.
+    return cap["arr_per_productive_rep"].rolling(12).sum()
+
+
+@metric("rep_ramp_months")
+def _rep_ramp(ctx):
+    cap = _capacity(ctx)
+    if cap is None:
+        return None
+    return cap["avg_ramp_months"].rolling(3).mean()
+
+
+@metric("pipeline_created")
+def _pipeline_created(ctx):
+    pipe = ctx.pipe
+    if "open_pipeline_value" not in pipe.columns:
+        return None
+    # New pipeline entering the funnel each month, smoothed over a quarter.
+    created = pipe["open_pipeline_value"] / max(float(pipe["sales_cycle_days"].mean()) / 30.0, 1.0)
+    return created.rolling(3).mean()
+
+
+@metric("employee_enps")
+def _enps(ctx):
+    # Requires an employee survey feed; the generator does not fabricate one,
+    # so this reports honestly as not computable rather than inventing a score.
+    return None
+
+
+# --------------------------------------------------------------------------
+# Driver
+# --------------------------------------------------------------------------
+
+def _resolve_target(kpi: KPI, current: Optional[float]) -> Optional[float]:
+    """Evaluate the KPI's target_rule. Falls back to the benchmark median."""
+    bench = kpi.benchmark
+    p50 = bench.p50 if bench else None
+    rule = kpi.target_rule
+
+    if rule and current is not None:
+        # A tiny fixed vocabulary rather than eval() — the rules are few and
+        # an LLM may propose them in Mode 3.
+        known = {
+            "max(benchmark_p50, current * 1.1)":
+                (lambda: max(p50, current * 1.1) if p50 is not None else current * 1.1),
+            "min(current * 0.85, 12)": (lambda: min(current * 0.85, 12)),
+            "max(1.10, current + 0.05)": (lambda: max(1.10, current + 0.05)),
+            "min(current * 0.85, benchmark_p50)":
+                (lambda: min(current * 0.85, p50) if p50 is not None else current * 0.85),
+        }
+        fn = known.get(rule.strip())
+        if fn is not None:
+            return float(fn())
+
+    if p50 is not None:
+        return float(p50)
+    if kpi.alert_bands is not None:
+        return float(kpi.alert_bands.green)
+    return None
+
+
+def _last_valid(series: pd.Series, offset: int = 0) -> Optional[float]:
+    s = series.dropna()
+    if len(s) <= offset:
+        return None
+    value = s.iloc[-1 - offset] if offset else s.iloc[-1]
+    return None if pd.isna(value) else float(value)
+
+
+def compute(kpi_set: KPISet, tables: Dict[str, pd.DataFrame],
+            profile: CompanyProfile) -> List[MetricResult]:
+    ctx = MetricContext(profile=profile, tables=tables)
+    results: List[MetricResult] = []
+
+    for kpi in kpi_set.kpis:
+        fn = _REGISTRY.get(kpi.id)
+        if fn is None:
+            results.append(MetricResult(
+                kpi=kpi, series=None, current=None, prior_year=None, prior_month=None,
+                target=None, status="unknown", benchmark_position=None,
+                computed=False, reason="no implementation registered for this KPI id",
+            ))
+            continue
+
+        try:
+            series = fn(ctx)
+        except Exception as exc:                      # noqa: BLE001 - reported, not swallowed
+            results.append(MetricResult(
+                kpi=kpi, series=None, current=None, prior_year=None, prior_month=None,
+                target=None, status="unknown", benchmark_position=None,
+                computed=False, reason=f"computation error: {exc}",
+            ))
+            continue
+
+        if series is None or series.dropna().empty:
+            results.append(MetricResult(
+                kpi=kpi, series=None, current=None, prior_year=None, prior_month=None,
+                target=None, status="unknown", benchmark_position=None,
+                computed=False, reason="insufficient data in the available tables",
+            ))
+            continue
+
+        series = series.astype(float)
+        current = _last_valid(series)
+        prior_month = _last_valid(series, offset=1)
+        prior_year = float(series.iloc[-13]) if len(series) >= 13 and not pd.isna(series.iloc[-13]) else None
+
+        results.append(MetricResult(
+            kpi=kpi,
+            series=series,
+            current=current,
+            prior_year=prior_year,
+            prior_month=prior_month,
+            target=_resolve_target(kpi, current),
+            status=kpi.status(current),
+            benchmark_position=kpi.vs_benchmark(current),
+            computed=True,
+        ))
+
+    return results
+
+
+def facts_table(results: List[MetricResult]) -> pd.DataFrame:
+    """The compact, LLM-safe view of the numbers.
+
+    This — not the row-level data — is what any narrative agent is allowed to
+    see. A few KB, every number already computed, nothing to hallucinate from.
+    """
+    rows = []
+    for r in results:
+        rows.append({
+            "kpi_id": r.kpi.id,
+            "name": r.kpi.name,
+            "perspective": r.kpi.perspective.value,
+            "tier": int(r.kpi.tier),
+            "timing": r.kpi.timing.value,
+            "unit": r.kpi.unit,
+            "direction": r.kpi.direction.value,
+            "current": r.current,
+            "prior_month": r.prior_month,
+            "prior_year": r.prior_year,
+            "yoy_change": r.yoy_change,
+            "target": r.target,
+            "vs_target": r.vs_target,
+            "status": r.status,
+            "benchmark_p50": r.kpi.benchmark.p50 if r.kpi.benchmark else None,
+            "benchmark_position": r.benchmark_position,
+            "owner": r.kpi.owner_role,
+            "computed": r.computed,
+            "reason": r.reason,
+        })
+    return pd.DataFrame(rows)

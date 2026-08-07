@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KPI Dashboard Maker</title>
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="#" data-nav="home">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <span class="brand-name">KPI Dashboard Maker</span>
+  </a>
+  <nav class="topnav">
+    <button class="ghost" data-nav="home">Home</button>
+    <button class="ghost" id="btn-history">Recent runs</button>
+    <button class="ghost" id="btn-theme" aria-label="Toggle theme">Dark</button>
+  </nav>
+</header>
+
+<main id="app">
+
+  <!-- ================= HOME ================= -->
+  <section class="view" id="view-home">
+    <div class="hero">
+      <p class="eyebrow">Performance reporting, generated</p>
+      <h1>Turn a business into a board pack.</h1>
+      <p class="lede">
+        Pick the KPIs that actually matter for a company's sector, size and
+        objective — then generate the dashboard, the report, the deck and the
+        data behind them. Every number is computed, not guessed.
+      </p>
+    </div>
+
+    <div class="mode-grid">
+      <button class="mode-card" data-nav="samples">
+        <span class="mode-num">01</span>
+        <h2>Try a sample</h2>
+        <p>Three finished companies with real stories — a churn problem, a cash
+           problem, a concentration risk. See the complete end product in
+           seconds.</p>
+        <span class="mode-meta">Instant · No input needed</span>
+        <span class="mode-go" aria-hidden="true">→</span>
+      </button>
+
+      <button class="mode-card" data-nav="survey">
+        <span class="mode-num">02</span>
+        <h2>Build your own</h2>
+        <p>Answer 14 questions about your business. Anything you don't know is
+           filled from sector benchmarks and clearly footnoted as an assumption.</p>
+        <span class="mode-meta">~3 minutes · Free to run</span>
+        <span class="mode-go" aria-hidden="true">→</span>
+      </button>
+
+      <button class="mode-card" data-nav="builder">
+        <span class="mode-num">03</span>
+        <h2>Bring your data</h2>
+        <p>Upload a spreadsheet and inspect what's in it before deciding how to
+           model it. Column profiling works today; the AI mapping layer is not
+           connected yet.</p>
+        <span class="mode-meta">Partially built · See roadmap</span>
+        <span class="mode-go" aria-hidden="true">→</span>
+      </button>
+    </div>
+
+    <div class="surprise-row">
+      <div>
+        <h3>Feeling lucky?</h3>
+        <p>Generate a complete, self-consistent random company and its full
+           reporting pack.</p>
+      </div>
+      <button class="primary" id="btn-surprise">Surprise me</button>
+    </div>
+  </section>
+
+  <!-- ================= SAMPLES ================= -->
+  <section class="view" id="view-samples" hidden>
+    <div class="view-head">
+      <button class="back" data-nav="home">← Back</button>
+      <h1>Sample companies</h1>
+      <p class="lede">Each one is generated from a profile with a deliberate
+         story built in. Nothing here is a real business.</p>
+    </div>
+    <div class="sample-grid" id="sample-grid"></div>
+  </section>
+
+  <!-- ================= SURVEY ================= -->
+  <section class="view" id="view-survey" hidden>
+    <div class="view-head">
+      <button class="back" data-nav="home">← Back</button>
+      <h1>Build your own</h1>
+    </div>
+
+    <div class="progress-wrap">
+      <div class="progress-track"><div class="progress-fill" id="survey-progress"></div></div>
+      <span class="progress-label" id="survey-step-label"></span>
+    </div>
+
+    <form id="survey-form" autocomplete="off">
+      <div id="survey-steps"></div>
+    </form>
+
+    <div class="survey-nav">
+      <button class="ghost" id="survey-back" type="button">Back</button>
+      <div class="survey-nav-right">
+        <button class="ghost" id="survey-skip" type="button">Skip — use averages</button>
+        <button class="primary" id="survey-next" type="button">Next</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= AI BUILDER ================= -->
+  <section class="view" id="view-builder" hidden>
+    <div class="view-head">
+      <button class="back" data-nav="home">← Back</button>
+      <h1>Bring your data</h1>
+      <p class="lede">Upload a CSV or Excel file. We profile every column —
+         types, nulls, cardinality, samples — so you can see exactly what the
+         pipeline would be working with.</p>
+    </div>
+
+    <div class="notice">
+      <strong>Honest status.</strong> Column profiling below is real and runs
+      locally. Automatic mapping to the KPI data model, and the Claude agents
+      that plan and narrate a run, are <em>not connected in this build</em>.
+      They are milestones M6 and M7 on the roadmap. Until then, use
+      <button class="linkish" data-nav="survey">Build your own</button>
+      to generate a full pack.
+    </div>
+
+    <label class="dropzone" id="dropzone">
+      <input type="file" id="file-input" accept=".csv,.tsv,.xlsx,.xls" hidden>
+      <span class="drop-icon" aria-hidden="true">⬆</span>
+      <span class="drop-title">Drop a spreadsheet here, or click to choose</span>
+      <span class="drop-sub">CSV, TSV or Excel</span>
+    </label>
+
+    <div id="upload-result" hidden></div>
+  </section>
+
+  <!-- ================= RUNNING ================= -->
+  <section class="view view-center" id="view-running" hidden>
+    <div class="runner">
+      <div class="spinner" aria-hidden="true"></div>
+      <h2 id="run-company">Generating…</h2>
+      <p class="lede">Selecting KPIs, generating data, reconciling the books,
+         then rendering five deliverables.</p>
+      <ol class="run-steps" id="run-steps"></ol>
+      <button class="ghost" id="run-cancel">Cancel</button>
+    </div>
+  </section>
+
+  <!-- ================= RESULTS ================= -->
+  <section class="view" id="view-results" hidden>
+    <div class="result-head">
+      <div>
+        <button class="back" data-nav="home">← New run</button>
+        <h1 id="res-company"></h1>
+        <p class="res-meta" id="res-meta"></p>
+      </div>
+      <div class="res-actions">
+        <a class="primary" id="res-open-dashboard" target="_blank" rel="noopener">Open dashboard ↗</a>
+      </div>
+    </div>
+
+    <div id="res-warnings"></div>
+
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-tab="overview">Overview</button>
+      <button class="tab" data-tab="dashboard">Dashboard</button>
+      <button class="tab" data-tab="scorecard">Scorecard</button>
+      <button class="tab" data-tab="data">Data</button>
+      <button class="tab" data-tab="downloads">Downloads</button>
+    </div>
+
+    <div class="tab-panel active" data-panel="overview">
+      <div class="tiles" id="res-tiles"></div>
+      <h2 class="section-title">What the numbers say</h2>
+      <p class="section-sub">Produced by deterministic detectors. Every figure
+         below is computed from the data, never inferred.</p>
+      <ol class="findings" id="res-findings"></ol>
+    </div>
+
+    <div class="tab-panel" data-panel="dashboard">
+      <div class="frame-wrap">
+        <iframe id="res-frame" title="Interactive dashboard" loading="lazy"></iframe>
+      </div>
+    </div>
+
+    <div class="tab-panel" data-panel="scorecard">
+      <div class="filter-row">
+        <input type="search" id="kpi-search" placeholder="Filter KPIs…" aria-label="Filter KPIs">
+        <div class="chips" id="kpi-filters">
+          <button class="chip-btn active" data-status="all">All</button>
+          <button class="chip-btn" data-status="red">Off track</button>
+          <button class="chip-btn" data-status="amber">Watch</button>
+          <button class="chip-btn" data-status="green">On track</button>
+        </div>
+      </div>
+      <div class="table-wrap"><table id="res-scorecard"></table></div>
+      <details class="dropped" id="res-dropped"></details>
+    </div>
+
+    <div class="tab-panel" data-panel="data">
+      <div class="data-layout">
+        <aside class="data-rail" id="data-tables"></aside>
+        <div class="data-main">
+          <div class="data-head" id="data-head"></div>
+          <div class="table-wrap"><table id="data-preview"></table></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-panel" data-panel="downloads">
+      <div class="download-grid" id="res-downloads"></div>
+    </div>
+  </section>
+
+  <!-- ================= HISTORY DRAWER ================= -->
+  <div class="drawer-scrim" id="drawer-scrim" hidden></div>
+  <aside class="drawer" id="drawer" hidden aria-label="Recent runs">
+    <div class="drawer-head">
+      <h2>Recent runs</h2>
+      <button class="ghost" id="drawer-close" aria-label="Close">✕</button>
+    </div>
+    <div id="drawer-list"></div>
+  </aside>
+
+  <div class="toast" id="toast" hidden></div>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,128 @@
+{
+  "identity": {
+    "name": "Northwind Analytics",
+    "country": "US",
+    "currency": "USD",
+    "fiscal_year_start": "01-01",
+    "language": "en"
+  },
+  "industry": {
+    "taxonomy": "NAICS",
+    "code": "511210",
+    "internal_sector": "saas.analytics",
+    "vertical_tags": [
+      "b2b",
+      "data_infrastructure"
+    ]
+  },
+  "business_model": {
+    "type": "saas",
+    "customer_type": "B2B",
+    "revenue_model": [
+      "subscription",
+      "usage"
+    ],
+    "sales_motion": "inside",
+    "contract_terms": "annual",
+    "annual_prepay_share": 0.6,
+    "avg_contract_months": 12
+  },
+  "size": {
+    "headcount_total": 85,
+    "headcount_by_function": {
+      "engineering": 30,
+      "sales": 20,
+      "customer_success": 14,
+      "ga": 12,
+      "marketing": 9
+    },
+    "revenue_band": "10-50M",
+    "stage": "growth",
+    "age_years": 7
+  },
+  "market": {
+    "geographies": {
+      "US": 0.62,
+      "GB": 0.16,
+      "DE": 0.13,
+      "NL": 0.09
+    },
+    "segments": [
+      {
+        "name": "SMB",
+        "share": 0.55,
+        "avg_acv": 5500,
+        "logo_churn_annual": 0.28,
+        "expansion_annual": 0.05
+      },
+      {
+        "name": "Mid-Market",
+        "share": 0.33,
+        "avg_acv": 21000,
+        "logo_churn_annual": 0.14,
+        "expansion_annual": 0.11
+      },
+      {
+        "name": "Enterprise",
+        "share": 0.12,
+        "avg_acv": 72000,
+        "logo_churn_annual": 0.07,
+        "expansion_annual": 0.18
+      }
+    ],
+    "customer_count": 640,
+    "concentration_top10_pct": 0.22,
+    "seasonality": "b2b_software"
+  },
+  "financials": {
+    "revenue": 12000000,
+    "gross_margin_pct": 0.72,
+    "opex_split": {
+      "sales": 0.22,
+      "marketing": 0.14,
+      "rnd": 0.2,
+      "ga": 0.12
+    },
+    "cash": 6500000,
+    "net_debt": 0
+  },
+  "org_culture": {
+    "data_maturity": "bi_tool",
+    "decision_cadence": "monthly",
+    "planning_horizon": "annual",
+    "risk_appetite": "balanced",
+    "kpi_experience": "medium"
+  },
+  "intent": {
+    "primary_objective": "growth",
+    "secondary": [
+      "margin_expansion",
+      "retention"
+    ],
+    "horizon_months": 12,
+    "audience": "board"
+  },
+  "data_availability": {
+    "has": [
+      "billing",
+      "crm",
+      "gl",
+      "hris",
+      "marketing_automation",
+      "product_analytics"
+    ],
+    "missing": [
+      "survey",
+      "support_desk"
+    ]
+  },
+  "provenance": {
+    "financials.gross_margin_pct": "sample",
+    "financials.revenue": "sample",
+    "market.segments": "sample",
+    "size.headcount_by_function": "sample",
+    "market.concentration_top10_pct": "benchmark_default:saas_b2b_p50"
+  },
+  "seed": 20250806,
+  "history_months": 36
+}

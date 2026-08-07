@@ -1,0 +1,31 @@
+# Virtualenv — recreate with requirements.txt, never commit
+.venv/
+venv/
+env/
+
+# Python bytecode / build
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Generated artifacts. Every file under these is reproducible output of a run
+# (dashboards, PDFs, decks, workbooks, chart PNGs, fact CSVs). ~97 MB locally.
+out/
+runs/
+
+# Local-only editor / tooling state
+.claude/settings.local.json
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Secrets — nothing here today, keep it that way
+.env
+.env.*
+*.pem
+*.key

@@ -1,0 +1,29 @@
+[
+  {
+    "id": "northwind_saas",
+    "file": "northwind_saas.json",
+    "title": "Northwind Analytics",
+    "tagline": "Growing fast, leaking customers",
+    "story": "A $12M B2B analytics company growing 51% a year. Growth looks healthy at the top line, but a third of everything won is given straight back — and the churn is concentrated in one segment the blended number completely hides.",
+    "tags": ["Growth", "SMB churn", "Board pack"],
+    "watch_for": "Segment-level churn versus the blended rate"
+  },
+  {
+    "id": "meridian_early",
+    "file": "meridian_early.json",
+    "title": "Meridian Cloud",
+    "tagline": "Early stage, running out of road",
+    "story": "A £2.4M developer-tools business at 38% SMB churn, burning cash to grow. The unit economics have not closed yet and the runway is short enough that the financing calendar is starting to drive operating decisions.",
+    "tags": ["Cash & runway", "Self-serve", "Investor update"],
+    "watch_for": "Cash runway and burn multiple against growth"
+  },
+  {
+    "id": "atlas_enterprise",
+    "file": "atlas_enterprise.json",
+    "title": "Atlas Enterprise Software",
+    "tagline": "Profitable, efficient, concentrated",
+    "story": "A €45M enterprise ERP vendor with 79% gross margins and best-in-class retention. The risk is not performance — it is that nearly half of revenue sits with ten customers, which caps valuation regardless of how good the margins look.",
+    "tags": ["Margin", "Enterprise", "Concentration risk"],
+    "watch_for": "Top-10 customer concentration"
+  }
+]

@@ -1,0 +1,620 @@
+# SaaS / subscription KPI pack
+#
+# ---------------------------------------------------------------------------
+# BENCHMARK HEALTH WARNING
+# The p25/p50/p75 values below are ILLUSTRATIVE PLACEHOLDERS assembled from
+# widely-published public commentary. They are good enough to make a sample
+# dashboard behave sensibly; they are NOT a licensed benchmark dataset and must
+# not be presented to a paying customer as one. Every `source` field is
+# rendered into the report appendix so the provenance is always visible.
+# Replace with a licensed cohort (or your own aggregated customer data) before
+# any commercial use. See ARCHITECTURE.md §7.4.
+# ---------------------------------------------------------------------------
+
+- id: arr
+  name: Annual Recurring Revenue
+  short_name: ARR
+  perspective: financial
+  tier: 0
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: null
+  formula: "MRR at period end x 12"
+  unit: currency
+  owner_role: CEO
+  source_systems: [billing, crm]
+  interpretation: >
+    The North Star for a subscription business: the annualised value of the
+    contracted book at a point in time. Unlike revenue it is forward-looking —
+    it tells you what next year starts with.
+  pitfalls: >
+    Excludes non-recurring services and usage overages; a business with heavy
+    professional services can show flat ARR while total revenue grows.
+  serves_objectives: [growth, fundraise, exit_prep]
+  applies_when: "'subscription' in business_model.revenue_model"
+
+- id: arr_growth_yoy
+  name: ARR Growth (YoY)
+  perspective: financial
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: arr
+  formula: "(ARR_now / ARR_12mo_ago) - 1"
+  unit: pct
+  owner_role: CEO
+  source_systems: [billing]
+  benchmark:
+    p25: 0.15
+    p50: 0.30
+    p75: 0.55
+    source: "Illustrative public SaaS composite, ARR 5-50M cohort"
+  alert_bands: {green: 0.30, red: 0.10}
+  target_rule: "max(benchmark_p50, current * 1.1)"
+  interpretation: "The headline number every investor and board looks at first."
+  pitfalls: >
+    Flattered by one large logo in a small book. Always read alongside net new
+    ARR composition — growth bought entirely with discounting is not growth.
+  serves_objectives: [growth, fundraise]
+  core: true
+
+- id: net_new_arr
+  name: Net New ARR
+  perspective: financial
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: arr
+  formula: "new + expansion + reactivation - contraction - churn"
+  unit: currency
+  owner_role: CRO
+  source_systems: [billing, crm]
+  interpretation: >
+    The movement that produced this period's ARR. Decomposing it is the single
+    most useful diagnostic in a subscription business.
+  serves_objectives: [growth, retention]
+
+- id: nrr
+  name: Net Revenue Retention
+  short_name: NRR
+  perspective: customer
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: arr
+  formula: "(start_arr + expansion - contraction - churn) / start_arr, cohort-based"
+  unit: pct
+  owner_role: CCO
+  source_systems: [billing]
+  benchmark:
+    p25: 0.95
+    p50: 1.05
+    p75: 1.20
+    source: "Illustrative public SaaS composite, B2B cohort"
+  alert_bands: {green: 1.10, red: 0.95}
+  target_rule: "max(1.10, current + 0.05)"
+  interpretation: >
+    Above 100% the existing book grows without any new logos — the strongest
+    single indicator of product-market fit and pricing power.
+  pitfalls: >
+    Definitions vary wildly (which cohort, gross or net of downgrades, does it
+    include reactivations). Always state the definition alongside the number.
+  serves_objectives: [retention, growth, fundraise]
+  core: true
+  applies_when: "'subscription' in business_model.revenue_model"
+
+- id: grr
+  name: Gross Revenue Retention
+  short_name: GRR
+  perspective: customer
+  tier: 2
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: nrr
+  formula: "(start_arr - contraction - churn) / start_arr"
+  unit: pct
+  owner_role: CCO
+  source_systems: [billing]
+  benchmark:
+    p25: 0.83
+    p50: 0.90
+    p75: 0.95
+    source: "Illustrative public SaaS composite, B2B cohort"
+  alert_bands: {green: 0.90, red: 0.80}
+  interpretation: >
+    NRR with the expansion removed — the true measure of leakage. A high NRR
+    hiding a low GRR means a few accounts are masking broad dissatisfaction.
+  serves_objectives: [retention, quality]
+
+- id: logo_churn_rate
+  name: Logo Churn Rate (annualised)
+  perspective: customer
+  tier: 2
+  timing: lagging
+  direction: lower_is_better
+  driver_parent: grr
+  formula: "customers_lost_in_period / customers_at_start, annualised"
+  unit: pct
+  owner_role: CCO
+  source_systems: [crm, billing]
+  benchmark:
+    p25: 0.20
+    p50: 0.12
+    p75: 0.06
+    source: "Illustrative public SaaS composite; SMB churns far higher than enterprise"
+  alert_bands: {green: 0.10, red: 0.20}
+  interpretation: "Counts customers, not money — the early-warning twin of revenue churn."
+  pitfalls: >
+    Meaningless in aggregate when segments differ: blending SMB and enterprise
+    hides the entire story. Always read segmented.
+  serves_objectives: [retention, quality]
+
+- id: expansion_share
+  name: Expansion Share of New ARR
+  perspective: customer
+  tier: 2
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: nrr
+  formula: "expansion_arr / (new_arr + expansion_arr)"
+  unit: pct
+  owner_role: CCO
+  source_systems: [billing]
+  benchmark:
+    p25: 0.15
+    p50: 0.30
+    p75: 0.45
+    source: "Illustrative public SaaS composite"
+  alert_bands: {green: 0.30, red: 0.10}
+  interpretation: >
+    Expansion ARR is roughly 3-5x cheaper to acquire than new-logo ARR. A rising
+    share is a structural margin improvement.
+  serves_objectives: [growth, margin_expansion, retention]
+
+- id: gross_margin_pct
+  name: Gross Margin
+  perspective: financial
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: arr
+  formula: "(revenue - cogs) / revenue"
+  unit: pct
+  owner_role: CFO
+  source_systems: [gl]
+  benchmark:
+    p25: 0.65
+    p50: 0.75
+    p75: 0.83
+    source: "Illustrative public SaaS composite; blended incl. support and hosting"
+  alert_bands: {green: 0.75, red: 0.60}
+  interpretation: "Sets the ceiling on every downstream efficiency metric."
+  pitfalls: >
+    Wildly inconsistent COGS definitions across companies — whether customer
+    success, support and infra all sit in COGS changes this by 10+ points.
+  serves_objectives: [margin_expansion, fundraise]
+  core: true
+
+- id: rule_of_40
+  name: Rule of 40
+  perspective: financial
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: arr
+  formula: "arr_growth_yoy_pct + ebitda_margin_pct"
+  unit: pct
+  owner_role: CEO
+  source_systems: [gl, billing]
+  benchmark:
+    p25: 0.20
+    p50: 0.40
+    p75: 0.60
+    source: "Rule of 40 heuristic, popularised in SaaS investor commentary c.2015"
+  alert_bands: {green: 0.40, red: 0.20}
+  interpretation: >
+    The growth/profitability trade-off in one number. Below 40 the business is
+    neither growing fast enough nor efficient enough to justify either stance.
+  pitfalls: >
+    A heuristic, not a law. Meaningless below ~$5M ARR, and it lets a company
+    hide a collapsing growth rate behind a one-off cost cut.
+  serves_objectives: [growth, margin_expansion, fundraise, exit_prep]
+
+- id: cac_payback_months
+  name: CAC Payback Period
+  perspective: financial
+  tier: 1
+  timing: lagging
+  direction: lower_is_better
+  driver_parent: arr
+  formula: "(sales_cost + marketing_cost) / (new_mrr * gross_margin_pct)"
+  unit: months
+  owner_role: CRO
+  source_systems: [gl, crm]
+  benchmark:
+    p25: 24
+    p50: 15
+    p75: 8
+    source: "Illustrative public SaaS composite, gross-margin adjusted"
+  alert_bands: {green: 12, red: 18}
+  target_rule: "min(current * 0.85, 12)"
+  interpretation: >
+    Months to earn back the cost of winning a customer. The single best measure
+    of whether growth is fundable.
+  pitfalls: >
+    Excludes expansion revenue, so understates efficiency for land-and-expand
+    models. Distorted upward in any month where headcount is added ahead of
+    the demand it is meant to serve.
+  serves_objectives: [growth, margin_expansion, fundraise, cost_reduction]
+
+- id: ltv_cac_ratio
+  name: LTV / CAC
+  perspective: financial
+  tier: 2
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: cac_payback_months
+  formula: "(arpa * gross_margin_pct / logo_churn_rate) / cac"
+  unit: ratio
+  owner_role: CFO
+  source_systems: [gl, billing, crm]
+  benchmark:
+    p25: 2.0
+    p50: 3.0
+    p75: 5.0
+    source: "Conventional SaaS heuristic (3x rule)"
+  alert_bands: {green: 3.0, red: 1.5}
+  interpretation: "Lifetime gross profit per customer against the cost to win them."
+  pitfalls: >
+    Extremely sensitive to the churn assumption — at low churn the LTV term
+    approaches infinity. Cap the horizon (e.g. 36 months) or the number is
+    fiction. This library caps it.
+  serves_objectives: [growth, margin_expansion]
+
+- id: magic_number
+  name: Sales Efficiency (Magic Number)
+  perspective: internal_process
+  tier: 2
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: cac_payback_months
+  formula: "(arr_added_this_quarter * 4) / prior_quarter_s_and_m_spend"
+  unit: ratio
+  owner_role: CRO
+  source_systems: [gl, billing]
+  benchmark:
+    p25: 0.5
+    p50: 0.75
+    p75: 1.1
+    source: "Magic Number, Scale Venture Partners formulation"
+  alert_bands: {green: 0.75, red: 0.40}
+  interpretation: >
+    Above ~0.75 the conventional reading is that spending more on go-to-market
+    is accretive; below ~0.5, fix the motion before adding spend.
+  serves_objectives: [growth, margin_expansion]
+
+- id: burn_multiple
+  name: Burn Multiple
+  perspective: financial
+  tier: 2
+  timing: lagging
+  direction: lower_is_better
+  driver_parent: arr
+  formula: "net_cash_burn / net_new_arr"
+  unit: ratio
+  owner_role: CFO
+  source_systems: [gl, billing]
+  benchmark:
+    p25: 3.0
+    p50: 1.8
+    p75: 1.0
+    source: "Burn Multiple, Craft Ventures formulation"
+  alert_bands: {green: 1.5, red: 3.0}
+  interpretation: "Dollars burned per dollar of new ARR. The cleanest single efficiency test."
+  serves_objectives: [cash_liquidity, fundraise, cost_reduction]
+  applies_when: "intent.primary_objective != 'quality'"
+
+- id: cash_runway_months
+  name: Cash Runway
+  perspective: financial
+  tier: 1
+  timing: leading
+  direction: higher_is_better
+  driver_parent: burn_multiple
+  formula: "cash_balance / trailing_3mo_avg_net_burn"
+  unit: months
+  owner_role: CFO
+  source_systems: [gl]
+  benchmark:
+    p25: 9
+    p50: 18
+    p75: 30
+    source: "Illustrative; conventional guidance is to raise with 12+ months remaining"
+  alert_bands: {green: 18, red: 9}
+  interpretation: >
+    Leading indicator of existential risk. Below 12 months the fundraising
+    calendar, not the product roadmap, starts driving decisions.
+  serves_objectives: [cash_liquidity, fundraise]
+
+- id: ebitda_margin
+  name: EBITDA Margin
+  perspective: financial
+  tier: 2
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: gross_margin_pct
+  formula: "ebitda / revenue"
+  unit: pct
+  owner_role: CFO
+  source_systems: [gl]
+  alert_bands: {green: 0.0, red: -0.30}
+  interpretation: "For a growth-stage business, read as a deliberate choice rather than a failing."
+  serves_objectives: [margin_expansion, cost_reduction, exit_prep]
+
+- id: arpa
+  name: Average Revenue per Account
+  short_name: ARPA
+  perspective: customer
+  tier: 2
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: arr
+  formula: "mrr / active_customers"
+  unit: currency
+  owner_role: CRO
+  source_systems: [billing]
+  interpretation: "Rising ARPA with flat logo count means the expansion motion is working."
+  serves_objectives: [growth, margin_expansion]
+
+- id: customer_count
+  name: Active Customers
+  perspective: customer
+  tier: 2
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: arr
+  formula: "count of customers with active subscription at period end"
+  unit: count
+  owner_role: CRO
+  source_systems: [crm, billing]
+  serves_objectives: [growth, market_entry]
+
+- id: revenue_concentration_top10
+  name: Top-10 Customer Concentration
+  perspective: customer
+  tier: 2
+  timing: leading
+  direction: lower_is_better
+  driver_parent: arr
+  formula: "arr_from_top_10_customers / total_arr"
+  unit: pct
+  owner_role: CRO
+  source_systems: [billing]
+  benchmark:
+    p25: 0.50
+    p50: 0.35
+    p75: 0.20
+    source: "Illustrative; diligence commonly flags >30% as a risk"
+  alert_bands: {green: 0.25, red: 0.40}
+  interpretation: >
+    A concentration risk metric, and one of the first things a buyer or lender
+    tests. High concentration caps valuation regardless of growth.
+  serves_objectives: [exit_prep, fundraise, cash_liquidity]
+
+- id: win_rate
+  name: Opportunity Win Rate
+  perspective: internal_process
+  tier: 2
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: net_new_arr
+  formula: "deals_won / (deals_won + deals_lost)"
+  unit: pct
+  owner_role: CRO
+  source_systems: [crm]
+  benchmark:
+    p25: 0.15
+    p50: 0.22
+    p75: 0.32
+    source: "Illustrative B2B composite; varies enormously by sales motion"
+  alert_bands: {green: 0.25, red: 0.15}
+  pitfalls: "Trivially gamed by not logging losing deals in the CRM."
+  serves_objectives: [growth, quality]
+  applies_when: "business_model.sales_motion != 'self_serve'"
+
+- id: pipeline_coverage
+  name: Pipeline Coverage
+  perspective: internal_process
+  tier: 2
+  timing: leading
+  direction: higher_is_better
+  driver_parent: win_rate
+  formula: "open_pipeline_value / quota_for_period"
+  unit: ratio
+  owner_role: CRO
+  source_systems: [crm]
+  benchmark:
+    p25: 2.0
+    p50: 3.0
+    p75: 4.0
+    source: "Conventional B2B sales-management heuristic (3x rule)"
+  alert_bands: {green: 3.0, red: 2.0}
+  interpretation: >
+    The earliest reliable warning that next quarter will miss. Leading indicator
+    with roughly one sales-cycle of lead time.
+  serves_objectives: [growth]
+  applies_when: "business_model.sales_motion != 'self_serve'"
+
+- id: sales_cycle_days
+  name: Average Sales Cycle
+  perspective: internal_process
+  tier: 2
+  timing: lagging
+  direction: lower_is_better
+  driver_parent: win_rate
+  formula: "mean(days from opportunity created to closed-won)"
+  unit: days
+  owner_role: CRO
+  source_systems: [crm]
+  alert_bands: {green: 60, red: 120}
+  pitfalls: "Survivorship bias — only won deals have a cycle length; lost deals vanish."
+  serves_objectives: [growth]
+  applies_when: "business_model.sales_motion != 'self_serve'"
+
+- id: lead_to_mql_rate
+  name: Lead to MQL Conversion
+  perspective: internal_process
+  tier: 3
+  timing: leading
+  direction: higher_is_better
+  driver_parent: pipeline_coverage
+  formula: "mqls / leads"
+  unit: pct
+  owner_role: CMO
+  source_systems: [marketing_automation]
+  alert_bands: {green: 0.25, red: 0.10}
+  serves_objectives: [growth]
+
+- id: mql_to_sql_rate
+  name: MQL to SQL Conversion
+  perspective: internal_process
+  tier: 3
+  timing: leading
+  direction: higher_is_better
+  driver_parent: pipeline_coverage
+  formula: "sqls / mqls"
+  unit: pct
+  owner_role: CMO
+  source_systems: [marketing_automation, crm]
+  alert_bands: {green: 0.30, red: 0.15}
+  pitfalls: "The definitional boundary between MQL and SQL moves; trend matters more than level."
+  serves_objectives: [growth]
+
+- id: blended_cac
+  name: Blended CAC
+  perspective: internal_process
+  tier: 2
+  timing: lagging
+  direction: lower_is_better
+  driver_parent: cac_payback_months
+  formula: "(sales_cost + marketing_cost) / new_customers_won"
+  unit: currency
+  owner_role: CMO
+  source_systems: [gl, crm]
+  pitfalls: "Blends channels with very different economics; segment before acting on it."
+  serves_objectives: [growth, cost_reduction]
+
+- id: arr_per_fte
+  name: ARR per FTE
+  perspective: learning_growth
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: ebitda_margin
+  formula: "arr / total_fte"
+  unit: currency
+  owner_role: CEO
+  source_systems: [gl, hris]
+  benchmark:
+    p25: 90000
+    p50: 140000
+    p75: 220000
+    source: "Illustrative public SaaS composite, USD"
+  alert_bands: {green: 140000, red: 90000}
+  interpretation: >
+    The clearest measure of operating leverage. If it is flat while ARR grows,
+    the business is scaling headcount, not leverage.
+  serves_objectives: [margin_expansion, cost_reduction, exit_prep]
+
+- id: headcount_growth
+  name: Headcount Growth (YoY)
+  perspective: learning_growth
+  tier: 2
+  timing: lagging
+  direction: target_band
+  driver_parent: arr_per_fte
+  formula: "(fte_now / fte_12mo_ago) - 1"
+  unit: pct
+  owner_role: CPO
+  source_systems: [hris]
+  interpretation: "Only meaningful against ARR growth — the gap between the two is operating leverage."
+  serves_objectives: [growth, cost_reduction]
+
+- id: employee_attrition
+  name: Voluntary Attrition (annualised)
+  perspective: learning_growth
+  tier: 2
+  timing: lagging
+  direction: lower_is_better
+  driver_parent: arr_per_fte
+  formula: "voluntary_leavers_ttm / avg_headcount_ttm"
+  unit: pct
+  owner_role: CPO
+  source_systems: [hris]
+  benchmark:
+    p25: 0.22
+    p50: 0.15
+    p75: 0.09
+    source: "Illustrative technology-sector composite"
+  alert_bands: {green: 0.12, red: 0.20}
+  interpretation: >
+    A leading indicator of delivery risk that shows up in lagging metrics two
+    to three quarters later.
+  serves_objectives: [quality, retention]
+
+- id: rnd_pct_revenue
+  name: R&D as % of Revenue
+  perspective: learning_growth
+  tier: 3
+  timing: leading
+  direction: target_band
+  driver_parent: arr_per_fte
+  formula: "rnd_cost / revenue"
+  unit: pct
+  owner_role: CTO
+  source_systems: [gl]
+  benchmark:
+    p25: 0.12
+    p50: 0.20
+    p75: 0.30
+    source: "Illustrative public SaaS composite"
+  interpretation: "Investment in future capability; too low is a slow-motion risk, too high is unfunded."
+  serves_objectives: [growth, margin_expansion]
+
+- id: nps
+  name: Net Promoter Score
+  perspective: customer
+  tier: 2
+  timing: leading
+  direction: higher_is_better
+  driver_parent: grr
+  formula: "%promoters - %detractors"
+  unit: score
+  owner_role: CCO
+  source_systems: [survey]
+  benchmark:
+    p25: 10
+    p50: 30
+    p75: 50
+    source: "Illustrative B2B software composite"
+  alert_bands: {green: 30, red: 10}
+  pitfalls: >
+    Small samples and self-selection make the level nearly meaningless; only the
+    trend on a consistent methodology is informative.
+  serves_objectives: [retention, quality]
+  requires_data: [survey]
+
+- id: support_first_response_hours
+  name: Support First Response Time
+  perspective: internal_process
+  tier: 3
+  timing: leading
+  direction: lower_is_better
+  driver_parent: nps
+  formula: "median(hours from ticket created to first human response)"
+  unit: hours
+  owner_role: CCO
+  source_systems: [support_desk]
+  alert_bands: {green: 4, red: 24}
+  serves_objectives: [quality, retention]
+  requires_data: [support_desk]

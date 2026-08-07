@@ -1,0 +1,127 @@
+{
+  "identity": {
+    "name": "Atlas Enterprise Software",
+    "country": "DE",
+    "currency": "EUR",
+    "fiscal_year_start": "01-01",
+    "language": "en"
+  },
+  "industry": {
+    "taxonomy": "NACE",
+    "code": "J62.01",
+    "internal_sector": "saas.erp",
+    "vertical_tags": [
+      "b2b",
+      "enterprise",
+      "regulated"
+    ]
+  },
+  "business_model": {
+    "type": "saas",
+    "customer_type": "B2B",
+    "revenue_model": [
+      "subscription",
+      "licensing"
+    ],
+    "sales_motion": "field",
+    "contract_terms": "annual",
+    "annual_prepay_share": 0.85,
+    "avg_contract_months": 24
+  },
+  "size": {
+    "headcount_total": 260,
+    "headcount_by_function": {
+      "engineering": 90,
+      "sales": 62,
+      "customer_success": 42,
+      "ga": 36,
+      "marketing": 30
+    },
+    "revenue_band": "10-50M",
+    "stage": "mature",
+    "age_years": 19
+  },
+  "market": {
+    "geographies": {
+      "DE": 0.48,
+      "FR": 0.19,
+      "GB": 0.17,
+      "US": 0.16
+    },
+    "segments": [
+      {
+        "name": "SMB",
+        "share": 0.1,
+        "avg_acv": 12000,
+        "logo_churn_annual": 0.18,
+        "expansion_annual": 0.06
+      },
+      {
+        "name": "Mid-Market",
+        "share": 0.35,
+        "avg_acv": 55000,
+        "logo_churn_annual": 0.09,
+        "expansion_annual": 0.12
+      },
+      {
+        "name": "Enterprise",
+        "share": 0.55,
+        "avg_acv": 180000,
+        "logo_churn_annual": 0.05,
+        "expansion_annual": 0.2
+      }
+    ],
+    "customer_count": 377,
+    "concentration_top10_pct": 0.48,
+    "seasonality": "b2b_software"
+  },
+  "financials": {
+    "revenue": 45000000,
+    "gross_margin_pct": 0.79,
+    "opex_split": {
+      "sales": 0.15,
+      "marketing": 0.08,
+      "rnd": 0.14,
+      "ga": 0.1
+    },
+    "cash": 12000000,
+    "net_debt": 3500000
+  },
+  "org_culture": {
+    "data_maturity": "warehouse",
+    "decision_cadence": "monthly",
+    "planning_horizon": "multi_year",
+    "risk_appetite": "conservative",
+    "kpi_experience": "high"
+  },
+  "intent": {
+    "primary_objective": "margin_expansion",
+    "secondary": [
+      "exit_prep",
+      "retention"
+    ],
+    "horizon_months": 18,
+    "audience": "board"
+  },
+  "data_availability": {
+    "has": [
+      "billing",
+      "crm",
+      "gl",
+      "hris",
+      "marketing_automation",
+      "support_desk",
+      "product_analytics"
+    ],
+    "missing": [
+      "survey"
+    ]
+  },
+  "provenance": {
+    "financials.gross_margin_pct": "sample",
+    "market.segments": "sample",
+    "financials.opex_split": "sample"
+  },
+  "seed": 9090,
+  "history_months": 36
+}
