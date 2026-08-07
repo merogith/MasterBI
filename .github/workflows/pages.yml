@@ -50,10 +50,13 @@ jobs:
       - name: Check the build produced what the front end expects
         run: |
           set -e
-          for f in index.html app.js styles.css static_shim.js .nojekyll \
+          for f in index.html app.js styles.css static_shim.js \
                    data/samples.json data/survey.json data/runs.json; do
             test -s "site/$f" || { echo "missing or empty: $f"; exit 1; }
           done
+          # .nojekyll is deliberately zero bytes — its existence is the signal,
+          # so -f rather than -s.
+          test -f site/.nojekyll || { echo "missing: .nojekyll"; exit 1; }
           for id in northwind_saas meridian_early atlas_enterprise; do
             test -s "site/data/runs/$id/summary.json" || { echo "no summary: $id"; exit 1; }
             test -s "site/data/runs/$id/tables.json"  || { echo "no tables: $id";  exit 1; }
