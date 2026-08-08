@@ -348,7 +348,8 @@ def render_dashboard(profile: CompanyProfile, kpi_set: KPISet,
                      specs_light: Optional[List[ChartSpec]] = None,
                      specs_dark: Optional[List[ChartSpec]] = None,
                      tokens_light: Optional[Dict[str, str]] = None,
-                     tokens_dark: Optional[Dict[str, str]] = None) -> str:
+                     tokens_dark: Optional[Dict[str, str]] = None,
+                     logo=None) -> str:
     computed = [r for r in results if r.computed]
     north_star = next((r for r in computed if r.kpi.id == kpi_set.north_star), None)
     growth = next((r for r in computed if r.kpi.id == "arr_growth_yoy"), None)
@@ -383,6 +384,15 @@ def render_dashboard(profile: CompanyProfile, kpi_set: KPISet,
 
     # Both palettes, because the dashboard ships its own theme toggle — a
     # brand has to be derived twice or switching to dark loses it.
+    # Inlined as a data URI: the dashboard is one self-contained file that has
+    # to survive being emailed, so a <img src="logo.png"> would arrive broken.
+    # Both the markup and the rule are conditional, so an unbranded dashboard
+    # is byte-for-byte what it was before logos existed.
+    logo_html = "" if logo is None else (
+        f'\n      <img class="brand-logo" src="{logo.data_uri()}" alt="">')
+    logo_css = "" if logo is None else (
+        "\n.brand-logo { height: 30px; width: auto; max-width: 220px; "
+        "display: block; margin-bottom: 8px; }")
     light_css = _css_vars(tokens_light or TOKENS["light"])
     dark_css = _css_vars(tokens_dark or TOKENS["dark"])
 
@@ -517,13 +527,13 @@ code {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 
 
 .theme-set {{ display: none; }}
 .theme-set.active {{ display: block; }}
-@media (max-width: 900px) {{ .tab-panel.active {{ grid-template-columns: 1fr; }} }}
+@media (max-width: 900px) {{ .tab-panel.active {{ grid-template-columns: 1fr; }} }}{logo_css}
 </style>
 </head>
 <body>
 <div class="wrap">
   <header class="top">
-    <div>
+    <div>{logo_html}
       <h1>{html.escape(profile.identity.name)}</h1>
       <div class="meta">
         Performance dashboard · {html.escape(period)} ·

@@ -40,6 +40,7 @@ class Deck:
     def __init__(self, profile: CompanyProfile,
                  tokens: Optional[Dict[str, str]] = None):
         self.t = dict(tokens or TOKENS["light"])
+        self.logo = None
         self.prs = Presentation()
         self.prs.slide_width = SLIDE_W
         self.prs.slide_height = SLIDE_H
@@ -87,6 +88,9 @@ class Deck:
     def title_slide(self, results: List[MetricResult], kpi_set: KPISet, period: str):
         s = self._slide()
         p = self.profile
+        if self.logo is not None:
+            s.shapes.add_picture(io.BytesIO(self.logo.data), MARGIN,
+                                 Inches(1.2), height=Inches(0.55))
         self._text(s, "PERFORMANCE REVIEW", MARGIN, Inches(2.3),
                    Inches(8), Inches(0.3), size=11, color="muted")
         self._text(s, p.identity.name, MARGIN, Inches(2.8),
@@ -281,8 +285,10 @@ def render_deck(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                 results: List[MetricResult], findings: List[Finding],
                 images: Dict[str, bytes], specs: List, period: str = "",
                 tokens: Optional[Dict[str, str]] = None,
-                section_order: Optional[List[str]] = None) -> Path:
+                section_order: Optional[List[str]] = None,
+                logo=None) -> Path:
     deck = Deck(profile, tokens)
+    deck.logo = logo
     cur = profile.identity.currency
 
     ctx = SectionContext(

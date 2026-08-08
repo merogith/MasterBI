@@ -98,6 +98,8 @@ def _exhibit(doc: Document, png: Optional[bytes], title: str, caption: str = "")
 
 
 def _draw_cover(doc: Document, c: SectionContent) -> None:
+    if getattr(doc, "logo", None) is not None:
+        doc.add_picture(io.BytesIO(doc.logo.data), height=Inches(0.5))
     _muted(doc, "PERFORMANCE REVIEW", size=10)
     doc.add_heading(c.title, level=0)
     _muted(doc, c.intro, size=11)
@@ -183,9 +185,11 @@ def render_doc(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                images: Dict[str, bytes], specs: List, checks: List[str],
                anomaly_notes: List[str], period: str = "",
                tokens: Optional[Dict[str, str]] = None,
-               section_order: Optional[List[str]] = None) -> Path:
+               section_order: Optional[List[str]] = None,
+               logo=None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     doc = Document()
+    doc.logo = logo
     # The token set rides on the document, matching `pdf.t` and `self.t` in the
     # other two renderers. Threading it through `_muted`'s call sites would say
     # the same thing many more times.

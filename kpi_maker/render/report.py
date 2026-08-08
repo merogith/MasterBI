@@ -17,6 +17,7 @@ matters for a tool meant to run on a laptop rather than a build server.
 from __future__ import annotations
 
 from pathlib import Path
+import io
 from typing import Dict, List, Optional, Tuple
 
 from fpdf import FPDF
@@ -56,6 +57,8 @@ class PDFReport(FPDF):
         # could ever reach the page. Defaulting to that same palette is what
         # keeps an unbranded report byte-identical.
         self.t = dict(tokens or TOKENS["light"])
+        self.logo = None
+        self.images: Dict[str, bytes] = {}
         self.unicode = False
         self.family = "helvetica"
         self.set_margins(18, 18, 18)
@@ -253,7 +256,6 @@ class PDFReport(FPDF):
             self.set_text_color(*_rgb(self.t["muted"]))
             self.multi_cell(0, 4, self.clean(subtitle))
         self.ln(1)
-        import io
         self.image(io.BytesIO(png), w=self.w - 36)
         self.ln(1.5)
         if note:
@@ -275,6 +277,11 @@ WIDTHS = {
 
 def _draw_cover(pdf: PDFReport, c: SectionContent) -> None:
     pdf.add_page()
+    if pdf.logo is not None:
+        # Above the block, not beside it: a logo of unknown aspect ratio
+        # alongside the title would collide with a wide one. Height is fixed
+        # and the width follows, so any shape behaves.
+        pdf.image(io.BytesIO(pdf.logo.data), x=18, y=26, h=14)
     pdf.set_y(58)
     pdf.set_font(pdf.family, "", 9)
     pdf.set_text_color(*_rgb(pdf.t["muted"]))
@@ -453,10 +460,12 @@ def render_report(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                   images: Dict[str, bytes], specs: List, checks: List[str],
                   anomaly_notes: List[str], period: str = "",
                   tokens: Optional[Dict[str, str]] = None,
-                  section_order: Optional[List[str]] = None) -> Path:
+                  section_order: Optional[List[str]] = None,
+                  logo=None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     pdf = PDFReport(profile, tokens)
     pdf.images = images
+    pdf.logo = logo
 
     ctx = SectionContext(
         profile=profile, kpi_set=kpi_set, results=results, findings=findings,

@@ -22,6 +22,7 @@ from ..datagen.saas import generate as generate_subscription
 from ..insight.detectors import detect_all
 from ..kpi.selection import select
 from ..metrics.engine import compute, facts_table
+from ..design.logo import load_logo
 from ..design.palette import derive_tokens
 from ..render.dashboard import render_dashboard
 from ..render.deck import render_deck
@@ -160,6 +161,19 @@ def _analyse(ctx) -> List[Any]:
                       spec=ctx.spec.analysis)
 
 
+def _logo(ctx):
+    """The brand logo, loaded once per run.
+
+    Memoised alongside the palette because four render stages want it and the
+    file should be validated once, not four times with four chances to differ.
+    """
+    cached = getattr(ctx, "_logo_cache", "unset")
+    if cached == "unset":
+        cached = load_logo(ctx.spec.design.brand.logo_path, ctx.uploads_dir)
+        object.__setattr__(ctx, "_logo_cache", cached)
+    return cached
+
+
 def _palettes(ctx) -> Dict[str, Dict[str, str]]:
     """The derived token set for each mode, memoised on the context.
 
@@ -220,7 +234,7 @@ def _dashboard(ctx):
             [a.description for a in ctx.get("source").anomalies],
             specs_light=specs["light"], specs_dark=specs["dark"],
             tokens_light=_palettes(ctx)["light"],
-            tokens_dark=_palettes(ctx)["dark"],
+            tokens_dark=_palettes(ctx)["dark"], logo=_logo(ctx),
         ),
         encoding="utf-8",
     )
@@ -248,7 +262,7 @@ def _report_pdf(ctx):
                   ctx.get("visualise")["light"], ctx.get("source").checks,
                   [a.description for a in ctx.get("source").anomalies], ctx.period,
                   tokens=_palettes(ctx)["light"],
-                  section_order=ctx.spec.design.sections)
+                  section_order=ctx.spec.design.sections, logo=_logo(ctx))
     return path
 
 
@@ -261,7 +275,7 @@ def _deck_pptx(ctx):
                 ctx.get("analyse"), ctx.get("charts_png"),
                 ctx.get("visualise")["light"], ctx.period,
                 tokens=_palettes(ctx)["light"],
-                section_order=ctx.spec.design.sections)
+                section_order=ctx.spec.design.sections, logo=_logo(ctx))
     return path
 
 
@@ -275,7 +289,7 @@ def _doc_docx(ctx):
                ctx.get("visualise")["light"], ctx.get("source").checks,
                [a.description for a in ctx.get("source").anomalies], ctx.period,
                tokens=_palettes(ctx)["light"],
-               section_order=ctx.spec.design.sections)
+               section_order=ctx.spec.design.sections, logo=_logo(ctx))
     return path
 
 
