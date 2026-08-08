@@ -16,6 +16,9 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 | RunSpec contract + staged, cacheable pipeline | `kpi_maker/spec/`, `kpi_maker/pipeline/` | done |
 | Formula engine (KPIs + calculated columns) | `kpi_maker/formula/`, `kpi_maker/prep/` | done |
 | Studio — adjust any stage, re-run what changed | `ui/` | done |
+| Two-tier reconciliation gate + pandera contract | `kpi_maker/contract/` | done |
+| Cleaning ops + lineage log | `kpi_maker/prep/` | done — 19 ops |
+| Real-data ingestion (5 shapes) | `kpi_maker/ingest/` | done |
 | KPI library + sandboxed selection engine | `kpi_maker/kpi/` | done — SaaS pack (44 KPIs, 39% leading) |
 | Synthetic data + reconciliation gate | `kpi_maker/datagen/` | done — SaaS |
 | Metrics engine + facts table | `kpi_maker/metrics/` | done — 24 implemented |
@@ -28,7 +31,7 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 | HTTP API | `kpi_maker/api/` | done |
 | Web UI | `ui/` | done — M8 (vanilla JS, no build step) |
 | More sectors (M2) | — | not started |
-| Ingestion (M6) | `api/upload` | profiling only; no mapping |
+
 | AI Builder (M7) | — | not started |
 
 ## Run it
@@ -63,7 +66,7 @@ Three modes on the home screen:
 |---|---|---|
 | **1 · Try a sample** | Working — 3 curated companies | Free |
 | **2 · Build your own** | Working — 14-question survey | Free |
-| **3 · Bring your data** | Column profiling only; mapping + AI not connected | Free |
+| **3 · Bring your data** | Working — read, profile, clean, map, run | Free |
 | **Surprise me** | Working — random self-consistent company | Free |
 
 Results open in a workspace with five tabs: Overview (findings), Dashboard
@@ -257,6 +260,7 @@ out/
 ./.venv/Scripts/python.exe -m tests.stress --quick  # scale extremes only
 ./.venv/Scripts/python.exe -m tests.spine           # RunSpec + stage graph
 ./.venv/Scripts/python.exe -m tests.formula         # the formula language
+./.venv/Scripts/python.exe -m tests.ingest          # ingestion, cleaning, the gate
 ```
 
 `tests/spine.py` asks a different question from `stress.py`: not "does the

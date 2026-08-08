@@ -79,7 +79,7 @@ def _source_from_uploads(ctx) -> Any:
         raise ValueError(
             "source.kind is 'upload' but no files are listed in source.uploads")
 
-    base = ctx.uploads_dir or (ctx.out_dir / "uploads")
+    base = Path(ctx.uploads_dir)
     paths = [Path(u) if Path(u).is_absolute() else base / u for u in uploads]
     missing = [str(p) for p in paths if not p.exists()]
     if missing:

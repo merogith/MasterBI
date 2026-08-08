@@ -610,3 +610,67 @@ tbody tr:hover { background: var(--accent-soft); }
   .studio { grid-template-columns: 1fr; }
   .studio-rail { position: static; flex-direction: row; overflow-x: auto; }
 }
+
+/* ---------------- Studio: cleaning recipe and ingestion ---------------- */
+
+.op-list { display: flex; flex-direction: column; gap: 8px; }
+.op-card {
+  display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 12px;
+  align-items: start; padding: 11px 13px; background: var(--raised);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.op-card.off { opacity: .5; }
+.op-num {
+  width: 22px; height: 22px; border-radius: 50%; background: var(--accent-soft);
+  color: var(--accent); font-size: 11px; font-weight: 700;
+  display: grid; place-items: center;
+}
+.op-title { font-size: 13px; font-weight: 600; }
+.op-target {
+  font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 7px;
+  font-family: ui-monospace, monospace;
+}
+.op-line { font-size: 12.5px; color: var(--text-secondary); margin-top: 2px; }
+.op-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.op-actions { display: flex; gap: 4px; }
+.op-actions button {
+  border: 1px solid var(--border); background: transparent; color: var(--muted);
+  border-radius: 6px; padding: 2px 8px; font-size: 11.5px; cursor: pointer;
+}
+.op-actions button:hover:not([disabled]) { color: var(--text-primary); border-color: var(--border-strong); }
+.op-actions button[disabled] { opacity: .35; cursor: default; }
+
+.suggest-box {
+  border: 1px solid var(--accent); border-radius: var(--radius-sm);
+  background: var(--accent-soft); padding: 12px 14px; margin-bottom: 16px;
+}
+.suggest-head { font-size: 12px; font-weight: 620; color: var(--accent); margin-bottom: 8px; }
+.suggest-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  font-size: 12.5px; padding: 4px 0;
+}
+
+.upload-row { margin-bottom: 16px; }
+.dropzone.compact { padding: 18px; gap: 3px; }
+.upload-report {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 13px 15px; margin-bottom: 18px; background: var(--raised);
+}
+.upload-head { font-size: 13px; margin-bottom: 8px; }
+.upload-shape { font-size: 12.5px; color: var(--text-secondary); margin: 10px 0; }
+.upload-shape code { font-family: ui-monospace, monospace; color: var(--accent); }
+
+/* A confidence bar, so an unsure mapping looks unsure at a glance rather than
+   requiring the reader to compare two-decimal numbers. */
+.conf {
+  display: inline-block; width: 74px; height: 5px; border-radius: 3px;
+  background: var(--grid); overflow: hidden; margin-right: 7px; vertical-align: middle;
+}
+.conf i { display: block; height: 100%; background: var(--muted); }
+.conf-confident i { background: var(--good); }
+.conf-uncertain i { background: var(--warning); }
+.conf-unmapped  i { background: var(--critical); }
+
+.coverage { margin-top: 6px; }
+.coverage-head { font-size: 13px; margin-bottom: 12px; color: var(--text-secondary); }
+.plain.small { font-size: 12px; color: var(--muted); padding-left: 18px; margin: 6px 0; }

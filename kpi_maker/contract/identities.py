@@ -60,6 +60,16 @@ class Check:
             # is the schema's job to say so precisely; here it just means this
             # identity could not be evaluated.
             return CheckResult(True, f"column {exc} absent", skipped=True)
+        except (TypeError, ValueError) as exc:
+            # Almost always a numeric column still holding text — an upload
+            # that has not been cast yet. That is a real problem (no metric can
+            # be computed from it either), so it fails rather than skips, but
+            # it fails with the fix rather than as a TypeError from deep inside
+            # a comparison.
+            return CheckResult(
+                False,
+                f"could not be evaluated ({exc}). A numeric column is probably "
+                f"still stored as text — add a 'cast' cleaning step for it.")
 
 
 CHECKS: List[Check] = []

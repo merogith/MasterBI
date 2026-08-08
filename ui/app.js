@@ -744,6 +744,8 @@ async function openStudio() {
       api('/api/catalog/kpis'),
       api('/api/catalog/functions'),
     ]);
+    studio.ops = options.ops || [];
+    studio.opLabels = Object.fromEntries(studio.ops.map((o) => [o.name, o.label]));
     studio.spec = spec;
     studio.original = JSON.parse(JSON.stringify(spec));
     studio.options = options;
@@ -752,6 +754,8 @@ async function openStudio() {
     studio.functions = functions.functions;
     renderStudio();
     refreshPlan();
+    loadLineage();
+    loadQuality();
   } catch (err) {
     toast('Could not open the Studio: ' + err.message, true);
     show('results');
@@ -759,6 +763,23 @@ async function openStudio() {
 }
 
 $('#res-adjust').addEventListener('click', openStudio);
+
+/* What the current recipe actually did, and what the data is missing. Both are
+ * fetched after the panels render: neither should delay the Studio opening. */
+async function loadLineage() {
+  try {
+    const report = await api(`/api/runs/${state.runId}/lineage`);
+    studio.lineage = report.steps || [];
+    if (studio.stage === 'clean') panel('clean').innerHTML = cleanPanel();
+  } catch (_) { studio.lineage = []; }
+}
+
+async function loadQuality() {
+  try {
+    studio.quality = await api(`/api/runs/${state.runId}/quality`);
+    if (studio.stage === 'source') panel('source').innerHTML = sourcePanel();
+  } catch (_) { studio.quality = null; }
+}
 
 $('#studio-rail').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-stage]');
@@ -791,10 +812,45 @@ function section(title, hint, body) {
 
 function sourcePanel() {
   const g = studio.spec.source.generator;
-  return section('Where the numbers come from',
-    `Synthetic data, generated from the profile. The same seed always produces
-     the same company — reproducibility is a feature, not a coincidence.`,
-    `<div class="field-row">
+  const q = studio.quality;
+  const isUpload = studio.spec.source.kind === 'upload';
+
+  const coverage = q ? `
+    <div class="coverage">
+      <div class="coverage-head">
+        <strong>${q.kpis_available}</strong> KPIs computable from what you have${
+          q.kpis_blocked ? `, <strong>${q.kpis_blocked}</strong> blocked by missing data` : ''}
+      </div>
+      ${q.tables_missing.length ? `
+        <table class="kpi-table"><thead><tr>
+          <th>Missing table</th><th>Would unlock</th><th>Supply as</th><th></th>
+        </tr></thead><tbody>
+        ${q.tables_missing.map((m) => {
+          const filled = (studio.spec.source.fill_gaps || []).includes(m.table);
+          return `<tr>
+            <td><span class="k-name">${esc(titleCase(m.table))}</span>
+                <div class="k-id">${esc(m.unlocks || '')}</div></td>
+            <td class="num">${m.unlocks_kpis} KPI${m.unlocks_kpis === 1 ? '' : 's'}</td>
+            <td>${esc(m.supply_by || '—')}</td>
+            <td><div class="k-state">
+              <button data-fill="${esc(m.table)}" class="${filled ? 'on' : ''}">
+                ${filled ? 'Modelling it' : 'Model it'}</button>
+            </div></td></tr>`;
+        }).join('')}
+        </tbody></table>
+        <p class="hint" style="margin-top:10px">
+          Modelling a missing table generates plausible data in its place. Every
+          KPI computed from it is marked <em>modelled</em> in the dashboard, the
+          workbook and the report — it is never presented as measured.
+        </p>` : '<p class="hint">Every fact table is present.</p>'}
+      ${q.gate_warnings?.length ? `<div class="warn-banner">${
+        q.gate_warnings.map(esc).join('<br>')}</div>` : ''}
+      ${q.blocking?.length ? `<div class="warn-banner">${
+        q.blocking.map(esc).join('<br>')}</div>` : ''}
+    </div>` : '';
+
+  const generator = `
+    <div class="field-row">
       <label class="field"><span>Random seed</span>
         <input type="number" data-spec="source.generator.seed" value="${g.seed ?? ''}"
                placeholder="${studio.spec.profile.seed}"></label>
@@ -803,16 +859,91 @@ function sourcePanel() {
                value="${g.history_months ?? ''}" placeholder="${studio.spec.profile.history_months}"></label>
     </div>
     <p class="hint">Changing either regenerates the company and everything after
-       it — the most expensive edit in the Studio.</p>`);
+       it — the most expensive edit in the Studio.</p>`;
+
+  return section('Where the numbers come from',
+    isUpload
+      ? `Your own files. They enter the same fact tables generated data does, so
+         everything downstream treats them identically — which is why a KPI can
+         be computed from your upload and one from a modelled table can sit
+         beside it, correctly labelled.`
+      : `Synthetic data, generated from the profile. The same seed always
+         produces the same company — reproducibility is a feature, not a
+         coincidence.`,
+    `<div class="upload-row">
+       <label class="dropzone compact" id="studio-drop">
+         <input type="file" id="studio-file" accept=".csv,.tsv,.xlsx,.xls" hidden>
+         <span class="drop-title">${isUpload ? 'Add another file' : 'Upload your own data'}</span>
+         <span class="drop-sub">CSV, TSV or Excel — we read it, profile it and suggest the fixes</span>
+       </label>
+     </div>
+     <div id="studio-upload-result"></div>
+     ${coverage}
+     ${isUpload ? '' : generator}`);
 }
 
 function cleanPanel() {
+  const steps = studio.spec.cleaning.steps || [];
+  const cards = steps.length ? steps.map((st, i) => {
+    const line = (studio.lineage || [])[i];
+    const meta = line
+      ? `${line.rows_before.toLocaleString()} → ${line.rows_after.toLocaleString()} rows` +
+        (line.cells_changed ? ` · ${line.cells_changed.toLocaleString()} cells changed` : '')
+      : 'applies on the next run';
+    return `
+      <div class="op-card${st.enabled === false ? ' off' : ''}">
+        <div class="op-num">${i + 1}</div>
+        <div class="op-body">
+          <div class="op-title">${esc((studio.opLabels || {})[st.op] || st.op)}
+            <span class="op-target">${esc(st.table || 'every table')}</span></div>
+          <div class="op-line">${esc(line ? line.sentence : JSON.stringify(st.params))}</div>
+          <div class="op-meta">${esc(meta)}</div>
+        </div>
+        <div class="op-actions">
+          <button data-op-move="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} title="Move up">↑</button>
+          <button data-op-move="${i}" data-dir="1" ${i === steps.length - 1 ? 'disabled' : ''} title="Move down">↓</button>
+          <button data-op-toggle="${i}">${st.enabled === false ? 'Enable' : 'Disable'}</button>
+          <button data-op-drop="${i}">Remove</button>
+        </div>
+      </div>`;
+  }).join('') : '<p class="hint">No cleaning steps. Synthetic data arrives reconciled; an upload usually needs a few.</p>';
+
+  const suggestions = (studio.suggestions || []).filter(
+    (sg) => !steps.some((st) => st.op === sg.op && JSON.stringify(st.params) === JSON.stringify(sg.params)));
+
   return section('Cleaning and transformation',
-    `The op registry — dedupe, cast, parse dates, fill missing, clip outliers,
-     resample — lands with real-data ingestion in P2. Synthetic data arrives
-     already reconciled, so there is nothing here to fix yet.`,
-    `<p class="hint">The stage exists in the pipeline and is already wired for
-      cache invalidation; only the operations are outstanding.</p>`);
+    `Ordered — each step sees the output of the one before it. Every step
+     records what it did, and those sentences become the methodology appendix,
+     which is what makes a cleaned dataset defensible rather than merely tidy.`,
+    `${suggestions.length ? `
+      <div class="suggest-box">
+        <div class="suggest-head">Suggested from your data — nothing is applied until you accept it</div>
+        ${suggestions.map((sg, i) => `
+          <div class="suggest-row">
+            <span>${esc(sg.reason)}</span>
+            <button class="ghost" data-accept-op="${i}">Accept</button>
+          </div>`).join('')}
+      </div>` : ''}
+     <div class="op-list">${cards}</div>
+     <div class="field-row" style="margin-top:16px">
+       <label class="field"><span>Add a step</span>
+         <select id="op-pick">
+           <option value="">Choose an operation…</option>
+           ${(studio.ops || []).map((o) =>
+             `<option value="${esc(o.name)}">${esc(o.label)}</option>`).join('')}
+         </select></label>
+       <label class="field"><span>Table</span>
+         <select id="op-table">
+           <option value="">Every table</option>
+           ${(state.tableNames || []).map((t) =>
+             `<option value="${esc(t)}">${esc(titleCase(t))}</option>`).join('')}
+         </select></label>
+       <label class="field" style="flex:1;min-width:220px"><span>Parameters (JSON)</span>
+         <input id="op-params" placeholder='{"column": "revenue", "to": "number"}'></label>
+       <button class="ghost" id="op-add" style="align-self:flex-end">Add step</button>
+     </div>
+     <div class="fx-status" id="op-status"></div>
+     <div id="op-help" class="hint" style="margin-top:8px"></div>`);
 }
 
 function modelPanel() {
@@ -952,6 +1083,14 @@ function setPath(obj, path, value) {
 
 panelDelegate('change', (e) => {
   const el = e.target;
+  if (el.id === 'op-pick') {
+    const spec = (studio.ops || []).find((o) => o.name === el.value);
+    $('#op-help').innerHTML = spec
+      ? `${esc(spec.help)}<br><code>${esc(JSON.stringify(
+          Object.fromEntries(Object.keys(spec.params).map((k) => [k, '…']))))}</code>`
+      : '';
+    return;
+  }
   if (el.dataset.spec) {
     let value = el.value;
     if (el.type === 'number') value = value === '' ? null : Number(value);
@@ -994,6 +1133,43 @@ panelDelegate('click', (e) => {
   }
   if (e.target.closest('#kpi-add')) return openFormulaEditor();
   if (e.target.closest('#col-add')) return addCalculatedColumn();
+
+  const move = e.target.closest('[data-op-move]');
+  const toggle = e.target.closest('[data-op-toggle]');
+  const drop = e.target.closest('[data-op-drop]');
+  const accept = e.target.closest('[data-accept-op]');
+  const steps = studio.spec.cleaning.steps;
+
+  if (move) {
+    const i = Number(move.dataset.opMove);
+    const j = i + Number(move.dataset.dir);
+    if (j < 0 || j >= steps.length) return;
+    // Order is meaning here: parse the dates, THEN roll up to months.
+    [steps[i], steps[j]] = [steps[j], steps[i]];
+    return afterRecipeChange();
+  }
+  if (toggle) {
+    const st = steps[Number(toggle.dataset.opToggle)];
+    st.enabled = st.enabled === false;
+    return afterRecipeChange();
+  }
+  if (drop) { steps.splice(Number(drop.dataset.opDrop), 1); return afterRecipeChange(); }
+  if (accept) {
+    const sg = (studio.suggestions || [])[Number(accept.dataset.acceptOp)];
+    if (sg) steps.push({ op: sg.op, table: sg.table, params: sg.params, enabled: true });
+    return afterRecipeChange();
+  }
+  if (e.target.closest('#op-add')) return addCleaningStep();
+
+  const fill = e.target.closest('[data-fill]');
+  if (fill) {
+    const list = new Set(studio.spec.source.fill_gaps || []);
+    const table = fill.dataset.fill;
+    list.has(table) ? list.delete(table) : list.add(table);
+    studio.spec.source.fill_gaps = [...list];
+    panel('source').innerHTML = sourcePanel();
+    return queuePatch();
+  }
 });
 
 function panelDelegate(event, handler) {
@@ -1010,6 +1186,51 @@ function toggleList(listName, id, opposite) {
   studio.spec.metrics[opposite] = [...other];
   panel('kpis').innerHTML = kpiPanel();
   queuePatch();
+}
+
+function afterRecipeChange() {
+  panel('clean').innerHTML = cleanPanel();
+  queuePatch();
+  previewRecipe();
+}
+
+async function previewRecipe() {
+  // Preview before committing: the row counts are what a user checks, and
+  // showing them from a stale lineage would be worse than showing none.
+  try {
+    const report = await api(`/api/runs/${state.runId}/clean/preview`, {
+      method: 'POST',
+      body: JSON.stringify({ steps: studio.spec.cleaning.steps }),
+    });
+    studio.lineage = report.steps || [];
+    $('#op-status').className = report.pending_tables?.length ? 'fx-status' : 'fx-status ok';
+    $('#op-status').textContent = report.summary;
+  } catch (err) {
+    $('#op-status').className = 'fx-status err';
+    $('#op-status').textContent = err.message;
+    studio.lineage = [];
+  }
+  if (studio.stage === 'clean') panel('clean').innerHTML = cleanPanel();
+}
+
+function addCleaningStep() {
+  const op = $('#op-pick').value;
+  const table = $('#op-table').value || null;
+  const raw = $('#op-params').value.trim();
+  const status = $('#op-status');
+  if (!op) { status.className = 'fx-status err'; status.textContent = 'Choose an operation.'; return; }
+  let params = {};
+  if (raw) {
+    try { params = JSON.parse(raw); }
+    catch (err) {
+      status.className = 'fx-status err';
+      status.textContent = 'Parameters must be valid JSON — ' + err.message;
+      return;
+    }
+  }
+  studio.spec.cleaning.steps.push({ op, table, params, enabled: true });
+  $('#op-params').value = '';
+  afterRecipeChange();
 }
 
 async function addCalculatedColumn() {
@@ -1058,6 +1279,98 @@ async function refreshPlan() {
     $('#studio-rerun').disabled = true;
   }
 }
+
+// Upload from inside the Studio. Profiling is read-only: the file is inspected
+// and its fixes offered, and nothing about the run changes until the user acts.
+$('#view-studio').addEventListener('click', (e) => {
+  if (e.target.closest('#studio-drop')) $('#studio-file')?.click();
+});
+$('#view-studio').addEventListener('change', async (e) => {
+  if (e.target.id !== 'studio-file' || !e.target.files?.[0]) return;
+  const box = $('#studio-upload-result');
+  box.innerHTML = '<p class="hint">Reading and profiling…</p>';
+  const body = new FormData();
+  body.append('file', e.target.files[0]);
+  try {
+    const res = await fetch(API + '/api/ingest/profile', { method: 'POST', body });
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    const data = await res.json();
+    // Profiling is not adoption. The suggestions describe THIS file, and
+    // applying them to a run still sourced from generated data would target
+    // columns that do not exist there — which is exactly what happened before
+    // the two actions were separated.
+    studio.upload = data;
+    box.innerHTML = renderUploadReport(data);
+  } catch (err) {
+    box.innerHTML = `<div class="warn-banner">${esc(err.message)}</div>`;
+  }
+});
+
+function renderUploadReport(data) {
+  const best = data.shapes?.[0];
+  const read = data.read;
+  return `
+    <div class="upload-report">
+      <div class="upload-head"><strong>${esc(data.filename)}</strong>
+        — ${read.rows.toLocaleString()} rows, ${read.columns.length} columns</div>
+      ${read.notes?.length ? `<ul class="plain small">${
+        read.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : ''}
+      ${best ? `
+        <div class="upload-shape">Looks like a <strong>${esc(best.shape.replace(/_/g, ' '))}</strong>
+          → <code>${esc(best.target_table)}</code>${best.usable
+            ? '' : ` — but ${esc(best.missing_required.join(', '))} did not map`}</div>
+        <table class="kpi-table"><thead><tr>
+          <th>Field</th><th>From column</th><th>Confidence</th></tr></thead>
+        <tbody>${best.matches.map((m) => `
+          <tr><td><span class="k-name">${esc(m.field)}</span>
+                  <div class="k-id">${esc(m.reason)}</div></td>
+              <td>${esc(m.column || '—')}</td>
+              <td><div class="conf conf-${esc(m.status)}">
+                    <i style="width:${Math.round(m.confidence * 100)}%"></i>
+                  </div>${Math.round(m.confidence * 100)}%</td></tr>`).join('')}
+        </tbody></table>` : ''}
+      <div class="upload-actions">
+        <button class="primary" id="use-upload"${best?.usable ? '' : ' disabled'}>
+          Use this file as the source</button>
+        <span class="hint">${best?.usable
+          ? `${(data.profile.suggestions || []).length} suggested fix(es) will be
+             offered in the Clean panel once you do.`
+          : 'Required fields did not map, so this file cannot drive a run yet.'}</span>
+      </div>
+    </div>`;
+}
+
+/* Adoption is a separate, explicit act. It switches the run's source to the
+ * file, records the mapping, and only then are that file's suggested fixes
+ * relevant — they name its columns, which do not exist in generated data. */
+$('#view-studio').addEventListener('click', (e) => {
+  if (!e.target.closest('#use-upload')) return;
+  const data = studio.upload;
+  const best = data?.shapes?.[0];
+  if (!data || !best?.usable) return;
+
+  studio.spec.source.kind = 'upload';
+  studio.spec.source.uploads = [data.stored_as];
+  studio.spec.model.mapping = {
+    ...(studio.spec.model.mapping || {}),
+    [best.target_table]: Object.fromEntries(
+      best.matches.filter((m) => m.column).map((m) => [m.field, m.column])),
+  };
+  // Suggestions target the file's own table key, not every table.
+  studio.suggestions = (data.profile.suggestions || []).map((sg) => ({
+    ...sg, table: data.table_key,
+  }));
+
+  renderStudio();
+  queuePatch();
+  toast(`Using ${data.filename}. ${studio.suggestions.length} suggested fix(es) in Clean.`);
+});
+
+$('#view-studio').addEventListener('click', (e) => {
+  const go = e.target.closest('[data-goto-stage]');
+  if (!go) return;
+  $(`#studio-rail [data-stage="${go.dataset.gotoStage}"]`)?.click();
+});
 
 $('#studio-rerun').addEventListener('click', async () => {
   try {

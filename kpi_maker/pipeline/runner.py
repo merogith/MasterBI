@@ -42,8 +42,16 @@ class RunContext:
     origins: Any = None
     # Tier 2 identity misses on uploaded data — reported, never fatal.
     gate_warnings: Any = None
-    # Where `source.uploads` names are resolved from.
+    # Where `source.uploads` names are resolved from. Uploads are shared
+    # across runs — the same file can drive several — so they live beside the
+    # run directories rather than inside one. Defaulting here rather than in
+    # the stage keeps one answer to "where is that file?"; two produced a run
+    # that stored uploads in one place and looked for them in another.
     uploads_dir: Any = None
+
+    def __post_init__(self) -> None:
+        if self.uploads_dir is None:
+            self.uploads_dir = Path(self.out_dir).parent / "_uploads"
 
     def get(self, stage_name: str) -> Any:
         if stage_name not in self.values:
@@ -132,11 +140,13 @@ class RunResult:
 def execute(spec: RunSpec, out_dir: Path, *,
             artifacts: Optional[Sequence[str]] = None,
             say: Optional[Callable[[str], None]] = None,
+            uploads_dir: Optional[Path] = None,
             force: bool = False) -> RunResult:
     """Run every stage that needs running, in dependency order."""
     out_dir.mkdir(parents=True, exist_ok=True)
     speak = say or (lambda msg: None)
-    ctx = RunContext(spec=spec, out_dir=out_dir, say=speak)
+    ctx = RunContext(spec=spec, out_dir=out_dir, say=speak,
+                     uploads_dir=uploads_dir)
 
     plan = _plan(spec, out_dir, artifacts)
     hashes = read_hashes(out_dir)

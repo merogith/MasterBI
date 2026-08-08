@@ -637,6 +637,10 @@ async def ingest_profile(file: UploadFile = File(...)) -> Dict[str, Any]:
     return {
         "filename": file.filename,
         "stored_as": stored.name,
+        # The key this file occupies once adopted as a source. Returned rather
+        # than left for the UI to derive: `load_uploads` decides it, and two
+        # implementations of that rule would drift.
+        "table_key": stored.stem,
         "read": result.as_dict(),
         "profile": profile.as_dict(),
         "shapes": [p.as_dict() for p in proposals[:3]],
@@ -659,7 +663,26 @@ def clean_preview(run_id: str, body: RecipeRequest) -> Dict[str, Any]:
         raise HTTPException(404, "That run has no data on disk")
     try:
         recipe = CleaningRecipe(steps=[CleaningStep(**s) for s in body.steps])
-        return preview_recipe(tables, recipe, table=body.table)
+    except Exception as exc:                             # noqa: BLE001
+        raise HTTPException(422, str(exc))
+
+    # A step may target a table this run does not have yet — the usual case
+    # right after adopting an upload, where the recipe names the new file's
+    # columns but the run still holds the previous source's data. That is a
+    # sequencing state, not a bad recipe, so say so instead of failing.
+    pending = sorted({s.table for s in recipe.active
+                      if s.table and s.table not in tables})
+    if pending:
+        return {
+            "table": body.table, "steps": [], "preview": [],
+            "pending_tables": pending,
+            "summary": (f"Applies to {', '.join(pending)}, which arrives when you "
+                        f"re-run with the new source."),
+        }
+
+    try:
+        return {**preview_recipe(tables, recipe, table=body.table),
+                "pending_tables": []}
     except Exception as exc:                             # noqa: BLE001
         raise HTTPException(422, str(exc))
 
