@@ -14,7 +14,7 @@ their own, and an upload that carries more than we need is not an error.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import pandera.pandas as pa
@@ -55,29 +55,81 @@ def _money(nullable: bool = False, **checks) -> pa.Column:
 NON_NEGATIVE = pa.Check.ge(0)
 A_FRACTION = pa.Check.in_range(-1.0, 1.0)
 
-FACT_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
+# --------------------------------------------------------------------------
+# Universal — every archetype emits these, whatever it sells
+# --------------------------------------------------------------------------
 
-    "monthly_financials": pa.DataFrameSchema(
+# A P&L is a P&L. Nothing here is about subscriptions: a retailer, an agency
+# and a SaaS vendor all have revenue, cost of goods and operating lines. The
+# subscription-only columns live in the extension below, so an e-commerce
+# generator does not have to emit `mrr` as a column of NaN to satisfy a
+# validator that had no business asking for it.
+_PL_COLUMNS = {
+    "month": MONTH,
+    "revenue": _money(ge=NON_NEGATIVE),
+    "cogs": _money(),
+    "gross_profit": _money(),
+    "gross_margin_pct": pa.Column(float, coerce=True, checks=A_FRACTION),
+    "sales_cost": _money(),
+    "marketing_cost": _money(),
+    "rnd_cost": _money(),
+    "ga_cost": _money(),
+    "total_opex": _money(),
+    "ebitda": _money(),
+    "cash": _money(),
+    "net_burn": _money(),
+}
+
+_SUBSCRIPTION_PL_COLUMNS = {
+    "mrr": _money(ge=NON_NEGATIVE),
+    "arr": _money(ge=NON_NEGATIVE),
+}
+
+
+def _financials(columns, note: str) -> pa.DataFrameSchema:
+    return pa.DataFrameSchema(
+        dict(columns), strict=False, unique=["month"], name="monthly_financials",
+        description=f"One row per month. The spine every metric reindexes onto. {note}",
+    )
+
+
+UNIVERSAL_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
+
+    "monthly_financials": _financials(_PL_COLUMNS, "Universal P&L columns."),
+
+    "headcount": pa.DataFrameSchema(
         {
             "month": MONTH,
-            "mrr": _money(ge=NON_NEGATIVE),
-            "arr": _money(ge=NON_NEGATIVE),
-            "revenue": _money(ge=NON_NEGATIVE),
-            "cogs": _money(),
-            "gross_profit": _money(),
-            "gross_margin_pct": pa.Column(float, coerce=True, checks=A_FRACTION),
-            "sales_cost": _money(),
-            "marketing_cost": _money(),
-            "rnd_cost": _money(),
-            "ga_cost": _money(),
-            "total_opex": _money(),
-            "ebitda": _money(),
-            "cash": _money(),
-            "net_burn": _money(),
+            "function": pa.Column(nullable=False),
+            "fte": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "cost": _money(),
         },
-        strict=False, unique=["month"], name="monthly_financials",
-        description="One row per month. The spine every metric reindexes onto.",
+        strict=False, name="headcount",
+        description="Month x function.",
     ),
+
+    "marketing": pa.DataFrameSchema(
+        {
+            "month": MONTH,
+            "channel": pa.Column(nullable=False),
+            "spend": _money(),
+            "leads": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+        },
+        strict=False, name="marketing",
+        description="Month x channel.",
+    ),
+}
+
+
+# --------------------------------------------------------------------------
+# Subscription
+# --------------------------------------------------------------------------
+
+SUBSCRIPTION_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
+
+    "monthly_financials": _financials(
+        {**_PL_COLUMNS, **_SUBSCRIPTION_PL_COLUMNS},
+        "Plus the recurring-revenue columns."),
 
     "customers": pa.DataFrameSchema(
         {
@@ -103,28 +155,6 @@ FACT_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
         },
         strict=False, name="mrr_movements",
         description="One row per customer per month per movement type.",
-    ),
-
-    "headcount": pa.DataFrameSchema(
-        {
-            "month": MONTH,
-            "function": pa.Column(nullable=False),
-            "fte": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
-            "cost": _money(),
-        },
-        strict=False, name="headcount",
-        description="Month x function.",
-    ),
-
-    "marketing": pa.DataFrameSchema(
-        {
-            "month": MONTH,
-            "channel": pa.Column(nullable=False),
-            "spend": _money(),
-            "leads": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
-        },
-        strict=False, name="marketing",
-        description="Month x channel.",
     ),
 
     "pipeline": pa.DataFrameSchema(
@@ -159,6 +189,32 @@ FACT_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
         strict=False, unique=["month"], name="sales_capacity",
     ),
 }
+
+
+# --------------------------------------------------------------------------
+# The per-archetype lookup
+# --------------------------------------------------------------------------
+
+SCHEMAS_BY_ARCHETYPE: Dict[str, Dict[str, pa.DataFrameSchema]] = {
+    "saas": {**UNIVERSAL_SCHEMAS, **SUBSCRIPTION_SCHEMAS},
+}
+
+# The union, for callers with no archetype to hand. Ingestion is the case: a
+# user uploads a file before anyone has decided what kind of business it
+# describes, and the quality report still has to say what is wrong with it.
+# Later archetypes merge in the same way, so a table shared between two of them
+# is declared once and validated identically for both.
+FACT_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
+    **UNIVERSAL_SCHEMAS, **SUBSCRIPTION_SCHEMAS,
+}
+
+
+def schemas_for(archetype: Optional[str] = None) -> Dict[str, pa.DataFrameSchema]:
+    """The schema set an archetype is held to, or the union when unknown."""
+    if archetype is None:
+        return FACT_SCHEMAS
+    return SCHEMAS_BY_ARCHETYPE.get(archetype, FACT_SCHEMAS)
+
 
 # Which tables a run genuinely cannot proceed without. Everything else narrows
 # the scorecard rather than stopping it — the selection engine already drops a
@@ -210,13 +266,19 @@ def _describe(table: str, exc) -> List[str]:
 
 
 def validate_schemas(tables: Dict[str, pd.DataFrame],
-                     strict: bool = False) -> Tuple[List[str], List[str]]:
+                     strict: bool = False,
+                     archetype: Optional[str] = None) -> Tuple[List[str], List[str]]:
     """Check every known table against its schema.
 
     Returns (passed, problems). Unknown tables are ignored — a user may bring
     data we have no opinion about, and having an opinion is the schema's job,
     not a precondition for the table existing.
+
+    `archetype` narrows the schema set. Without it the union is used, which is
+    right for an upload nobody has classified yet but wrong for a generator: a
+    retailer held to the union would be asked for `mrr`.
     """
+    known = schemas_for(archetype)
     passed: List[str] = []
     problems: List[str] = []
 
@@ -225,7 +287,7 @@ def validate_schemas(tables: Dict[str, pd.DataFrame],
             problems.append(f"{name}: required table is missing or empty")
 
     for name, frame in tables.items():
-        schema = FACT_SCHEMAS.get(name)
+        schema = known.get(name)
         if schema is None or frame is None or frame.empty:
             continue
         try:

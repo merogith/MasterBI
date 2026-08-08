@@ -48,6 +48,16 @@ class Check:
     tier: Tier
     fn: Callable[[Dict[str, pd.DataFrame], object], CheckResult]
     requires: tuple = ()          # tables that must be present, else skip
+    # Which archetypes this identity is *about*. None means universal — a P&L
+    # identity holds whatever the business sells. Naming them matters because
+    # `requires` alone cannot distinguish "this upload is missing a table" from
+    # "this sector does not have that table at all", and the gate needs to tell
+    # those apart to know whether it checked anything.
+    archetypes: Optional[tuple] = None
+
+    def applies_to(self, archetype: Optional[str]) -> bool:
+        return (archetype is None or self.archetypes is None
+                or archetype in self.archetypes)
 
     def run(self, tables: Dict[str, pd.DataFrame], profile) -> CheckResult:
         for table in self.requires:
@@ -75,11 +85,16 @@ class Check:
 CHECKS: List[Check] = []
 
 
-def check(name: str, tier: Tier, requires: tuple = ()):
+def check(name: str, tier: Tier, requires: tuple = (),
+          archetypes: Optional[tuple] = None):
     def wrap(fn):
-        CHECKS.append(Check(name=name, tier=tier, fn=fn, requires=requires))
+        CHECKS.append(Check(name=name, tier=tier, fn=fn, requires=requires,
+                            archetypes=archetypes))
         return fn
     return wrap
+
+
+SUBSCRIPTION = ("saas",)
 
 
 def _ok(condition: bool, detail: str = "") -> CheckResult:
@@ -112,13 +127,13 @@ def _opex(t, p):
     return _ok(np.allclose(fin["total_opex"], fin[lines].sum(axis=1), rtol=1e-9))
 
 
-@check("arr = mrr x 12", Tier.structural, FIN)
+@check("arr = mrr x 12", Tier.structural, FIN, archetypes=SUBSCRIPTION)
 def _arr(t, p):
     fin = t["monthly_financials"]
     return _ok(np.allclose(fin["arr"], fin["mrr"] * 12.0, rtol=1e-9))
 
 
-@check("billings = revenue + change in deferred revenue", Tier.structural, FIN)
+@check("billings = revenue + change in deferred revenue", Tier.structural, FIN, archetypes=SUBSCRIPTION)
 def _billings(t, p):
     fin = t["monthly_financials"]
     # From the second reported month onward: the first row's deferred-revenue
@@ -130,7 +145,7 @@ def _billings(t, p):
         (fin["revenue"] + fin["deferred_revenue"].diff()).iloc[1:], rtol=1e-9))
 
 
-@check("free cash flow = ebitda + deferred revenue movement - capex", Tier.structural, FIN)
+@check("free cash flow = ebitda + deferred revenue movement - capex", Tier.structural, FIN, archetypes=SUBSCRIPTION)
 def _fcf(t, p):
     fin = t["monthly_financials"]
     return _ok(np.allclose(
@@ -139,46 +154,46 @@ def _fcf(t, p):
         rtol=1e-9))
 
 
-@check("cRPO never exceeds RPO", Tier.structural, FIN)
+@check("cRPO never exceeds RPO", Tier.structural, FIN, archetypes=SUBSCRIPTION)
 def _crpo(t, p):
     fin = t["monthly_financials"]
     return _ok((fin["crpo"] <= fin["rpo"] + 1e-6).all())
 
 
-@check("deferred revenue never negative", Tier.structural, FIN)
+@check("deferred revenue never negative", Tier.structural, FIN, archetypes=SUBSCRIPTION)
 def _deferred(t, p):
     return _ok((t["monthly_financials"]["deferred_revenue"] >= 0).all())
 
 
-@check("MRR never negative", Tier.structural, FIN)
+@check("MRR never negative", Tier.structural, FIN, archetypes=SUBSCRIPTION)
 def _mrr(t, p):
     return _ok((t["monthly_financials"]["mrr"] >= 0).all())
 
 
-@check("no negative customer ACV", Tier.structural, ("customers",))
+@check("no negative customer ACV", Tier.structural, ("customers",), archetypes=SUBSCRIPTION)
 def _acv(t, p):
     return _ok((t["customers"]["final_acv"] >= -1e-6).all())
 
 
-@check("daily actives never exceed monthly actives", Tier.structural, ("product_usage",))
+@check("daily actives never exceed monthly actives", Tier.structural, ("product_usage",), archetypes=SUBSCRIPTION)
 def _dau(t, p):
     usage = t["product_usage"]
     return _ok((usage["dau"] <= usage["mau"] + 1e-6).all())
 
 
-@check("activated accounts never exceed new accounts", Tier.structural, ("product_usage",))
+@check("activated accounts never exceed new accounts", Tier.structural, ("product_usage",), archetypes=SUBSCRIPTION)
 def _activated(t, p):
     usage = t["product_usage"]
     return _ok((usage["activated_accounts"] <= usage["new_accounts"]).all())
 
 
-@check("ramping + productive reps = total reps", Tier.structural, ("sales_capacity",))
+@check("ramping + productive reps = total reps", Tier.structural, ("sales_capacity",), archetypes=SUBSCRIPTION)
 def _reps(t, p):
     cap = t["sales_capacity"]
     return _ok((cap["reps_ramping"] + cap["reps_productive"] == cap["reps_total"]).all())
 
 
-@check("movement signs match movement type", Tier.structural, ("mrr_movements",))
+@check("movement signs match movement type", Tier.structural, ("mrr_movements",), archetypes=SUBSCRIPTION)
 def _signs(t, p):
     mov = t["mrr_movements"]
     positive = {"new", "expansion", "reactivation"}
@@ -197,7 +212,7 @@ def _signs(t, p):
                       f"churn, contraction")
 
 
-@check("churned customers are not active", Tier.structural, ("mrr_movements", "customers"))
+@check("churned customers are not active", Tier.structural, ("mrr_movements", "customers"), archetypes=SUBSCRIPTION)
 def _churned(t, p):
     churned = set(t["mrr_movements"].loc[
         t["mrr_movements"]["movement_type"] == "churn", "customer_id"])
@@ -210,7 +225,7 @@ def _churned(t, p):
 # Tier 2 — calibration. Does the data match the profile it claims to describe?
 # --------------------------------------------------------------------------
 
-@check("ending ARR matches profile revenue", Tier.calibration, FIN)
+@check("ending ARR matches profile revenue", Tier.calibration, FIN, archetypes=SUBSCRIPTION)
 def _arr_vs_profile(t, p):
     target = p.financials.revenue
     if target <= 0:
@@ -221,7 +236,7 @@ def _arr_vs_profile(t, p):
                f"ending ARR {ending:,.0f} vs profile {target:,.0f} ({drift:.1%} drift)")
 
 
-@check("active customer count matches profile", Tier.calibration, ("customers",))
+@check("active customer count matches profile", Tier.calibration, ("customers",), archetypes=SUBSCRIPTION)
 def _customers_vs_profile(t, p):
     target = p.market.customer_count
     if target <= 0:
@@ -236,7 +251,7 @@ def _customers_vs_profile(t, p):
                f"{active} active vs profile {target} ({drift:.1%} drift, gate {gate:.1%})")
 
 
-@check("blended ACV matches segment mix", Tier.calibration, ("customers",))
+@check("blended ACV matches segment mix", Tier.calibration, ("customers",), archetypes=SUBSCRIPTION)
 def _acv_vs_profile(t, p):
     expected = sum(s.share * s.avg_acv for s in p.market.segments)
     if expected <= 0:

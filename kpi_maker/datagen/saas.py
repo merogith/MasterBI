@@ -673,7 +673,8 @@ def _build_sales_capacity(profile, rng, months, movements, headcount) -> pd.Data
 # Reconciliation gate — nothing renders until these pass
 # --------------------------------------------------------------------------
 
-def reconcile(tables: Dict[str, pd.DataFrame], profile: CompanyProfile) -> List[str]:
+def reconcile(tables: Dict[str, pd.DataFrame], profile: CompanyProfile,
+              archetype: str = "saas") -> List[str]:
     """Assert the accounting identities. Failure here means the data is fiction.
 
     The identities themselves now live in `kpi_maker/contract/`, because they
@@ -682,5 +683,5 @@ def reconcile(tables: Dict[str, pd.DataFrame], profile: CompanyProfile) -> List[
     profile is this generator's whole job, so a calibration miss is a bug here
     even though it is only a warning for a file someone uploaded.
     """
-    result = run_gate(tables, profile, source="synthetic")
+    result = run_gate(tables, profile, source="synthetic", archetype=archetype)
     return result.checks
