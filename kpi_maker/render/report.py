@@ -69,16 +69,21 @@ class PDFReport(FPDF):
 
         Company names, currency symbols and typographic dashes all live outside
         latin-1, so the core fonts are a fallback rather than a default.
+
+        Every style this class uses must be registered, even when the system is
+        missing that face. Debian's `fonts-dejavu-core` is the common case: it
+        ships Regular and Bold but no Oblique, and fpdf2 raises "Undefined font"
+        rather than substituting. Aliasing the missing style onto a face that
+        does exist costs the slant on a few captions; not aliasing it costs the
+        whole report.
         """
         for name, regular, bold, italic in FONT_CANDIDATES:
             if not Path(regular).exists():
                 continue
             try:
                 self.add_font(name, "", regular)
-                if Path(bold).exists():
-                    self.add_font(name, "B", bold)
-                if Path(italic).exists():
-                    self.add_font(name, "I", italic)
+                self.add_font(name, "B", bold if Path(bold).exists() else regular)
+                self.add_font(name, "I", italic if Path(italic).exists() else regular)
                 self.family = name
                 self.unicode = True
                 return
