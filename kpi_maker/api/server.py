@@ -43,6 +43,11 @@ from ..prep.recipe import preview_recipe
 from ..pipeline.runner import plan_rerun
 from ..profile.schema import CompanyProfile
 from ..contract.schemas import FACT_SCHEMAS
+from ..design.contrast import AA_TEXT, GRAPHICAL, MIN_DELTA_E, ColourError, ratio
+from ..design.logo import LogoError, load_logo
+from ..design.palette import derive_tokens
+from ..render.sections import REGISTRY as SECTION_REGISTRY, default_order
+from ..viz.charts import CHARTS, default_exhibits
 from ..spec.schema import ALL_ARTIFACTS, RunSpec
 from ..survey import as_json as survey_json
 from ..survey import build_profile, surprise_profile
@@ -744,7 +749,51 @@ def catalog_options() -> Dict[str, Any]:
         "ops": describe_ops(),
         "shapes": shape_catalog(),
         "fact_tables": sorted(FACT_SCHEMAS),
+        "sections": [{"id": sid, "title": SECTION_REGISTRY[sid].title}
+                     for sid in default_order()],
+        "exhibits": default_exhibits(),
+        "widths": ["half", "full"],
     }
+
+
+class BrandRequest(BaseModel):
+    primary: Optional[str] = None
+    accent: Optional[str] = None
+    logo_path: Optional[str] = None
+
+
+@app.post("/api/design/preview")
+def preview_design(req: BrandRequest) -> Dict[str, Any]:
+    """What a brand colour will actually do, before a run is spent on it.
+
+    Returns both palettes with every adjustment the derivation made, so the
+    Studio can show the original and the applied swatch side by side. A colour
+    that gets moved should be visibly moved — a silent correction is how a user
+    ends up believing their brand is on the page when it is not.
+    """
+    try:
+        palettes = {mode: derive_tokens(req.primary, mode, req.accent)
+                    for mode in ("light", "dark")}
+    except ColourError as exc:
+        raise HTTPException(400, str(exc))
+
+    logo: Dict[str, Any] = {"path": req.logo_path, "ok": req.logo_path is None}
+    if req.logo_path:
+        try:
+            loaded = load_logo(req.logo_path, UPLOADS_DIR)
+            logo.update(ok=True, data_uri=loaded.data_uri(), mime=loaded.mime)
+        except LogoError as exc:
+            logo.update(ok=False, error=str(exc))
+
+    out = {mode: p.as_dict() for mode, p in palettes.items()}
+    for mode, p in palettes.items():
+        surface, page = p.tokens["surface"], p.tokens["page"]
+        out[mode]["against_surface"] = round(ratio(p.tokens["series_1"], surface), 2)
+        out[mode]["heading_ratio"] = round(
+            ratio(p.tokens.get("heading_accent", p.tokens["series_1"]), page), 2)
+    return {"palettes": out, "logo": logo,
+            "thresholds": {"text": AA_TEXT, "graphical": GRAPHICAL,
+                           "separation": MIN_DELTA_E}}
 
 
 @app.get("/api/runs")

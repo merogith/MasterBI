@@ -798,6 +798,7 @@ function renderStudio() {
   panel('kpis').innerHTML = kpiPanel();
   panel('analysis').innerHTML = analysisPanel();
   panel('design').innerHTML = designPanel();
+  refreshBrandPreview();
   panel('outputs').innerHTML = outputsPanel();
 }
 
@@ -1038,9 +1039,48 @@ function analysisPanel() {
 
 function designPanel() {
   const d = studio.spec.design;
+  const brand = d.brand || (d.brand = {});
+  const all = studio.options.sections || [];
+  const order = d.sections || all.map((s) => s.id);
+  const titleOf = Object.fromEntries(all.map((s) => [s.id, s.title]));
+  const exhibits = studio.options.exhibits || [];
+  const chosenEx = d.exhibits || exhibits;
+  const widths = d.exhibit_widths || (d.exhibit_widths = {});
+
+  const sectionRows = order.map((id, i) => `
+    <li class="order-row">
+      <span class="order-num">${i + 1}</span>
+      <span class="order-name">${esc(titleOf[id] || id)}</span>
+      <span class="order-actions">
+        <button data-sec-move="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} title="Move up">↑</button>
+        <button data-sec-move="${i}" data-dir="1" ${i === order.length - 1 ? 'disabled' : ''} title="Move down">↓</button>
+        <button data-sec-drop="${esc(id)}" title="Remove from the report">✕</button>
+      </span>
+    </li>`).join('');
+
+  const dropped = all.filter((s) => !order.includes(s.id));
+  const restore = dropped.length ? `
+    <p class="hint">Not included:
+      ${dropped.map((s) => `<button class="chip-btn" data-sec-add="${esc(s.id)}">+ ${esc(s.title)}</button>`).join(' ')}
+    </p>` : '';
+
+  const exhibitRows = exhibits.map((id) => {
+    const on = chosenEx.includes(id);
+    return `<label class="toggle">
+      <input type="checkbox" data-exhibit="${esc(id)}" ${on ? 'checked' : ''}>
+      <span>${esc(id.replace(/_/g, ' '))}</span>
+      <select data-exhibit-width="${esc(id)}" ${on ? '' : 'disabled'}>
+        ${['half', 'full'].map((w) =>
+          `<option value="${w}" ${(widths[id] || '') === w ? 'selected' : ''}>${w}</option>`).join('')}
+      </select>
+    </label>`;
+  }).join('');
+
   return section('How it looks',
-    `Theme applies to the dashboard and every exhibit in it. Brand colour, logo,
-     section ordering and exhibit choice arrive in P3.`,
+    `Theme drives the dashboard and every exhibit. A brand colour is measured
+     before it is used: it must stay readable against the page and stay
+     distinguishable from the other two series, including for readers with
+     colour vision deficiency.`,
     `<div class="field-row">
       <label class="field"><span>Theme</span>
         <select data-spec="design.theme">
@@ -1049,10 +1089,98 @@ function designPanel() {
         </select></label>
       <label class="field"><span>Page size</span>
         <select data-spec="design.page_size">
-          ${['A4', 'Letter'].map((s) =>
-            `<option value="${s}" ${d.page_size === s ? 'selected' : ''}>${s}</option>`).join('')}
+          ${['A4', 'Letter'].map((x) =>
+            `<option value="${x}" ${d.page_size === x ? 'selected' : ''}>${x}</option>`).join('')}
         </select></label>
-    </div>`);
+    </div>
+
+    <h3 class="studio-sub">Brand</h3>
+    <div class="field-row">
+      <label class="field"><span>Primary colour</span>
+        <input type="text" id="brand-primary" placeholder="#2a78d6"
+               value="${esc(brand.primary || '')}"></label>
+      <label class="field"><span>Secondary (optional)</span>
+        <input type="text" id="brand-accent" placeholder="leave blank"
+               value="${esc(brand.accent || '')}"></label>
+      <label class="field"><span>Logo (PNG or JPEG)</span>
+        <input type="text" id="brand-logo" placeholder="path or uploaded filename"
+               value="${esc(brand.logo_path || '')}"></label>
+    </div>
+    <div id="brand-preview" class="brand-preview"></div>
+
+    <h3 class="studio-sub">Sections</h3>
+    <p class="hint">Order and inclusion apply to the PDF, the editable report
+      and the deck alike. Sections are renumbered as you move them.</p>
+    <ol class="order-list">${sectionRows}</ol>
+    ${restore}
+
+    <h3 class="studio-sub">Exhibits</h3>
+    <p class="hint">A chart with no data behind it is skipped whether or not it
+      is ticked here.</p>
+    <div class="toggle-grid">${exhibitRows}</div>`);
+}
+
+/* The brand preview is the point of the panel: an adjusted colour has to be
+   visible as adjusted. A silent correction is how a user ends up believing
+   their brand is on the page when something near it is. */
+let brandTimer = null;
+
+function queueBrandPreview() {
+  clearTimeout(brandTimer);
+  brandTimer = setTimeout(refreshBrandPreview, 250);
+}
+
+async function refreshBrandPreview() {
+  const box = $('#brand-preview');
+  if (!box) return;
+  const brand = studio.spec.design.brand || {};
+  if (!brand.primary && !brand.logo_path) { box.innerHTML = ''; return; }
+
+  let r;
+  try {
+    r = await api('/api/design/preview', {
+      method: 'POST',
+      body: JSON.stringify({ primary: brand.primary || null,
+                             accent: brand.accent || null,
+                             logo_path: brand.logo_path || null }),
+    });
+  } catch (err) {
+    box.innerHTML = `<p class="warn">${esc(String(err.message || err))}</p>`;
+    return;
+  }
+
+  const p = r.palettes.light;
+  const swatch = (hex, label) =>
+    `<span class="swatch"><i style="background:${esc(hex)}"></i>
+       <span>${esc(label)}<br><code>${esc(hex)}</code></span></span>`;
+
+  const adjustments = p.adjustments.map((a) => `
+    <div class="adjust-row">
+      ${swatch(a.original, 'you asked for')} <span class="arrow">→</span>
+      ${swatch(a.applied, 'used')}
+      <span class="adjust-why"><strong>${esc(a.token.replace(/_/g, ' '))}</strong> —
+        ${esc(a.reason)}<br><span class="hint">${esc(a.detail)}</span></span>
+    </div>`).join('');
+
+  const logo = r.logo;
+  const logoHtml = !logo.path ? '' : (logo.ok
+    ? `<div class="adjust-row"><img class="logo-preview" src="${logo.data_uri}" alt=""></div>`
+    : `<p class="warn">${esc(logo.error)}</p>`);
+
+  box.innerHTML = `
+    <div class="swatch-row">
+      ${p.series.map((c, i) => swatch(c, `series ${i + 1}`)).join('')}
+      ${swatch(p.tokens.heading_accent || p.tokens.series_1, 'headings')}
+    </div>
+    <p class="hint">
+      ${p.tokens.series_1} sits at ${p.against_surface}:1 against the page
+      (${r.thresholds.graphical}:1 needed to see a line), headings at
+      ${p.heading_ratio}:1 (${r.thresholds.text}:1 for AA text).
+      Closest pair ΔE ${p.min_delta_e} against a floor of ${r.thresholds.separation},
+      measured under normal, deuteranopic and protanopic vision.</p>
+    ${p.notes.map((n) => `<p class="warn">${esc(n)}</p>`).join('')}
+    ${adjustments}
+    ${logoHtml}`;
 }
 
 function outputsPanel() {
@@ -1111,12 +1239,36 @@ panelDelegate('change', (e) => {
     studio.spec.outputs.artifacts = all.filter((a) => set.has(a));
     return queuePatch();
   }
+  if (el.dataset.exhibit) {
+    const all = studio.options.exhibits;
+    const set = new Set(studio.spec.design.exhibits || all);
+    el.checked ? set.add(el.dataset.exhibit) : set.delete(el.dataset.exhibit);
+    studio.spec.design.exhibits = all.filter((x) => set.has(x));
+    panel('design').innerHTML = designPanel();
+    refreshBrandPreview();
+    return queuePatch();
+  }
+  if (el.dataset.exhibitWidth) {
+    studio.spec.design.exhibit_widths[el.dataset.exhibitWidth] = el.value;
+    return queuePatch();
+  }
   if (el.dataset.target) {
     const overrides = studio.spec.metrics.overrides || (studio.spec.metrics.overrides = {});
     if (el.value === '') delete overrides[el.dataset.target];
     else overrides[el.dataset.target] = { ...overrides[el.dataset.target], target: Number(el.value) };
     return queuePatch();
   }
+});
+
+panelDelegate('input', (e) => {
+  const map = { 'brand-primary': 'primary', 'brand-accent': 'accent',
+                'brand-logo': 'logo_path' };
+  const field = map[e.target.id];
+  if (!field) return;
+  const brand = studio.spec.design.brand || (studio.spec.design.brand = {});
+  brand[field] = e.target.value.trim() || null;
+  queueBrandPreview();
+  queuePatch();
 });
 
 panelDelegate('click', (e) => {
@@ -1161,6 +1313,31 @@ panelDelegate('click', (e) => {
   }
   if (e.target.closest('#op-add')) return addCleaningStep();
 
+  const secMove = e.target.closest('[data-sec-move]');
+  const secDrop = e.target.closest('[data-sec-drop]');
+  const secAdd = e.target.closest('[data-sec-add]');
+  if (secMove || secDrop || secAdd) {
+    const design = studio.spec.design;
+    // Materialise the default order the moment the user touches it: from here
+    // on the spec carries the order explicitly rather than meaning "whatever
+    // the registry ships".
+    const order = design.sections
+      || (design.sections = (studio.options.sections || []).map((x) => x.id));
+    if (secMove) {
+      const i = Number(secMove.dataset.secMove);
+      const j = i + Number(secMove.dataset.dir);
+      if (j < 0 || j >= order.length) return;
+      [order[i], order[j]] = [order[j], order[i]];
+    } else if (secDrop) {
+      order.splice(order.indexOf(secDrop.dataset.secDrop), 1);
+    } else {
+      order.push(secAdd.dataset.secAdd);
+    }
+    panel('design').innerHTML = designPanel();
+    refreshBrandPreview();
+    return queuePatch();
+  }
+
   const fill = e.target.closest('[data-fill]');
   if (fill) {
     const list = new Set(studio.spec.source.fill_gaps || []);
@@ -1173,7 +1350,14 @@ panelDelegate('click', (e) => {
 });
 
 function panelDelegate(event, handler) {
-  $('#view-studio').addEventListener(event, handler);
+  // `openStudio` shows the view before it has the spec — four API calls land
+  // after the first paint — and every panel handler dereferences it. A click
+  // on the rail in that window used to throw on `studio.spec.cleaning`, which
+  // also skipped every handler registered after the throwing one. Nothing here
+  // can do anything meaningful without a spec, so wait for one.
+  $('#view-studio').addEventListener(event, (e) => {
+    if (studio.spec) handler(e);
+  });
 }
 
 // Pinning and excluding are mutually exclusive: holding both would be an

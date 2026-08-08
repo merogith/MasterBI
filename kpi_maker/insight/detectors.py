@@ -48,6 +48,11 @@ class Finding:
 _CURRENCY = "USD"
 
 
+def _stable(value: float) -> float:
+    """Drop the bits a threaded BLAS reduction does not reproduce."""
+    return float(f"{float(value):.9g}")
+
+
 def _fmt(value: Optional[float], unit: str) -> str:
     return fmt_value(value, unit, _CURRENCY)
 
@@ -247,8 +252,16 @@ def _trend_breaks(results: List[MetricResult], window: int = 6) -> List[Finding]
             continue
         recent = s.iloc[-window:]
         prior = s.iloc[-window * 2:-window]
-        recent_slope = np.polyfit(range(len(recent)), recent.values, 1)[0]
-        prior_slope = np.polyfit(range(len(prior)), prior.values, 1)[0]
+        # Rounded to nine significant figures because `polyfit` goes through
+        # LAPACK's least-squares path, whose reduction order depends on how
+        # many BLAS threads happen to be available. That moves the last two or
+        # three bits between processes on identical input — enough to make
+        # findings.json differ run to run, which costs the no-regression gate
+        # its ability to tell a real change from noise. Nine figures is far
+        # beyond any precision a twelve-point regression slope carries, and the
+        # comparisons below are unaffected at any plausible magnitude.
+        recent_slope = _stable(np.polyfit(range(len(recent)), recent.values, 1)[0])
+        prior_slope = _stable(np.polyfit(range(len(prior)), prior.values, 1)[0])
 
         scale = abs(s.mean()) or 1.0
         if abs(recent_slope - prior_slope) / scale < 0.02:

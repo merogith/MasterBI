@@ -218,7 +218,8 @@ def _visualise(ctx) -> Dict[str, List[Any]]:
 @stage("charts_png", needs=("visualise",), reads=("design",),
        artifact="charts_png", label="Exporting chart images")
 def _charts_png(ctx) -> Dict[str, bytes]:
-    return render_chart_images(ctx.get("visualise")["light"], ctx.out_dir / "charts")
+    return render_chart_images(ctx.get("visualise")["light"], ctx.out_dir / "charts",
+                               tokens=_palettes(ctx)["light"])
 
 
 @stage("dashboard", needs=("visualise", "analyse", "select", "model", "source"),

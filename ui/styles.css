@@ -674,3 +674,41 @@ tbody tr:hover { background: var(--accent-soft); }
 .coverage { margin-top: 6px; }
 .coverage-head { font-size: 13px; margin-bottom: 12px; color: var(--text-secondary); }
 .plain.small { font-size: 12px; color: var(--muted); padding-left: 18px; margin: 6px 0; }
+
+
+/* ---------------------------------------------------- Studio: design panel */
+.studio-sub { font-size: 13px; font-weight: 600; margin: 22px 0 6px; }
+
+.brand-preview { margin: 12px 0 4px; }
+.swatch-row { display: flex; flex-wrap: wrap; gap: 18px; margin-bottom: 10px; }
+.swatch { display: inline-flex; align-items: center; gap: 8px; font-size: 12px;
+  color: var(--text-secondary); }
+.swatch i { width: 30px; height: 30px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); display: block; flex: none; }
+.swatch code { font-family: ui-monospace, monospace; font-size: 11px; }
+
+.adjust-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 12px; margin-top: 8px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--accent-soft); }
+.adjust-row .arrow { color: var(--muted); }
+.adjust-why { font-size: 12px; color: var(--text-secondary); flex: 1 1 240px; }
+.logo-preview { max-height: 44px; max-width: 240px; }
+
+.order-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.order-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  margin-bottom: 6px; }
+.order-num { width: 20px; color: var(--muted); font-size: 12px;
+  font-variant-numeric: tabular-nums; }
+.order-name { flex: 1; font-size: 13px; }
+.order-actions { display: flex; gap: 4px; }
+.order-actions button { border: 1px solid var(--border); background: none;
+  color: var(--text-secondary); border-radius: var(--radius-sm);
+  width: 26px; height: 24px; cursor: pointer; font-size: 12px; }
+.order-actions button:hover:not(:disabled) { border-color: var(--accent);
+  color: var(--accent); }
+.order-actions button:disabled { opacity: .3; cursor: default; }
+
+.toggle select { margin-left: auto; font: inherit; font-size: 11px;
+  background: none; color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1px 4px; }
