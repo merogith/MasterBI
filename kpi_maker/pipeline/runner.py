@@ -37,6 +37,13 @@ class RunContext:
     # appendix. Not a stage output because it describes how a stage ran rather
     # than being an input to anything downstream.
     lineage: Any = None
+    # Set by the source stage for uploads: {table: measured|modelled}. Read by
+    # `metrics` to decide each result's basis.
+    origins: Any = None
+    # Tier 2 identity misses on uploaded data — reported, never fatal.
+    gate_warnings: Any = None
+    # Where `source.uploads` names are resolved from.
+    uploads_dir: Any = None
 
     def get(self, stage_name: str) -> Any:
         if stage_name not in self.values:

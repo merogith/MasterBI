@@ -713,6 +713,18 @@ def compute(kpi_set: KPISet, tables: Dict[str, pd.DataFrame],
     for kpi in kpi_set.kpis:
         try:
             series = evaluator.series_for(kpi.id)
+        except KeyError as exc:
+            # A partial upload has fewer tables than the generator makes. Say
+            # which one is missing: a bare KeyError repr tells the user nothing
+            # about what to supply, and "why isn't X on my dashboard" must
+            # always have an answer.
+            results.append(MetricResult(
+                kpi=kpi, series=None, current=None, prior_year=None, prior_month=None,
+                target=None, status="unknown", benchmark_position=None,
+                computed=False,
+                reason=f"needs the {exc} table, which this run does not have",
+            ))
+            continue
         except Exception as exc:                      # noqa: BLE001 - reported, not swallowed
             results.append(MetricResult(
                 kpi=kpi, series=None, current=None, prior_year=None, prior_month=None,

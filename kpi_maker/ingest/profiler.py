@@ -145,10 +145,25 @@ def numeric_convention(sample: pd.Series):
     euro = pd.to_numeric(
         stripped.str.replace(".", "", regex=False).str.replace(",", ".", regex=False),
         errors="coerce")
-
     anglo_rate, euro_rate = float(anglo.notna().mean()), float(euro.notna().mean())
-    # Both conventions parse "1234" equally, so only prefer European when it
-    # reads strictly more of the column than Anglo does.
+
+    # Parse rate alone cannot decide this, and trusting it is dangerous.
+    # "850,00" under the Anglo rule strips the comma to 85000 — it parses
+    # perfectly and is a hundred times too large. Both conventions "succeed",
+    # so the decimal marker has to be identified structurally instead.
+    #
+    # The tell is the LAST separator: a comma followed by exactly two digits at
+    # the end of the value is a decimal comma, and a dot in the same position is
+    # a decimal point. Grouping separators never appear there.
+    euro_marks = stripped.str.contains(r",\d{2}$", regex=True, na=False).sum()
+    anglo_marks = stripped.str.contains(r"\.\d{1,2}$", regex=True, na=False).sum()
+    # A dot with three trailing digits is thousands, not a fraction: 1.234.
+    thousand_dots = stripped.str.contains(r"\.\d{3}(?:\D|$)", regex=True, na=False).sum()
+
+    if euro_marks > anglo_marks or (thousand_dots and euro_marks):
+        return max(euro_rate, anglo_rate), "european"
+    if anglo_marks > euro_marks:
+        return anglo_rate, "anglo"
     if euro_rate > anglo_rate:
         return euro_rate, "european"
     return anglo_rate, "anglo"

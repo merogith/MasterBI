@@ -48,6 +48,9 @@ def _resolve(ctx) -> Any:
 @stage("source", needs=("resolve",), reads=("profile", "source"),
        label="Generating data and reconciling")
 def _source(ctx) -> Any:
+    if ctx.spec.source.kind.value == "upload":
+        return _source_from_uploads(ctx)
+
     archetype = ctx.spec.resolve_archetype()
     generator = GENERATORS.get(archetype)
     if generator is None:
@@ -64,6 +67,31 @@ def _source(ctx) -> Any:
     if seed != profile.seed or months != profile.history_months:
         profile = profile.model_copy(update={"seed": seed, "history_months": months})
     return generator(profile)
+
+
+def _source_from_uploads(ctx) -> Any:
+    """Read the user's files instead of generating a company."""
+    from pathlib import Path
+    from ..ingest.pipeline import build_from_uploads
+
+    uploads = ctx.spec.source.uploads
+    if not uploads:
+        raise ValueError(
+            "source.kind is 'upload' but no files are listed in source.uploads")
+
+    base = ctx.uploads_dir or (ctx.out_dir / "uploads")
+    paths = [Path(u) if Path(u).is_absolute() else base / u for u in uploads]
+    missing = [str(p) for p in paths if not p.exists()]
+    if missing:
+        raise ValueError(f"uploaded file(s) not found: {', '.join(missing)}")
+
+    data, origins = build_from_uploads(paths, ctx.get("resolve"), ctx.spec)
+    # The origin map has to reach the metrics stage, which is where `basis` is
+    # decided. It is not a stage output because it describes the data rather
+    # than being one.
+    ctx.origins = origins
+    ctx.say(f"  Source    {len(data.tables)} table(s) from {len(paths)} upload(s)")
+    return data
 
 
 @stage("clean", needs=("source",), reads=("cleaning",),
@@ -87,15 +115,27 @@ def _clean(ctx) -> Dict[str, pd.DataFrame]:
 def _model(ctx) -> Dict[str, pd.DataFrame]:
     tables = ctx.get("clean")
     spec = ctx.spec.model
+
     if spec.mapping:
-        raise NotImplementedError(
-            "Column mapping lands with ingestion in P2. Clear `model.mapping` "
-            "to run."
-        )
-    if not spec.calculated_columns:
-        return tables
-    from ..prep.model import apply_model
-    return apply_model(tables, spec, ctx)
+        # Mapping runs AFTER cleaning on purpose: the user cleans using their
+        # own column names, which are the ones the profiler reported problems
+        # against, and only then are those columns renamed to canonical ones.
+        from ..ingest.pipeline import apply_mapping
+        tables = apply_mapping(tables, spec.mapping)
+
+    if spec.calculated_columns:
+        from ..prep.model import apply_model
+        tables = apply_model(tables, spec, ctx)
+
+    if ctx.spec.source.kind.value == "upload":
+        # Uploaded data meets the contract here, once it is canonical. Tier 1
+        # still raises; Tier 2 becomes warnings the appendix reports.
+        from ..ingest.pipeline import gate_uploaded
+        ctx.gate_warnings = gate_uploaded(tables, ctx.get("resolve"))
+        for warning in ctx.gate_warnings:
+            ctx.say(f"  WARNING   {warning}")
+
+    return tables
 
 
 @stage("select", needs=("resolve",), reads=("profile", "metrics"),

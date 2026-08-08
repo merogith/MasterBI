@@ -487,7 +487,15 @@ def build_all(results: List[MetricResult],
     ]
     specs = []
     for build in builders:
-        spec = build()
+        try:
+            spec = build()
+        except KeyError as exc:
+            # An exhibit whose fact table was not uploaded simply does not
+            # appear. Builders already return None when they have nothing to
+            # draw; a missing table is the same situation arriving by a
+            # different route, and a partial upload must narrow the dashboard
+            # rather than fail to produce one.
+            continue
         if spec is not None:
             specs.append(spec)
     return specs

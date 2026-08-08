@@ -79,11 +79,23 @@ def detect_all(results: List[MetricResult], tables: Dict[str, pd.DataFrame],
     wanted = list(registry) if spec is None or spec.detectors is None else [
         name for name in spec.detectors if name in registry]
     disabled = set(spec.disabled) if spec is not None else set()
+    skipped: List[str] = []
 
     findings: List[Finding] = []
     for name in wanted:
-        if name not in disabled:
+        if name in disabled:
+            continue
+        try:
             findings += registry[name]()
+        except KeyError as exc:
+            # A partial upload has fewer fact tables than the generator makes,
+            # and a detector that needs one of the absent ones simply has
+            # nothing to say. The metrics engine already treats missing data as
+            # "not computable" rather than an error; a detector crashing the
+            # whole run would make an honest partial upload impossible.
+            skipped.append(f"{name}: needs the {exc} table")
+        except Exception as exc:                        # noqa: BLE001
+            skipped.append(f"{name}: {type(exc).__name__}: {exc}")
 
     findings = _merge_same_kpi(findings)
     findings.sort(key=lambda f: (f.rank, f.id))
@@ -97,6 +109,10 @@ def detect_all(results: List[MetricResult], tables: Dict[str, pd.DataFrame],
                     if f.rank <= floor or f.severity == "positive"]
     if spec is not None and spec.max_findings is not None:
         findings = findings[:spec.max_findings]
+
+    # Exposed rather than swallowed: "why is there no channel finding?" must
+    # have an answer, the same way every dropped KPI does.
+    detect_all.skipped = skipped
     return findings
 
 

@@ -435,6 +435,30 @@ def _map_values(frame, p):
                  f"{len(p.mapping)} mapping(s).")
 
 
+class SignParams(BaseModel):
+    column: str
+    by_column: str
+    negative_when: List[str] = Field(default_factory=list)
+
+
+@op("apply_sign", "Apply a sign convention",
+    "Make values negative where another column says they are a reduction. Most "
+    "exports store amounts as positive magnitudes and leave the sign implied by "
+    "a type column — which reads as a contradiction to anything that checks.",
+    SignParams)
+def _apply_sign(frame, p):
+    _require_columns(frame, [p.column, p.by_column], "apply_sign")
+    out = frame.copy()
+    kinds = {str(k).strip().lower() for k in p.negative_when}
+    mask = out[p.by_column].astype(str).str.strip().str.lower().isin(kinds)
+    values = pd.to_numeric(out[p.column], errors="coerce")
+    # Absolute value first: re-running must not flip already-negative rows back.
+    out[p.column] = values.abs().where(~mask, -values.abs())
+    flipped = int((mask & (values > 0)).sum())
+    return out, (f"Made {_plural(flipped, 'value')} in {p.column} negative where "
+                 f"{p.by_column} is one of {', '.join(sorted(kinds))}.")
+
+
 class ScaleParams(BaseModel):
     column: str
     factor: float

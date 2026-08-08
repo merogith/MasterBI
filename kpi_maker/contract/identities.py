@@ -176,7 +176,15 @@ def _signs(t, p):
         (mov["movement_type"].isin(positive) & (mov["delta_mrr"] < 0))
         | (~mov["movement_type"].isin(positive) & (mov["delta_mrr"] > 0))
     ]
-    return _ok(bad.empty, f"{len(bad)} rows signed against their type")
+    if bad.empty:
+        return _ok(True)
+    # The commonest cause by far is an export that stores magnitudes and leaves
+    # the sign to the type column. That is a fixable convention, not corrupt
+    # data, so the message names the fix.
+    return _ok(False, f"{len(bad)} row(s) signed against their type — if your "
+                      f"export stores amounts as positive magnitudes, add the "
+                      f"'apply_sign' cleaning step with negative_when = "
+                      f"churn, contraction")
 
 
 @check("churned customers are not active", Tier.structural, ("mrr_movements", "customers"))
