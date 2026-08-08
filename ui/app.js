@@ -811,6 +811,11 @@ function section(title, hint, body) {
     ${body}</div>`;
 }
 
+/* 1.0 is "as shipped" for both sliders, so the label says so rather than
+   making the user infer it from a bare number. */
+const fmtKnob = (v) => (v === undefined || v === null || v === 1
+  ? 'default' : Number(v).toFixed(2).replace(/0$/, ''));
+
 function sourcePanel() {
   const g = studio.spec.source.generator;
   const q = studio.quality;
@@ -859,7 +864,30 @@ function sourcePanel() {
         <input type="number" min="13" max="120" data-spec="source.generator.history_months"
                value="${g.history_months ?? ''}" placeholder="${studio.spec.profile.history_months}"></label>
     </div>
-    <p class="hint">Changing either regenerates the company and everything after
+    <div class="field-row">
+      <label class="field"><span>Seasonality</span>
+        <input type="range" min="0" max="3" step="0.25"
+               data-spec-number="source.generator.seasonality_amplitude"
+               value="${g.seasonality_amplitude ?? 1}">
+        <span class="range-value">${fmtKnob(g.seasonality_amplitude)}</span></label>
+      <label class="field"><span>Volatility</span>
+        <input type="range" min="0" max="3" step="0.25"
+               data-spec-number="source.generator.volatility"
+               value="${g.volatility ?? 1}">
+        <span class="range-value">${fmtKnob(g.volatility)}</span></label>
+      <label class="toggle">
+        <input type="checkbox" data-spec-bool="source.generator.inject_anomalies"
+               ${g.inject_anomalies === false ? '' : 'checked'}>
+        <span>Plant deliberate events
+          <span class="toggle-sub">churn spike, CAC inflation, margin compression</span></span>
+      </label>
+    </div>
+    <p class="hint">Seasonality scales the swing around the annual average, so
+       0 is a flat year and 2 is twice the usual peak-to-trough. Volatility
+       widens the month-to-month noise without moving the trend. Turning off
+       planted events gives a clean baseline to compare a scenario against —
+       the findings list will be much shorter, because there is less wrong.</p>
+    <p class="hint">Any of these regenerates the company and everything after
        it — the most expensive edit in the Studio.</p>`;
 
   return section('Where the numbers come from',
@@ -1239,6 +1267,10 @@ panelDelegate('change', (e) => {
     studio.spec.outputs.artifacts = all.filter((a) => set.has(a));
     return queuePatch();
   }
+  if (el.dataset.specBool) {
+    setPath(studio.spec, el.dataset.specBool, el.checked);
+    return queuePatch();
+  }
   if (el.dataset.exhibit) {
     const all = studio.options.exhibits;
     const set = new Set(studio.spec.design.exhibits || all);
@@ -1261,6 +1293,13 @@ panelDelegate('change', (e) => {
 });
 
 panelDelegate('input', (e) => {
+  if (e.target.dataset.specNumber) {
+    const el = e.target;
+    setPath(studio.spec, el.dataset.specNumber, Number(el.value));
+    const label = el.parentElement.querySelector('.range-value');
+    if (label) label.textContent = fmtKnob(Number(el.value));
+    return queuePatch();
+  }
   const map = { 'brand-primary': 'primary', 'brand-accent': 'accent',
                 'brand-logo': 'logo_path' };
   const field = map[e.target.id];

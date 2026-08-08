@@ -62,14 +62,16 @@ def _source(ctx) -> Any:
             f"Available: {', '.join(_archetypes())}."
         )
     profile = ctx.get("resolve")
-    # The generator reads seed and history from the profile, so a spec override
-    # is applied by handing it an adjusted copy rather than by threading two
-    # more parameters through every archetype.
+    # Seed and history live on the profile, so a spec override is applied by
+    # handing the generator an adjusted copy rather than by threading two more
+    # parameters through every archetype. The rest of the knobs are about how
+    # the simulation behaves, not about who the company is, so they travel as
+    # `GeneratorParams`.
     seed = ctx.spec.resolve_seed()
     months = ctx.spec.resolve_history_months()
     if seed != profile.seed or months != profile.history_months:
         profile = profile.model_copy(update={"seed": seed, "history_months": months})
-    return generator(profile)
+    return generator(profile, ctx.spec.source.generator)
 
 
 def _source_from_uploads(ctx) -> Any:

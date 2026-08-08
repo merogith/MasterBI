@@ -712,3 +712,6 @@ tbody tr:hover { background: var(--accent-soft); }
 .toggle select { margin-left: auto; font: inherit; font-size: 11px;
   background: none; color: var(--text-secondary);
   border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1px 4px; }
+
+.field input[type="range"] { width: 100%; accent-color: var(--accent); }
+.range-value { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }

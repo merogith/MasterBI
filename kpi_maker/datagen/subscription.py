@@ -21,10 +21,12 @@ import pandas as pd
 
 from ..contract.gate import ReconciliationError, run_gate
 from ..profile.schema import CompanyProfile
+from ..spec.schema import GeneratorParams
 from .base import (STAGE_GROWTH, WARMUP_MONTHS, Anomaly,  # noqa: F401
-                   Attempt, GeneratedData, calibrate, calibration_tolerance,
-                   generator, month_range, monthly_growth as _monthly_growth,
-                   to_reported, trim_warmup, yoy_growth)
+                   Attempt, GeneratedData, apply_amplitude, calibrate,
+                   calibration_tolerance, generator, month_range,
+                   monthly_growth as _monthly_growth, to_reported, trim_warmup,
+                   volatile, yoy_growth)
 
 # B2B software seasonality: Q4 push, summer trough, January restart.
 B2B_SEASONALITY = np.array([
@@ -47,8 +49,10 @@ MARKETING_CHANNELS = {
 
 
 @generator("saas")
-def generate(profile: CompanyProfile) -> GeneratedData:
-    rng = np.random.default_rng(profile.seed)
+def generate(profile: CompanyProfile,
+             params: Optional[GeneratorParams] = None) -> GeneratedData:
+    params = params or GeneratorParams()
+    rng = volatile(np.random.default_rng(profile.seed), params.volatility)
     n_report = profile.history_months
     n_total = n_report + WARMUP_MONTHS
 
@@ -61,14 +65,18 @@ def generate(profile: CompanyProfile) -> GeneratedData:
 
     growth = _monthly_growth(profile)
 
-    anomalies = _plan_anomalies(profile, rng, n_total, segments)
+    # Planted events are what give the insight engine something real to find.
+    # Turning them off is for someone who wants a clean baseline to compare a
+    # scenario against, not for making the report look better.
+    anomalies = (_plan_anomalies(profile, rng, n_total, segments)
+                 if params.inject_anomalies else [])
 
     # Calibrate acquisition VOLUME to the profile's customer count before
     # scaling ACV to the profile's revenue. Without this, the ACV scaling alone
     # absorbs the whole error and silently invents a book with the wrong shape
     # — e.g. twice the customers at a third of the stated deal size.
     customers, movements, rng = _calibrated_book(
-        profile, months, segments, growth, anomalies
+        profile, months, segments, growth, anomalies, params
     )
 
     # --- Scale the simulated book to the profile's stated revenue -----------
@@ -158,7 +166,7 @@ def _plan_anomalies(profile, rng, n_total, segments) -> List[Anomaly]:
     ]
 
 
-def _calibrated_book(profile, months, segments, growth, anomalies):
+def _calibrated_book(profile, months, segments, growth, anomalies, params):
     """Fit the subscription book to the profile, through the shared calibrator.
 
     The loop itself is in `base.calibrate`; what is subscription-specific is
@@ -168,8 +176,10 @@ def _calibrated_book(profile, months, segments, growth, anomalies):
     report_start = len(months) - profile.history_months
 
     def simulate(rng, base_new, current_growth) -> Attempt:
+        rng = volatile(rng, params.volatility)
         customers, movements = _simulate_book(
-            profile, rng, months, segments, current_growth, anomalies, base_new
+            profile, rng, months, segments, current_growth, anomalies, base_new,
+            amplitude=params.seasonality_amplitude,
         )
         mrr = (movements.groupby("month")["delta_mrr"].sum()
                .reindex(months, fill_value=0.0).cumsum())
@@ -188,10 +198,12 @@ def _calibrated_book(profile, months, segments, growth, anomalies):
     )
 
 
-def _simulate_book(profile, rng, months, segments, growth, anomalies, base_new=12.0):
+def _simulate_book(profile, rng, months, segments, growth, anomalies,
+                   base_new=12.0, amplitude: float = 1.0):
     """Month-by-month customer acquisition, expansion, contraction and churn."""
     n_total = len(months)
-    seasonality = B2B_SEASONALITY if profile.market.seasonality != "none" else np.ones(12)
+    seasonality = (apply_amplitude(B2B_SEASONALITY, amplitude)
+                   if profile.market.seasonality != "none" else np.ones(12))
 
     churn_spikes = {a.segment: a for a in anomalies if a.kind == "churn_spike"}
     shares = np.array([s.share for s in segments], dtype=float)

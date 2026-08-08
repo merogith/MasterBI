@@ -148,6 +148,39 @@ def monthly_growth(profile) -> float:
     return STAGE_GROWTH.get(profile.size.stage, 0.02)
 
 
+class VolatileRNG:
+    """A generator that widens or narrows the spread of its Gaussian draws.
+
+    Wrapping beats threading a multiplier through two dozen call sites, and it
+    keeps the draw ORDER identical, which is what makes `volatility=1.0`
+    reproduce the previous output bit for bit: `sigma * 1.0` is `sigma`.
+
+    Only `normal` and `lognormal` are scaled. Poisson deliberately is not —
+    its variance is a property of its mean, so "more volatile acquisition"
+    would have to be a different process rather than a wider one, and
+    inventing that here would be dishonest about what the knob does. Coin
+    flips (`random`) have no spread to scale either.
+    """
+
+    def __init__(self, rng: np.random.Generator, volatility: float = 1.0):
+        self._rng = rng
+        self._v = float(volatility)
+
+    def normal(self, loc=0.0, scale=1.0, size=None):
+        return self._rng.normal(loc, scale * self._v, size)
+
+    def lognormal(self, mean=0.0, sigma=1.0, size=None):
+        return self._rng.lognormal(mean, sigma * self._v, size)
+
+    def __getattr__(self, name):
+        return getattr(self._rng, name)
+
+
+def volatile(rng: np.random.Generator, volatility: float):
+    """Wrap only when it would change something, so the default path is untouched."""
+    return rng if volatility == 1.0 else VolatileRNG(rng, volatility)
+
+
 def apply_amplitude(seasonality: np.ndarray, amplitude: float) -> np.ndarray:
     """Scale a seasonal curve's deviation from flat.
 
