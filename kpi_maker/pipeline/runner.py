@@ -33,6 +33,10 @@ class RunContext:
     out_dir: Path
     values: Dict[str, Any] = field(default_factory=dict)
     say: Callable[[str], None] = lambda msg: None
+    # Set by the `clean` stage; read by the renderers for the methodology
+    # appendix. Not a stage output because it describes how a stage ran rather
+    # than being an input to anything downstream.
+    lineage: Any = None
 
     def get(self, stage_name: str) -> Any:
         if stage_name not in self.values:

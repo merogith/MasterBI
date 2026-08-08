@@ -72,11 +72,14 @@ def _clean(ctx) -> Dict[str, pd.DataFrame]:
     tables = dict(ctx.get("source").tables)
     if not ctx.spec.cleaning.active:
         return tables
-    raise NotImplementedError(
-        "Cleaning steps are declared in the spec but the op registry lands in "
-        "P2. Clear `cleaning.steps` to run, rather than having the recipe "
-        "silently ignored."
-    )
+    from ..prep.recipe import apply_recipe
+    cleaned, lineage = apply_recipe(tables, ctx.spec.cleaning, ctx)
+    # Stash the log on the context so `render` can put it in the methodology
+    # appendix — a transformation nobody can see is a transformation nobody can
+    # defend.
+    ctx.lineage = lineage
+    ctx.say(f"  Cleaned   {lineage.summary()}")
+    return cleaned
 
 
 @stage("model", needs=("clean",), reads=("model",),
