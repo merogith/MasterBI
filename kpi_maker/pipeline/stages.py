@@ -84,12 +84,15 @@ def _clean(ctx) -> Dict[str, pd.DataFrame]:
 def _model(ctx) -> Dict[str, pd.DataFrame]:
     tables = ctx.get("clean")
     spec = ctx.spec.model
-    if not spec.calculated_columns and not spec.mapping:
+    if spec.mapping:
+        raise NotImplementedError(
+            "Column mapping lands with ingestion in P2. Clear `model.mapping` "
+            "to run."
+        )
+    if not spec.calculated_columns:
         return tables
-    raise NotImplementedError(
-        "Column mapping and calculated columns land in P2. Clear "
-        "`model.mapping` / `model.calculated_columns` to run."
-    )
+    from ..prep.model import apply_model
+    return apply_model(tables, spec, ctx)
 
 
 @stage("select", needs=("resolve",), reads=("profile", "metrics"),
