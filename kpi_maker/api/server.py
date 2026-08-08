@@ -29,7 +29,12 @@ from pydantic import BaseModel
 
 from ..cli import load_profile, run_pipeline
 from ..insight.detectors import DETECTOR_NAMES
-from ..kpi.selection import unknown_kpi_ids
+from ..formula import FormulaError, describe_functions, evaluate, validate
+from ..formula.evaluate import RowResolver, SeriesResolver
+from ..kpi.schema import user_kpi
+from ..kpi.selection import load_library, unknown_kpi_ids
+from ..kpi.user_library import delete_user_kpi, save_user_kpi, user_kpi_ids
+from ..prep.model import preview_column
 from ..pipeline.runner import plan_rerun
 from ..profile.schema import CompanyProfile
 from ..spec.schema import ALL_ARTIFACTS, RunSpec
@@ -390,6 +395,203 @@ def rerun(run_id: str) -> Dict[str, Any]:
          company=spec.profile.identity.name, started_at=_now(), steps=[])
     _POOL.submit(_execute, run_id, spec)
     return {"run_id": run_id, "status": "queued", **report}
+
+
+# --------------------------------------------------------------------------
+# Catalog: the KPI library, and the formula editor's support endpoints
+# --------------------------------------------------------------------------
+
+class UserKpiRequest(BaseModel):
+    """The four fields that decide what the user sees, plus optional extras."""
+    name: str
+    expression: str
+    unit: str
+    direction: str
+    id: Optional[str] = None
+    perspective: Optional[str] = None
+    timing: Optional[str] = None
+    tier: Optional[int] = None
+    owner_role: Optional[str] = None
+    interpretation: Optional[str] = None
+
+
+class FormulaRequest(BaseModel):
+    expression: str
+    scope: str = "series"           # series | row
+    run_id: Optional[str] = None    # required for preview; optional for validate
+    table: Optional[str] = None     # row scope only
+
+
+def _kpi_payload(kpi) -> Dict[str, Any]:
+    return {
+        "id": kpi.id,
+        "name": kpi.name,
+        "perspective": kpi.perspective.value,
+        "tier": int(kpi.tier),
+        "timing": kpi.timing.value,
+        "direction": kpi.direction.value,
+        "unit": kpi.unit,
+        "owner_role": kpi.owner_role,
+        "formula": kpi.formula,
+        "compute": kpi.compute.model_dump(mode="json"),
+        "origin": kpi.origin.value,
+        "core": kpi.core,
+        "benchmark_p50": kpi.benchmark.p50 if kpi.benchmark else None,
+        "interpretation": kpi.interpretation,
+        "pitfalls": kpi.pitfalls,
+        "applies_when": kpi.applies_when,
+    }
+
+
+@app.get("/api/catalog/kpis")
+def list_kpis(pack: Optional[str] = None) -> Dict[str, Any]:
+    """Every KPI available, library and user alike."""
+    kpis = load_library([pack] if pack else None)
+    return {
+        "kpis": [_kpi_payload(k) for k in sorted(kpis, key=lambda k: (int(k.tier), k.id))],
+        "user_ids": user_kpi_ids(),
+    }
+
+
+@app.post("/api/catalog/kpis")
+def save_kpi(req: UserKpiRequest) -> Dict[str, Any]:
+    """Create or replace a stored user KPI. The formula is validated first."""
+    try:
+        validate(req.expression, scope="series")
+    except FormulaError as exc:
+        raise HTTPException(422, str(exc))
+
+    extras = {k: v for k, v in (
+        ("perspective", req.perspective), ("timing", req.timing),
+        ("tier", req.tier), ("owner_role", req.owner_role),
+        ("interpretation", req.interpretation),
+    ) if v is not None}
+
+    try:
+        kpi = user_kpi(req.name, req.expression, req.unit, req.direction,
+                       kpi_id=req.id, **extras)
+        save_user_kpi(kpi)
+    except Exception as exc:                             # noqa: BLE001
+        raise HTTPException(422, str(exc))
+    return _kpi_payload(kpi)
+
+
+@app.delete("/api/catalog/kpis/{kpi_id}")
+def remove_kpi(kpi_id: str) -> Dict[str, Any]:
+    try:
+        removed = delete_user_kpi(kpi_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    if not removed:
+        raise HTTPException(404, f"No user KPI {kpi_id!r}")
+    return {"deleted": kpi_id}
+
+
+@app.get("/api/catalog/functions")
+def list_functions() -> Dict[str, Any]:
+    return {"functions": describe_functions()}
+
+
+def _series_resolver(run_id: Optional[str], profile=None):
+    """A resolver bound to a run's real tables, when there is a run."""
+    if run_id is None:
+        return None
+    tables = _load_run_tables(run_id)
+    if not tables:
+        return None
+    fin = tables.get("monthly_financials")
+    index = pd.Index(fin["month"]) if fin is not None else None
+    known = {k.id for k in load_library(None)}
+    # Validation only needs to know whether a name IS a KPI, not what it
+    # evaluates to — computing every referenced metric to answer a keystroke
+    # would make the editor unusable.
+    return SeriesResolver(tables, index, profile=profile,
+                          kpi_lookup=lambda n: _KNOWN if n in known else None)
+
+
+_KNOWN = pd.Series(dtype="float64")   # sentinel: "this name resolves"
+
+
+def _load_run_tables(run_id: str) -> Dict[str, pd.DataFrame]:
+    data_dir = RUNS_DIR / run_id / "data"
+    if not data_dir.exists():
+        return {}
+    return {p.stem: pd.read_csv(p) for p in sorted(data_dir.glob("*.csv"))}
+
+
+@app.post("/api/formula/validate")
+def validate_formula(req: FormulaRequest) -> Dict[str, Any]:
+    """Parse and check without evaluating.
+
+    Structure, function names, arity and scope are always checked. Names are
+    only checked when a run is supplied, because the editor validates while the
+    user types and there may be no data to resolve against yet.
+    """
+    resolver = None
+    if req.scope == "row":
+        if not (req.run_id and req.table):
+            resolver = None
+        else:
+            frame = _load_run_tables(req.run_id).get(req.table)
+            resolver = RowResolver(frame, req.table) if frame is not None else None
+    else:
+        spec = None
+        try:
+            spec = _load_spec(req.run_id) if req.run_id else None
+        except HTTPException:
+            spec = None
+        resolver = _series_resolver(req.run_id, spec.profile if spec else None)
+
+    try:
+        return {"ok": True, **validate(req.expression, scope=req.scope, resolver=resolver)}
+    except FormulaError as exc:
+        return {"ok": False, "error": exc.as_dict()}
+
+
+@app.post("/api/formula/preview")
+def preview_formula(req: FormulaRequest) -> Dict[str, Any]:
+    """Evaluate against a run's real data and return something to look at."""
+    if not req.run_id:
+        raise HTTPException(400, "preview needs a run_id")
+    tables = _load_run_tables(req.run_id)
+    if not tables:
+        raise HTTPException(404, "That run has no data on disk")
+
+    try:
+        spec = _load_spec(req.run_id)
+        if req.scope == "row":
+            frame = tables.get(req.table or "")
+            if frame is None:
+                raise HTTPException(404, f"No table {req.table!r} in this run")
+            return {"scope": "row",
+                    **preview_column(frame, req.table or "", req.expression)}
+
+        # Series scope: evaluate for real, which means computing any KPI the
+        # formula references.
+        from ..datagen.saas import GeneratedData
+        from ..metrics.engine import MetricContext, _Evaluator
+        from ..kpi.selection import load_all_known
+
+        ctx = MetricContext(profile=spec.profile, tables=tables)
+        evaluator = _Evaluator(ctx, {k.id: k for k in load_all_known()})
+        resolver = SeriesResolver(tables, ctx.fin.index, profile=spec.profile,
+                                  kpi_lookup=evaluator._lookup)
+        series = evaluate(req.expression, resolver)
+        tail = series.dropna().tail(12)
+        return {
+            "scope": "series",
+            "points": [{"month": str(m), "value": None if pd.isna(v) else float(v)}
+                       for m, v in tail.items()],
+            "current": float(tail.iloc[-1]) if len(tail) else None,
+            "non_null": int(series.notna().sum()),
+            "total": int(len(series)),
+        }
+    except FormulaError as exc:
+        raise HTTPException(422, str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:                             # noqa: BLE001
+        raise HTTPException(422, f"could not evaluate: {exc}")
 
 
 @app.get("/api/catalog/options")

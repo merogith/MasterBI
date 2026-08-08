@@ -413,14 +413,22 @@ def validate(expression: str, scope: Scope = SERIES,
         fn.check_arity(len(node.args))
         used_functions.append(fn.name)
 
-    from .introspect import references
+    from .introspect import aggregate_columns, references
     names = references(expression)
+
+    # An aggregate's column argument obeys different rules from an ordinary
+    # reference — `marketing.spend` is not a valid value by itself but is valid
+    # inside SUM() — so it has to be checked the way it will be used.
+    as_aggregate = set(aggregate_columns(expression))
 
     unknown: List[str] = []
     if resolver is not None:
         for name in names:
             try:
-                resolver.resolve(name)
+                if name in as_aggregate:
+                    resolver.column_frame(name)
+                else:
+                    resolver.resolve(name)
             except FormulaError:
                 unknown.append(name)
 

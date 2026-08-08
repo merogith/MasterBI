@@ -69,3 +69,31 @@ def references(expression: str) -> List[str]:
 def kpi_references(expression: str) -> List[str]:
     """Just the bare names — the ones that could be another KPI's id."""
     return [n for n in references(expression) if "." not in n]
+
+
+def aggregate_columns(expression: str) -> List[str]:
+    """`table.column` references that are the argument of an aggregate.
+
+    These follow different rules from an ordinary reference: `marketing.spend`
+    is not a valid value on its own (several rows per month) but is perfectly
+    valid as `SUM(marketing.spend)`. A validator that checked both the same way
+    would reject formulas that evaluate correctly — which is the worst direction
+    for a validator to be wrong in.
+    """
+    from .functions import FUNCTIONS
+
+    tree = parse(expression, allowed=ARITHMETIC_NODES)
+    out: List[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        fn = FUNCTIONS.get(node.func.id)
+        if fn is None or not fn.takes_column_ref or not node.args:
+            continue
+        try:
+            name = dotted_name(node.args[0])
+        except Exception:                                   # noqa: BLE001
+            continue
+        if name not in out:
+            out.append(name)
+    return out
