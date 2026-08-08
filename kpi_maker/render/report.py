@@ -27,9 +27,8 @@ from ..insight.detectors import Finding
 from ..kpi.schema import KPISet, Perspective
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
+from ..design.palette import heading_accent
 from ..viz.theme import TOKENS
-
-PRINT = TOKENS["light"]
 
 FONT_CANDIDATES = [
     ("Segoe UI", "C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/segoeuib.ttf",
@@ -53,9 +52,15 @@ def _rgb(hex_color: str) -> Tuple[int, int, int]:
 
 
 class PDFReport(FPDF):
-    def __init__(self, profile: CompanyProfile):
+    def __init__(self, profile: CompanyProfile,
+                 tokens: Optional[Dict[str, str]] = None):
         super().__init__(orientation="P", unit="mm", format="A4")
         self.profile = profile
+        # Every drawing call reads `self.t`. It used to read a module constant
+        # bound to the light palette at import, which meant no per-run brand
+        # could ever reach the page. Defaulting to that same palette is what
+        # keeps an unbranded report byte-identical.
+        self.t = dict(tokens or TOKENS["light"])
         self.unicode = False
         self.family = "helvetica"
         self.set_margins(18, 18, 18)
@@ -106,7 +111,7 @@ class PDFReport(FPDF):
         if not self.cover_done or self.page_no() == 1:
             return
         self.set_font(self.family, "", 7.5)
-        self.set_text_color(*_rgb(PRINT["muted"]))
+        self.set_text_color(*_rgb(self.t["muted"]))
         self.set_y(10)
         # Explicit half-widths. Two zero-width cells would leave x parked at the
         # right margin, and any multi_cell that resumes after an auto page break
@@ -114,7 +119,7 @@ class PDFReport(FPDF):
         half = (self.w - 36) / 2
         self.cell(half, 4, self.clean(self.profile.identity.name), align="L")
         self.cell(half, 4, self.clean("Performance review"), align="R")
-        self.set_draw_color(*_rgb(PRINT["grid"]))
+        self.set_draw_color(*_rgb(self.t["grid"]))
         self.set_line_width(0.2)
         self.line(18, 15.5, self.w - 18, 15.5)
         self.set_y(22)
@@ -124,7 +129,7 @@ class PDFReport(FPDF):
             return
         self.set_y(-14)
         self.set_font(self.family, "", 7.5)
-        self.set_text_color(*_rgb(PRINT["muted"]))
+        self.set_text_color(*_rgb(self.t["muted"]))
         half = (self.w - 36) / 2
         self.cell(half, 4, self.clean(
             "Benchmarks are illustrative — see appendix"), align="L")
@@ -154,7 +159,7 @@ class PDFReport(FPDF):
         self._flow()
         self.ln(3)
         self.set_font(self.family, "B", 16)
-        self.set_text_color(*_rgb(PRINT["text_primary"]))
+        self.set_text_color(*_rgb(self.t["text_primary"]))
         self.multi_cell(0, 7, self.clean(text))
         self.ln(1.5)
 
@@ -162,21 +167,21 @@ class PDFReport(FPDF):
         self._flow()
         self.ln(2.5)
         self.set_font(self.family, "B", 11.5)
-        self.set_text_color(*_rgb(PRINT["text_primary"]))
+        self.set_text_color(*_rgb(self.t["text_primary"]))
         self.multi_cell(0, 5.5, self.clean(text))
         self.ln(0.8)
 
     def body(self, text: str, size: float = 9.5, color: str = "text_secondary") -> None:
         self._flow()
         self.set_font(self.family, "", size)
-        self.set_text_color(*_rgb(PRINT[color]))
+        self.set_text_color(*_rgb(self.t[color]))
         self.multi_cell(0, 4.6, self.clean(text))
         self.ln(1.2)
 
     def bullet(self, text: str, marker: str = "•") -> None:
         self._flow()
         self.set_font(self.family, "", 9.5)
-        self.set_text_color(*_rgb(PRINT["text_secondary"]))
+        self.set_text_color(*_rgb(self.t["text_secondary"]))
         x = self.get_x()
         self.cell(4.5, 4.6, self.clean(marker))
         self.set_x(x + 4.5)
@@ -188,12 +193,12 @@ class PDFReport(FPDF):
     def note(self, text: str) -> None:
         self._flow()
         self.set_font(self.family, "I", 8.5)
-        self.set_text_color(*_rgb(PRINT["muted"]))
+        self.set_text_color(*_rgb(self.t["muted"]))
         self.multi_cell(0, 4, self.clean(text))
         self.ln(1)
 
     def rule(self) -> None:
-        self.set_draw_color(*_rgb(PRINT["grid"]))
+        self.set_draw_color(*_rgb(self.t["grid"]))
         self.set_line_width(0.2)
         y = self.get_y()
         self.line(18, y, self.w - 18, y)
@@ -205,8 +210,8 @@ class PDFReport(FPDF):
               row_colors: Optional[List[Optional[str]]] = None) -> None:
         aligns = aligns or ["L"] * len(headers)
         self.set_font(self.family, "B", 7.5)
-        self.set_text_color(*_rgb(PRINT["muted"]))
-        self.set_fill_color(*_rgb(PRINT["page"]))
+        self.set_text_color(*_rgb(self.t["muted"]))
+        self.set_fill_color(*_rgb(self.t["page"]))
         for h, w, a in zip(headers, widths, aligns):
             self.cell(w, 6, self.clean(h.upper()), align=a, fill=True)
         self.ln()
@@ -216,8 +221,8 @@ class PDFReport(FPDF):
             if self.get_y() > self.h - 28:
                 self.add_page()
                 self.set_font(self.family, "B", 7.5)
-                self.set_text_color(*_rgb(PRINT["muted"]))
-                self.set_fill_color(*_rgb(PRINT["page"]))
+                self.set_text_color(*_rgb(self.t["muted"]))
+                self.set_fill_color(*_rgb(self.t["page"]))
                 for h, w, a in zip(headers, widths, aligns):
                     self.cell(w, 6, self.clean(h.upper()), align=a, fill=True)
                 self.ln()
@@ -226,13 +231,13 @@ class PDFReport(FPDF):
             tint = row_colors[i] if row_colors else None
             for j, (val, w, a) in enumerate(zip(row, widths, aligns)):
                 if tint and j == len(row) - 1:
-                    self.set_text_color(*_rgb(PRINT[tint]))
+                    self.set_text_color(*_rgb(self.t[tint]))
                 else:
-                    self.set_text_color(*_rgb(PRINT["text_primary"] if j == 0
-                                              else PRINT["text_secondary"]))
+                    self.set_text_color(*_rgb(self.t["text_primary"] if j == 0
+                                              else self.t["text_secondary"]))
                 self.cell(w, 5.6, self.clean(str(val)), align=a)
             self.ln()
-            self.set_draw_color(*_rgb(PRINT["grid"]))
+            self.set_draw_color(*_rgb(self.t["grid"]))
             self.set_line_width(0.1)
             y = self.get_y()
             self.line(18, y, 18 + sum(widths), y)
@@ -246,11 +251,11 @@ class PDFReport(FPDF):
         if self.get_y() + needed > self.h - 24:
             self.add_page()
         self.set_font(self.family, "B", 10)
-        self.set_text_color(*_rgb(PRINT["text_primary"]))
+        self.set_text_color(*_rgb(self.t["text_primary"]))
         self.multi_cell(0, 5, self.clean(title))
         if subtitle:
             self.set_font(self.family, "", 8.5)
-            self.set_text_color(*_rgb(PRINT["muted"]))
+            self.set_text_color(*_rgb(self.t["muted"]))
             self.multi_cell(0, 4, self.clean(subtitle))
         self.ln(1)
         import io
@@ -273,17 +278,17 @@ def _cover(pdf: PDFReport, profile: CompanyProfile, results: List[MetricResult],
     pdf.add_page()
     pdf.set_y(58)
     pdf.set_font(pdf.family, "", 9)
-    pdf.set_text_color(*_rgb(PRINT["muted"]))
+    pdf.set_text_color(*_rgb(pdf.t["muted"]))
     pdf.cell(0, 5, pdf.clean("PERFORMANCE REVIEW"))
     pdf.ln(11)
 
     pdf.set_font(pdf.family, "B", 27)
-    pdf.set_text_color(*_rgb(PRINT["text_primary"]))
+    pdf.set_text_color(*_rgb(pdf.t["text_primary"]))
     pdf.multi_cell(0, 11, pdf.clean(profile.identity.name))
     pdf.ln(3)
 
     pdf.set_font(pdf.family, "", 11)
-    pdf.set_text_color(*_rgb(PRINT["text_secondary"]))
+    pdf.set_text_color(*_rgb(pdf.t["text_secondary"]))
     pdf.multi_cell(0, 5.6, pdf.clean(
         f"{profile.business_model.type.value.upper()} · "
         f"{profile.business_model.customer_type.value} · "
@@ -294,11 +299,11 @@ def _cover(pdf: PDFReport, profile: CompanyProfile, results: List[MetricResult],
     north = next((r for r in results if r.kpi.id == kpi_set.north_star and r.computed), None)
     if north:
         pdf.set_font(pdf.family, "", 9)
-        pdf.set_text_color(*_rgb(PRINT["muted"]))
+        pdf.set_text_color(*_rgb(pdf.t["muted"]))
         pdf.cell(0, 5, pdf.clean(north.kpi.name.upper()))
         pdf.ln(8)
         pdf.set_font(pdf.family, "B", 34)
-        pdf.set_text_color(*_rgb(PRINT["series_1"]))
+        pdf.set_text_color(*_rgb(heading_accent(pdf.t)))
         pdf.cell(0, 14, pdf.clean(
             fmt_value(north.current, north.kpi.unit, profile.identity.currency)))
         pdf.ln(20)
@@ -306,7 +311,7 @@ def _cover(pdf: PDFReport, profile: CompanyProfile, results: List[MetricResult],
     pdf.set_y(pdf.h - 56)
     pdf.rule()
     pdf.set_font(pdf.family, "", 8)
-    pdf.set_text_color(*_rgb(PRINT["muted"]))
+    pdf.set_text_color(*_rgb(pdf.t["muted"]))
     pdf.multi_cell(0, 4.2, pdf.clean(
         f"Prepared for the {profile.intent.audience.value} · "
         f"primary objective: {profile.intent.primary_objective.value.replace('_', ' ')} · "
@@ -330,10 +335,10 @@ def _exec_summary(pdf: PDFReport, findings: List[Finding], results: List[MetricR
     pdf.ln(1)
     for f in _top_findings(findings, limit=5):
         pdf.set_font(pdf.family, "B", 9.5)
-        pdf.set_text_color(*_rgb(PRINT["text_primary"]))
+        pdf.set_text_color(*_rgb(pdf.t["text_primary"]))
         pdf.multi_cell(0, 4.8, pdf.clean(f"{SEVERITY_WORD.get(f.severity, '')} · {f.title}"))
         pdf.set_font(pdf.family, "", 9.5)
-        pdf.set_text_color(*_rgb(PRINT["text_secondary"]))
+        pdf.set_text_color(*_rgb(pdf.t["text_secondary"]))
         pdf.multi_cell(0, 4.6, pdf.clean(f.statement))
         pdf.ln(2.5)
 
@@ -419,12 +424,12 @@ def _deep_dives(pdf: PDFReport, images: Dict[str, bytes], specs: List,
         pdf.exhibit(images[spec.id], spec.title, spec.subtitle, spec.note)
         if observation:
             pdf.set_font(pdf.family, "B", 9)
-            pdf.set_text_color(*_rgb(PRINT["text_primary"]))
+            pdf.set_text_color(*_rgb(pdf.t["text_primary"]))
             pdf.multi_cell(0, 4.5, pdf.clean("Observation"))
             pdf.body(observation)
         if implication:
             pdf.set_font(pdf.family, "B", 9)
-            pdf.set_text_color(*_rgb(PRINT["text_primary"]))
+            pdf.set_text_color(*_rgb(pdf.t["text_primary"]))
             pdf.multi_cell(0, 4.5, pdf.clean("Implication"))
             pdf.body(implication)
         pdf.ln(2)
@@ -473,8 +478,8 @@ def _risks(pdf: PDFReport, findings: List[Finding]) -> None:
         return
     for f in risks:
         pdf.set_font(pdf.family, "B", 9.5)
-        pdf.set_text_color(*_rgb(PRINT["critical"] if f.severity == "critical"
-                                 else PRINT["serious"]))
+        pdf.set_text_color(*_rgb(pdf.t["critical"] if f.severity == "critical"
+                                 else pdf.t["serious"]))
         pdf.multi_cell(0, 4.8, pdf.clean(f"{SEVERITY_WORD[f.severity]} · {f.title}"))
         pdf.body(f.statement)
         pdf.ln(1)
@@ -510,10 +515,10 @@ def _actions(pdf: PDFReport, findings: List[Finding],
     # Recommendations are long; render as blocks rather than a cramped table.
     for i, row in enumerate(rows, 1):
         pdf.set_font(pdf.family, "B", 9.5)
-        pdf.set_text_color(*_rgb(PRINT["text_primary"]))
+        pdf.set_text_color(*_rgb(pdf.t["text_primary"]))
         pdf.multi_cell(0, 4.8, pdf.clean(f"{i}. {row[0]}"))
         pdf.set_font(pdf.family, "", 8.5)
-        pdf.set_text_color(*_rgb(PRINT["muted"]))
+        pdf.set_text_color(*_rgb(pdf.t["muted"]))
         pdf.multi_cell(0, 4.2, pdf.clean(
             f"Moves: {row[1]}   ·   Owner: {row[2]}   ·   "
             f"Impact: {row[3]}   ·   Effort: {row[4]}"))
@@ -563,19 +568,19 @@ def _appendix(pdf: PDFReport, results: List[MetricResult], kpi_set: KPISet,
         if pdf.get_y() > pdf.h - 45:
             pdf.add_page()
         pdf.set_font(pdf.family, "B", 9.5)
-        pdf.set_text_color(*_rgb(PRINT["text_primary"]))
+        pdf.set_text_color(*_rgb(pdf.t["text_primary"]))
         pdf.multi_cell(0, 4.8, pdf.clean(f"{k.name}  ({k.perspective.value}, {k.timing.value})"))
         pdf.set_font(pdf.family, "", 8.5)
-        pdf.set_text_color(*_rgb(PRINT["text_secondary"]))
+        pdf.set_text_color(*_rgb(pdf.t["text_secondary"]))
         pdf.multi_cell(0, 4.2, pdf.clean(f"Formula: {k.formula}"))
         pdf.multi_cell(0, 4.2, pdf.clean(
             f"Owner: {k.owner_role}   ·   Sources: {', '.join(k.source_systems) or 'n/a'}"
             f"   ·   Frequency: {k.frequency}"))
         if k.pitfalls:
-            pdf.set_text_color(*_rgb(PRINT["serious"]))
+            pdf.set_text_color(*_rgb(pdf.t["serious"]))
             pdf.multi_cell(0, 4.2, pdf.clean(f"Pitfall: {k.pitfalls}"))
         if k.benchmark:
-            pdf.set_text_color(*_rgb(PRINT["muted"]))
+            pdf.set_text_color(*_rgb(pdf.t["muted"]))
             pdf.multi_cell(0, 4.2, pdf.clean(f"Benchmark source: {k.benchmark.source}"))
         pdf.ln(2)
 
@@ -588,9 +593,10 @@ def _appendix(pdf: PDFReport, results: List[MetricResult], kpi_set: KPISet,
 def render_report(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                   results: List[MetricResult], findings: List[Finding],
                   images: Dict[str, bytes], specs: List, checks: List[str],
-                  anomaly_notes: List[str], period: str = "") -> Path:
+                  anomaly_notes: List[str], period: str = "",
+                  tokens: Optional[Dict[str, str]] = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    pdf = PDFReport(profile)
+    pdf = PDFReport(profile, tokens)
     specs_by_id = {s.id: s for s in specs}
 
     _cover(pdf, profile, results, kpi_set, period)

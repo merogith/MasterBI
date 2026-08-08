@@ -22,6 +22,7 @@ from ..datagen.saas import generate as generate_subscription
 from ..insight.detectors import detect_all
 from ..kpi.selection import select
 from ..metrics.engine import compute, facts_table
+from ..design.palette import derive_tokens
 from ..render.dashboard import render_dashboard
 from ..render.deck import render_deck
 from ..render.doc import render_doc
@@ -159,6 +160,22 @@ def _analyse(ctx) -> List[Any]:
                       spec=ctx.spec.analysis)
 
 
+def _palettes(ctx) -> Dict[str, Dict[str, str]]:
+    """The derived token set for each mode, memoised on the context.
+
+    Derivation is cheap but not free — a brand colour runs a greedy search over
+    candidate companions under three vision models — and the dashboard stage
+    alone would otherwise do it twice.
+    """
+    cached = getattr(ctx, "_palette_cache", None)
+    if cached is None:
+        brand = ctx.spec.design.brand
+        cached = {mode: derive_tokens(brand.primary, mode, brand.accent).tokens
+                  for mode in ("light", "dark")}
+        object.__setattr__(ctx, "_palette_cache", cached)
+    return cached
+
+
 @stage("visualise", needs=("metrics",), reads=("profile", "design"),
        label="Building chart specs")
 def _visualise(ctx) -> Dict[str, List[Any]]:
@@ -169,9 +186,12 @@ def _visualise(ctx) -> Dict[str, List[Any]]:
     """
     results, tables = ctx.get("metrics"), ctx.get("model")
     currency = ctx.spec.resolve_currency()
+    palette = _palettes(ctx)
     return {
-        "light": build_all(results, tables, mode="light", currency=currency),
-        "dark": build_all(results, tables, mode="dark", currency=currency),
+        "light": build_all(results, tables, mode="light", currency=currency,
+                           tokens=palette["light"]),
+        "dark": build_all(results, tables, mode="dark", currency=currency,
+                          tokens=palette["dark"]),
     }
 
 
@@ -197,6 +217,8 @@ def _dashboard(ctx):
             ctx.get("analyse"), ctx.get("model"), ctx.get("source").checks,
             [a.description for a in ctx.get("source").anomalies],
             specs_light=specs["light"], specs_dark=specs["dark"],
+            tokens_light=_palettes(ctx)["light"],
+            tokens_dark=_palettes(ctx)["dark"],
         ),
         encoding="utf-8",
     )
@@ -222,7 +244,8 @@ def _report_pdf(ctx):
     render_report(path, ctx.get("resolve"), ctx.get("select"), ctx.get("metrics"),
                   ctx.get("analyse"), ctx.get("charts_png"),
                   ctx.get("visualise")["light"], ctx.get("source").checks,
-                  [a.description for a in ctx.get("source").anomalies], ctx.period)
+                  [a.description for a in ctx.get("source").anomalies], ctx.period,
+                  tokens=_palettes(ctx)["light"])
     return path
 
 
@@ -233,7 +256,8 @@ def _deck_pptx(ctx):
     path = ctx.out_dir / "deck.pptx"
     render_deck(path, ctx.get("resolve"), ctx.get("select"), ctx.get("metrics"),
                 ctx.get("analyse"), ctx.get("charts_png"),
-                ctx.get("visualise")["light"], ctx.period)
+                ctx.get("visualise")["light"], ctx.period,
+                tokens=_palettes(ctx)["light"])
     return path
 
 
@@ -245,7 +269,8 @@ def _doc_docx(ctx):
     render_doc(path, ctx.get("resolve"), ctx.get("select"), ctx.get("metrics"),
                ctx.get("analyse"), ctx.get("charts_png"),
                ctx.get("visualise")["light"], ctx.get("source").checks,
-               [a.description for a in ctx.get("source").anomalies], ctx.period)
+               [a.description for a in ctx.get("source").anomalies], ctx.period,
+               tokens=_palettes(ctx)["light"])
     return path
 
 

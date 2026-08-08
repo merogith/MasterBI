@@ -308,6 +308,17 @@ def derive_tokens(brand: Optional[str] = None, mode: str = "light",
                    ok=bool(verdict["ok"]), min_delta_e=worst)
 
 
+def heading_accent(tokens: Dict[str, str]) -> str:
+    """The brand colour in text-safe form, or slot 1 when there is no brand.
+
+    The shipped palette has no separate heading accent — slot 1 does that job,
+    at 4.30:1 against the page. Falling back to it rather than inventing a
+    readable variant is deliberate: raising the default to AA would change
+    every unbranded PDF, which is a design decision, not a refactor.
+    """
+    return tokens.get("heading_accent") or tokens["series_1"]
+
+
 def resolve_palette(design, mode: Optional[str] = None) -> Palette:
     """`DesignSpec` -> `Palette`, for the render stage.
 

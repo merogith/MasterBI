@@ -23,7 +23,6 @@ from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
 from ..viz.theme import TOKENS
 
-PRINT = TOKENS["light"]
 FONT = "Segoe UI"
 
 SLIDE_W = Inches(13.333)
@@ -37,7 +36,9 @@ def _rgb(hex_color: str) -> RGBColor:
 
 
 class Deck:
-    def __init__(self, profile: CompanyProfile):
+    def __init__(self, profile: CompanyProfile,
+                 tokens: Optional[Dict[str, str]] = None):
+        self.t = dict(tokens or TOKENS["light"])
         self.prs = Presentation()
         self.prs.slide_width = SLIDE_W
         self.prs.slide_height = SLIDE_H
@@ -60,7 +61,7 @@ class Deck:
         run.font.size = Pt(size)
         run.font.bold = bold
         run.font.name = FONT
-        run.font.color.rgb = _rgb(PRINT[color])
+        run.font.color.rgb = _rgb(self.t[color])
         return box
 
     def _headline(self, slide, message: str, kicker: str = ""):
@@ -73,7 +74,7 @@ class Deck:
         line = slide.shapes.add_shape(1, MARGIN, Inches(1.62),
                                       SLIDE_W - 2 * MARGIN, Emu(9525))
         line.fill.solid()
-        line.fill.fore_color.rgb = _rgb(PRINT["grid"])
+        line.fill.fore_color.rgb = _rgb(self.t["grid"])
         line.line.fill.background()
         line.shadow.inherit = False
 
@@ -118,7 +119,7 @@ class Deck:
             run.text = item
             run.font.size = Pt(14)
             run.font.name = FONT
-            run.font.color.rgb = _rgb(PRINT["text_secondary"])
+            run.font.color.rgb = _rgb(self.t["text_secondary"])
             p.space_after = Pt(11)
         return s
 
@@ -164,7 +165,7 @@ class Deck:
             para.runs[0].font.size = Pt(10)
             para.runs[0].font.bold = True
             para.runs[0].font.name = FONT
-            para.runs[0].font.color.rgb = _rgb(PRINT["text_primary"])
+            para.runs[0].font.color.rgb = _rgb(self.t["text_primary"])
 
         for r, row in enumerate(rows, start=1):
             for c, val in enumerate(row):
@@ -174,7 +175,7 @@ class Deck:
                 para.runs[0].font.size = Pt(10)
                 para.runs[0].font.name = FONT
                 para.runs[0].font.color.rgb = _rgb(
-                    PRINT["text_primary"] if c == 0 else PRINT["text_secondary"])
+                    self.t["text_primary"] if c == 0 else self.t["text_secondary"])
         return s
 
     def save(self, path: Path) -> Path:
@@ -191,8 +192,9 @@ STATUS_WORD = {"green": "On track", "amber": "Watch", "red": "Off track",
 
 def render_deck(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                 results: List[MetricResult], findings: List[Finding],
-                images: Dict[str, bytes], specs: List, period: str = "") -> Path:
-    deck = Deck(profile)
+                images: Dict[str, bytes], specs: List, period: str = "",
+                tokens: Optional[Dict[str, str]] = None) -> Path:
+    deck = Deck(profile, tokens)
     cur = profile.identity.currency
     computed = [r for r in results if r.computed]
 

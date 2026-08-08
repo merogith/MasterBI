@@ -337,12 +337,18 @@ def _chart_html(specs: List[ChartSpec], mode: str) -> str:
     )
 
 
+def _css_vars(tokens: Dict[str, str]) -> str:
+    return "\n".join(f"    --{k.replace('_', '-')}: {v};" for k, v in tokens.items())
+
+
 def render_dashboard(profile: CompanyProfile, kpi_set: KPISet,
                      results: List[MetricResult], findings: List[Finding],
                      tables: Dict[str, pd.DataFrame], checks: List[str],
                      anomaly_notes: List[str],
                      specs_light: Optional[List[ChartSpec]] = None,
-                     specs_dark: Optional[List[ChartSpec]] = None) -> str:
+                     specs_dark: Optional[List[ChartSpec]] = None,
+                     tokens_light: Optional[Dict[str, str]] = None,
+                     tokens_dark: Optional[Dict[str, str]] = None) -> str:
     computed = [r for r in results if r.computed]
     north_star = next((r for r in computed if r.kpi.id == kpi_set.north_star), None)
     growth = next((r for r in computed if r.kpi.id == "arr_growth_yoy"), None)
@@ -375,8 +381,10 @@ def render_dashboard(profile: CompanyProfile, kpi_set: KPISet,
     if fin is not None and not fin.empty:
         period = f"{fin['month'].iloc[0]} to {fin['month'].iloc[-1]}"
 
-    light_css = "\n".join(f"    --{k.replace('_', '-')}: {v};" for k, v in TOKENS["light"].items())
-    dark_css = "\n".join(f"    --{k.replace('_', '-')}: {v};" for k, v in TOKENS["dark"].items())
+    # Both palettes, because the dashboard ships its own theme toggle — a
+    # brand has to be derived twice or switching to dark loses it.
+    light_css = _css_vars(tokens_light or TOKENS["light"])
+    dark_css = _css_vars(tokens_dark or TOKENS["dark"])
 
     return f"""<!doctype html>
 <html lang="en" data-theme="light">

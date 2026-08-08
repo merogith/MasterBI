@@ -23,7 +23,6 @@ from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
 from ..viz.theme import TOKENS
 
-PRINT = TOKENS["light"]
 STATUS_WORD = {"green": "On track", "amber": "Watch", "red": "Off track",
                "unscored": "No target", "unknown": "No data"}
 SEVERITY_WORD = {"critical": "Critical", "high": "High", "medium": "Medium",
@@ -50,7 +49,7 @@ def _style(doc: Document) -> None:
         st.font.name = "Segoe UI"
         st.font.size = Pt(size)
         st.font.bold = True
-        st.font.color.rgb = _rgb(PRINT[color])
+        st.font.color.rgb = _rgb(doc.t[color])
 
 
 def _muted(doc: Document, text: str, size: int = 9, italic: bool = False):
@@ -58,7 +57,7 @@ def _muted(doc: Document, text: str, size: int = 9, italic: bool = False):
     run = p.add_run(text)
     run.font.size = Pt(size)
     run.italic = italic
-    run.font.color.rgb = _rgb(PRINT["muted"])
+    run.font.color.rgb = _rgb(doc.t["muted"])
     return p
 
 
@@ -98,9 +97,14 @@ def _exhibit(doc: Document, png: Optional[bytes], title: str, caption: str = "")
 def render_doc(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                results: List[MetricResult], findings: List[Finding],
                images: Dict[str, bytes], specs: List, checks: List[str],
-               anomaly_notes: List[str], period: str = "") -> Path:
+               anomaly_notes: List[str], period: str = "",
+               tokens: Optional[Dict[str, str]] = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     doc = Document()
+    # The token set rides on the document, matching `pdf.t` and `self.t` in the
+    # other two renderers. Threading it through `_muted`'s seven call sites
+    # would say the same thing seven more times.
+    doc.t = dict(tokens or TOKENS["light"])
     _style(doc)
     cur = profile.identity.currency
     computed = [r for r in results if r.computed]
@@ -284,7 +288,7 @@ def render_doc(path: Path, profile: CompanyProfile, kpi_set: KPISet,
         if k.pitfalls:
             p = doc.add_paragraph()
             run = p.add_run(f"Pitfall: {k.pitfalls}")
-            run.font.color.rgb = _rgb(PRINT["serious"])
+            run.font.color.rgb = _rgb(doc.t["serious"])
         if k.benchmark:
             _muted(doc, f"Benchmark source: {k.benchmark.source}", size=8)
 

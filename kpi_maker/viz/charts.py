@@ -38,11 +38,18 @@ _CURRENCY = "USD"
 LIGHT = dict(TOKENS["light"])
 
 
-def set_mode(mode: str) -> None:
-    if mode not in TOKENS:
-        raise ValueError(f"unknown theme mode {mode!r}")
+def set_mode(mode: str, tokens: Optional[Dict[str, str]] = None) -> None:
+    """Point the chart layer at a token set.
+
+    `tokens` overrides the shipped palette for this mode, which is how a brand
+    colour reaches the charts. Omitted, the behaviour is exactly as before.
+    """
+    if tokens is None:
+        if mode not in TOKENS:
+            raise ValueError(f"unknown theme mode {mode!r}")
+        tokens = TOKENS[mode]
     LIGHT.clear()
-    LIGHT.update(TOKENS[mode])
+    LIGHT.update(tokens)
 
 
 @dataclass
@@ -471,8 +478,9 @@ def benchmark_position(results: List[MetricResult]) -> Optional[ChartSpec]:
 def build_all(results: List[MetricResult],
               tables: Dict[str, pd.DataFrame],
               mode: str = "light",
-              currency: str = "USD") -> List[ChartSpec]:
-    set_mode(mode)
+              currency: str = "USD",
+              tokens: Optional[Dict[str, str]] = None) -> List[ChartSpec]:
+    set_mode(mode, tokens)
     set_currency(currency)
     builders = [
         lambda: arr_trend(results),
