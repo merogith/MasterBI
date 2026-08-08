@@ -70,6 +70,23 @@ def _sparkline(series: Optional[pd.Series], color: str, width: int = 104,
     )
 
 
+def _basis_badge(result: "MetricResult") -> str:
+    """Mark a number the generator produced rather than the user's data.
+
+    Only rendered when it is not `measured`. Labelling every measured number
+    would make the distinction invisible through repetition, which is the
+    opposite of the point.
+    """
+    if getattr(result, "basis", "measured") == "measured":
+        return ""
+    label = {"modelled": "Modelled", "mixed": "Part modelled"}.get(
+        result.basis, result.basis)
+    tip = ("Computed from data the generator supplied because your upload did "
+           "not contain it")
+    return (f'<span class="basis-badge" title="{html.escape(tip)}">'
+            f'{html.escape(label)}</span>')
+
+
 def _status_chip(status: str) -> str:
     glyph = STATUS_GLYPH.get(status, "○")
     label = STATUS_LABEL.get(status, "No data")
@@ -182,7 +199,7 @@ def _scorecard_table(results: List[MetricResult], kpi_set: KPISet,
             pos = (r.benchmark_position or "—").replace("_", " ")
             rows.append(f"""
             <tr>
-              <td class="kpi-name">{html.escape(k.name)}
+              <td class="kpi-name">{html.escape(k.name)}{_basis_badge(r)}
                 <span class="kpi-timing">{html.escape(k.timing.value)}</span></td>
               <td class="num">{html.escape(fmt_value(r.current, k.unit, currency))}</td>
               <td class="num">{html.escape(fmt_value(r.prior_year, k.unit, currency))}</td>
@@ -469,6 +486,11 @@ td.num, th.num {{ text-align: right; font-variant-numeric: tabular-nums; }}
 .group-row th {{ color: var(--text-primary); font-size: 12px; padding-top: 16px;
   text-transform: none; letter-spacing: 0; }}
 .kpi-name {{ font-weight: 500; }}
+.basis-badge {{
+  display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 5px;
+  font-size: 10px; font-weight: 650; letter-spacing: .03em; text-transform: uppercase;
+  background: var(--warning); color: #1a1a19; vertical-align: middle;
+}}
 .kpi-timing {{ color: var(--muted); font-weight: 400; font-size: 11px; margin-left: 6px; }}
 .muted-cell {{ color: var(--muted); }}
 

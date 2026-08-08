@@ -72,8 +72,15 @@ class GeneratorParams(SpecModel):
 class SourceSpec(SpecModel):
     kind: SourceKind = SourceKind.synthetic
     generator: GeneratorParams = Field(default_factory=GeneratorParams)
-    # P2: uploaded file ids, resolved against the run's upload directory.
+    # Uploaded file ids, resolved against the run's upload directory.
     uploads: List[str] = Field(default_factory=list)
+
+    # Fact tables the user has explicitly agreed to synthesise because their
+    # upload does not contain them. Empty by default, and deliberately so: the
+    # honest answer to a missing headcount roster is to drop the KPIs that need
+    # one, not to invent it. Every KPI computed from a filled table reports
+    # `basis: modelled` and is labelled as such wherever it appears.
+    fill_gaps: List[str] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------

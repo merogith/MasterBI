@@ -104,10 +104,12 @@ def _select(ctx) -> Any:
     return select(ctx.get("resolve"), overrides=ctx.spec.metrics)
 
 
-@stage("metrics", needs=("select", "model"), reads=("profile", "metrics"),
+@stage("metrics", needs=("select", "model", "source"),
+       reads=("profile", "metrics", "source"),
        label="Computing metrics")
 def _metrics(ctx) -> List[Any]:
-    return compute(ctx.get("select"), ctx.get("model"), ctx.get("resolve"))
+    return compute(ctx.get("select"), ctx.get("model"), ctx.get("resolve"),
+                   origins=getattr(ctx, "origins", None))
 
 
 @stage("analyse", needs=("metrics",), reads=("profile", "analysis"),
