@@ -31,7 +31,6 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 | HTTP API | `kpi_maker/api/` | done |
 | Web UI | `ui/` | done — M8 (vanilla JS, no build step) |
 | More sectors (M2) | — | not started |
-
 | AI Builder (M7) | — | not started |
 
 ## Run it
