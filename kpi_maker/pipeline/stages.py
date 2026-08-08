@@ -18,7 +18,7 @@ from typing import Any, Dict, List
 
 import pandas as pd
 
-from ..datagen.saas import generate as generate_subscription
+from ..datagen import GENERATORS, available as _archetypes
 from ..insight.detectors import detect_all
 from ..kpi.selection import select
 from ..metrics.engine import compute, facts_table
@@ -33,9 +33,10 @@ from ..viz.charts import build_all
 from ..viz.export import render_all as render_chart_images
 from .graph import stage
 
-# Generator archetypes. A registry rather than the old inline dict so P4 adds a
-# sector by registering here instead of editing the pipeline.
-GENERATORS = {"saas": generate_subscription}
+# `GENERATORS` is re-exported here under the name the CLI and the tests already
+# look for. Importing `..datagen` is what registers every shipped archetype, so
+# a new sector is a module with `@generator("…")` on it and nothing in the
+# pipeline changes.
 
 
 # --------------------------------------------------------------------------
@@ -58,7 +59,7 @@ def _source(ctx) -> Any:
     if generator is None:
         raise ValueError(
             f"No data generator for business model {archetype!r}. "
-            f"Available: {', '.join(sorted(GENERATORS))}."
+            f"Available: {', '.join(_archetypes())}."
         )
     profile = ctx.get("resolve")
     # The generator reads seed and history from the profile, so a spec override
