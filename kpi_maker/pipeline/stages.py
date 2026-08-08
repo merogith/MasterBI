@@ -245,7 +245,8 @@ def _report_pdf(ctx):
                   ctx.get("analyse"), ctx.get("charts_png"),
                   ctx.get("visualise")["light"], ctx.get("source").checks,
                   [a.description for a in ctx.get("source").anomalies], ctx.period,
-                  tokens=_palettes(ctx)["light"])
+                  tokens=_palettes(ctx)["light"],
+                  section_order=ctx.spec.design.sections)
     return path
 
 
@@ -257,7 +258,8 @@ def _deck_pptx(ctx):
     render_deck(path, ctx.get("resolve"), ctx.get("select"), ctx.get("metrics"),
                 ctx.get("analyse"), ctx.get("charts_png"),
                 ctx.get("visualise")["light"], ctx.period,
-                tokens=_palettes(ctx)["light"])
+                tokens=_palettes(ctx)["light"],
+                section_order=ctx.spec.design.sections)
     return path
 
 
@@ -270,7 +272,8 @@ def _doc_docx(ctx):
                ctx.get("analyse"), ctx.get("charts_png"),
                ctx.get("visualise")["light"], ctx.get("source").checks,
                [a.description for a in ctx.get("source").anomalies], ctx.period,
-               tokens=_palettes(ctx)["light"])
+               tokens=_palettes(ctx)["light"],
+               section_order=ctx.spec.design.sections)
     return path
 
 

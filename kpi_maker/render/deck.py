@@ -21,6 +21,7 @@ from ..insight.detectors import Finding
 from ..kpi.schema import KPISet
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
+from .sections import SectionContext, build as build_sections
 from ..viz.theme import TOKENS
 
 FONT = "Segoe UI"
@@ -184,32 +185,44 @@ class Deck:
         return path
 
 
-SEVERITY_WORD = {"critical": "Critical", "high": "High", "medium": "Medium",
-                 "low": "Low", "positive": "Strength"}
+# The deck shares the report's *content* for the three sections where the two
+# genuinely say the same thing — the executive summary, the risks and the
+# actions. It keeps its own title slide, its own top-tier scorecard and its own
+# exhibit plan, because those are not the report's sections rendered smaller:
+# the scorecard shows only tier-1 KPIs with five columns, and every exhibit
+# gets a headline written from its finding rather than the chart's topic. That
+# is a different document, and forcing it through the shared registry would
+# either change the deck or fill the registry with per-format branches.
+#
+# Section toggles still reach all of it: a section switched off in the spec
+# produces no slide here either.
+
+# Fewer rows than a page holds. Recorded here rather than left as a bare 8.
+DECK_LIMITS = {"exec_summary": {"limit": 5}, "risks": {"limit": 5},
+               "actions": {"limit": 8}}
+
+# Which section owns each planned exhibit, so that disabling a section drops
+# its charts from the deck too.
+EXHIBIT_PLAN = [
+    ("arr_trend", "arr", "Trajectory", "deep_dives"),
+    ("arr_bridge", "net_new_arr", "Diagnostic", "diagnostic"),
+    ("retention", "nrr", "Retention", "deep_dives"),
+    ("segment_churn", "logo_churn_rate", "Retention", "deep_dives"),
+    ("cohort_heatmap", "grr", "Retention", "diagnostic"),
+    ("cac_payback", "cac_payback_months", "Efficiency", "deep_dives"),
+    ("channel_cost", "blended_cac", "Efficiency", "deep_dives"),
+    ("indexed_growth", "arr_per_fte", "Leverage", "deep_dives"),
+    ("benchmark_position", None, "Benchmarks", "benchmarks"),
+]
+EXHIBIT_SECTIONS = ("diagnostic", "deep_dives", "benchmarks")
+
 STATUS_WORD = {"green": "On track", "amber": "Watch", "red": "Off track",
                "unscored": "No target", "unknown": "No data"}
 
 
-def render_deck(path: Path, profile: CompanyProfile, kpi_set: KPISet,
-                results: List[MetricResult], findings: List[Finding],
-                images: Dict[str, bytes], specs: List, period: str = "",
-                tokens: Optional[Dict[str, str]] = None) -> Path:
-    deck = Deck(profile, tokens)
-    cur = profile.identity.currency
+def _scorecard_slide(deck: Deck, results: List[MetricResult], cur: str) -> None:
     computed = [r for r in results if r.computed]
-
-    deck.title_slide(results, kpi_set, period)
-
-    # Executive summary — the five findings, each already carrying its number.
-    top = findings[:5]
-    deck.bullets_slide(
-        "What the numbers say",
-        [f"{SEVERITY_WORD.get(f.severity, '')} · {f.title}\n{f.statement}" for f in top],
-        kicker="Executive summary",
-    )
-
-    # Scorecard
-    l1 = [r for r in computed if int(r.kpi.tier) <= 1]
+    top = [r for r in computed if int(r.kpi.tier) <= 1]
     n_red = len([r for r in computed if r.status == "red"])
     n_amber = len([r for r in computed if r.status == "amber"])
     deck.table_slide(
@@ -219,49 +232,42 @@ def render_deck(path: Path, profile: CompanyProfile, kpi_set: KPISet,
           fmt_value(r.current, r.kpi.unit, cur),
           fmt_value(r.prior_year, r.kpi.unit, cur),
           fmt_value(r.target, r.kpi.unit, cur),
-          STATUS_WORD.get(r.status, "—")] for r in l1],
+          STATUS_WORD.get(r.status, "—")] for r in top],
         kicker="Scorecard",
         col_widths=[0.36, 0.16, 0.16, 0.16, 0.16],
     )
 
-    # Exhibits — headline comes from the finding attached to the chart.
-    finding_for = {}
+
+def _exhibit_slides(deck: Deck, kpi_set: KPISet, results: List[MetricResult],
+                    findings: List[Finding], specs: List,
+                    images: Dict[str, bytes], enabled: set, cur: str) -> None:
+    """One slide per chart, headlined by the finding attached to it."""
+    finding_for: Dict[str, Finding] = {}
     for f in findings:
         for kid in f.kpi_ids:
             finding_for.setdefault(kid, f)
 
-    exhibit_plan = [
-        ("arr_trend", "arr", "Trajectory"),
-        ("arr_bridge", "net_new_arr", "Diagnostic"),
-        ("retention", "nrr", "Retention"),
-        ("segment_churn", "logo_churn_rate", "Retention"),
-        ("cohort_heatmap", "grr", "Retention"),
-        ("cac_payback", "cac_payback_months", "Efficiency"),
-        ("channel_cost", "blended_cac", "Efficiency"),
-        ("indexed_growth", "arr_per_fte", "Leverage"),
-        ("benchmark_position", None, "Benchmarks"),
-    ]
     # Where no finding is attached, compute a headline rather than falling back
     # to the chart's topic. "Annual Recurring Revenue" tells a board nothing.
-    by_id = {r.kpi.id: r for r in computed}
+    computed = {r.kpi.id: r for r in results if r.computed}
     fallbacks: Dict[str, str] = {}
-    north = by_id.get(kpi_set.north_star)
-    growth = by_id.get("arr_growth_yoy")
+    north, growth = computed.get(kpi_set.north_star), computed.get("arr_growth_yoy")
     if north and north.current is not None:
         headline = f"{north.kpi.name} reached {fmt_value(north.current, north.kpi.unit, cur)}"
         if growth and growth.current is not None:
             headline += f", up {growth.current:.0%} year on year"
         fallbacks["arr_trend"] = headline
-    benched = [r for r in computed if r.benchmark_position]
+    benched = [r for r in computed.values() if r.benchmark_position]
     behind = [r for r in benched
               if r.benchmark_position in ("below_median", "bottom_quartile")]
     if benched:
         fallbacks["benchmark_position"] = (
-            f"{len(behind)} of {len(benched)} benchmarked KPIs trail the cohort median"
-        )
+            f"{len(behind)} of {len(benched)} benchmarked KPIs trail the cohort median")
 
     specs_by_id = {s.id: s for s in specs}
-    for spec_id, kpi_id, kicker in exhibit_plan:
+    for spec_id, kpi_id, kicker, owner in EXHIBIT_PLAN:
+        if owner not in enabled:
+            continue
         spec = specs_by_id.get(spec_id)
         if spec is None or spec_id not in images:
             continue
@@ -270,48 +276,80 @@ def render_deck(path: Path, profile: CompanyProfile, kpi_set: KPISet,
         deck.exhibit_slide(headline, images[spec_id], kicker=kicker,
                            caption=spec.note or spec.subtitle)
 
-    # Risks
-    risks = [f for f in findings if f.severity in ("critical", "high")]
-    if risks:
+
+def render_deck(path: Path, profile: CompanyProfile, kpi_set: KPISet,
+                results: List[MetricResult], findings: List[Finding],
+                images: Dict[str, bytes], specs: List, period: str = "",
+                tokens: Optional[Dict[str, str]] = None,
+                section_order: Optional[List[str]] = None) -> Path:
+    deck = Deck(profile, tokens)
+    cur = profile.identity.currency
+
+    ctx = SectionContext(
+        profile=profile, kpi_set=kpi_set, results=results, findings=findings,
+        images=images, specs=specs, period=period)
+    contents = build_sections(ctx, section_order, limits=DECK_LIMITS)
+    enabled = {c.id for c in contents}
+    by_id = {c.id: c for c in contents}
+    exhibits_done = False
+
+    for content in contents:
+        if content.id == "cover":
+            deck.title_slide(results, kpi_set, period)
+
+        elif content.id == "exec_summary":
+            deck.bullets_slide(
+                "What the numbers say",
+                [f"{b.lead}\n{b.text}" for b in content.bullets],
+                kicker="Executive summary")
+
+        elif content.id == "scorecard":
+            _scorecard_slide(deck, results, cur)
+
+        elif content.id in EXHIBIT_SECTIONS:
+            # The plan spans three sections, so it runs once, at the first of
+            # them that survived the spec.
+            if not exhibits_done:
+                exhibits_done = True
+                _exhibit_slides(deck, kpi_set, results, findings, specs, images,
+                                enabled, cur)
+
+        elif content.id == "risks":
+            if content.bullets:
+                deck.bullets_slide(
+                    f"{content.total} issues need a decision this quarter",
+                    # No severity prefix: the headline already says these are
+                    # the risks, and the slide has less room to spend on it.
+                    [f"{b.title}\n{b.text}" for b in content.bullets],
+                    kicker="Risks and watch-list")
+
+        elif content.id == "actions":
+            for table in content.tables:
+                deck.table_slide(
+                    "Where to act first",
+                    ["Action", "Owner", "Impact", "Effort"],
+                    # The deck drops the "Moves" column the page has room for.
+                    [[row[0][:110], row[2], row[3], row[4]] for row in table.rows],
+                    kicker="Recommended actions",
+                    col_widths=[0.58, 0.14, 0.14, 0.14])
+
+    appendix = by_id.get("appendix")
+    if appendix is not None:
         deck.bullets_slide(
-            f"{len(risks)} issues need a decision this quarter",
-            [f"{f.title}\n{f.statement}" for f in risks[:5]],
-            kicker="Risks and watch-list",
-        )
-
-    # Actions
-    order = {"high": 0, "medium": 1, "low": 2, None: 3}
-    owner_by_kpi = {r.kpi.id: r.kpi.owner_role for r in results}
-    actionable = sorted([f for f in findings if f.recommendation],
-                        key=lambda f: (order.get(f.impact, 3), order.get(f.effort, 3)))
-    if actionable:
-        deck.table_slide(
-            "Where to act first",
-            ["Action", "Owner", "Impact", "Effort"],
-            [[f.recommendation[:110],
-              next((owner_by_kpi.get(k) for k in f.kpi_ids if owner_by_kpi.get(k)), "—"),
-              (f.impact or "—").title(), (f.effort or "—").title()]
-             for f in actionable[:8]],
-            kicker="Recommended actions",
-            col_widths=[0.58, 0.14, 0.14, 0.14],
-        )
-
-    deck.bullets_slide(
-        "How to read this deck",
-        [
-            "Every figure is computed by deterministic code from the underlying "
-            "fact tables. No number in this deck was produced by a language model.",
-            f"{len(kpi_set.kpis)} KPIs were selected from the "
-            f"{profile.business_model.type.value} library by scoring applicability, "
-            f"objective alignment, Balanced Scorecard coverage and audience fit.",
-            "Benchmarks are illustrative placeholders assembled from public "
-            "commentary — not a licensed dataset. They are suitable for "
-            "calibration, not for external reporting.",
-            f"Profile confidence {profile.confidence:.0%}. Fields filled from "
-            f"sector defaults rather than your data are listed in the appendix "
-            f"of the full report.",
-        ],
-        kicker="Appendix",
-    )
+            "How to read this deck",
+            [
+                "Every figure is computed by deterministic code from the underlying "
+                "fact tables. No number in this deck was produced by a language model.",
+                f"{len(kpi_set.kpis)} KPIs were selected from the "
+                f"{profile.business_model.type.value} library by scoring applicability, "
+                f"objective alignment, Balanced Scorecard coverage and audience fit.",
+                "Benchmarks are illustrative placeholders assembled from public "
+                "commentary — not a licensed dataset. They are suitable for "
+                "calibration, not for external reporting.",
+                f"Profile confidence {profile.confidence:.0%}. Fields filled from "
+                f"sector defaults rather than your data are listed in the appendix "
+                f"of the full report.",
+            ],
+            kicker="Appendix")
 
     return deck.save(path)
