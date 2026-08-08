@@ -13,6 +13,7 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 | Stage | Module | State |
 |---|---|---|
 | Profile schema + cross-block validation | `kpi_maker/profile/` | done |
+| RunSpec contract + staged, cacheable pipeline | `kpi_maker/spec/`, `kpi_maker/pipeline/` | done |
 | KPI library + sandboxed selection engine | `kpi_maker/kpi/` | done — SaaS pack (44 KPIs, 39% leading) |
 | Synthetic data + reconciliation gate | `kpi_maker/datagen/` | done — SaaS |
 | Metrics engine + facts table | `kpi_maker/metrics/` | done — 24 implemented |
@@ -123,6 +124,55 @@ The equivalent command by hand, on any host:
 uvicorn kpi_maker.api.server:app --host 0.0.0.0 --port $PORT
 ```
 
+## Adjusting a run
+
+`CompanyProfile` says who the company is. **`RunSpec`** says what the pipeline
+should do about it — source, cleaning, model, metrics, analysis, design,
+outputs. Every field is optional, and every default means "derive it the way
+the pipeline always did", so an empty spec reproduces the original behaviour
+exactly.
+
+```jsonc
+{
+  "profile": { /* … the usual profile … */ },
+  "source":  { "generator": { "seed": 7, "history_months": 48 } },
+  "metrics": {
+    "excluded":  ["cac_payback_months"],
+    "pinned":    ["quick_ratio"],
+    "overrides": { "gross_margin_pct": { "target": 0.85 } }
+  },
+  "analysis": { "disabled": ["channel_efficiency"], "max_findings": 12 },
+  "outputs":  { "artifacts": ["dashboard", "facts_csv"] }
+}
+```
+
+```bash
+python -m kpi_maker run  --spec my_spec.json --out ./out
+python -m kpi_maker run  --profile samples/northwind_saas.json --only dashboard
+python -m kpi_maker plan --spec my_spec.json --out ./out   # what would rebuild?
+```
+
+Stages declare which upstream stages they need and which spec sections they
+read, and those two things form the cache key. Change the theme and two stages
+rebuild; exclude a KPI and the data generation is skipped entirely.
+
+Picking your outputs is the same mechanism, and it is the biggest speedup
+available: rendering is ~80% of a run and the static PNG export alone is ~37%,
+so `--only dashboard,facts_csv` takes **1.3s against 7.5s** for everything.
+
+Over HTTP, the same controls:
+
+| Endpoint | |
+|---|---|
+| `GET /api/runs/{id}/spec` | what this run actually did |
+| `PATCH /api/runs/{id}/spec` | deep-merge one field |
+| `GET /api/runs/{id}/plan` | which stages a re-run would rebuild, and roughly how long |
+| `POST /api/runs/{id}/rerun` | rebuild only what changed |
+| `GET /api/catalog/options` | artifacts, detectors and themes the engine supports |
+
+`POST /api/runs` also accepts a `spec`, so a sample can be launched already
+customised rather than only inspected afterwards.
+
 ## Run from the CLI
 
 ```bash
@@ -164,7 +214,16 @@ out/
 ```bash
 ./.venv/Scripts/python.exe -m tests.stress          # 23-case matrix
 ./.venv/Scripts/python.exe -m tests.stress --quick  # scale extremes only
+./.venv/Scripts/python.exe -m tests.spine           # RunSpec + stage graph
 ```
+
+`tests/spine.py` asks a different question from `stress.py`: not "does the
+product lie?" but "does adjusting the pipeline do exactly what it says, and
+nothing else?" It asserts that an empty spec is neutral, that editing one
+section rebuilds exactly the stages that read it (too few and the edit
+silently does nothing; too many and the studio is slow for no reason), that a
+warm partial re-run and a cold full run produce identical artifacts, and that
+bad input is refused rather than ignored.
 
 `tests/stress.py` is not a unit-test suite — it is a "does the product lie?"
 suite. It runs the pipeline across scale extremes (a 4-person / $220k startup, a
