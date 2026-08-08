@@ -28,7 +28,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ..cli import load_profile, run_pipeline
+from ..insight.detectors import DETECTOR_NAMES
+from ..kpi.selection import unknown_kpi_ids
+from ..pipeline.runner import plan_rerun
 from ..profile.schema import CompanyProfile
+from ..spec.schema import ALL_ARTIFACTS, RunSpec
 from ..survey import as_json as survey_json
 from ..survey import build_profile, surprise_profile
 
@@ -95,6 +99,38 @@ class RunRequest(BaseModel):
     answers: Optional[Dict[str, Any]] = None
     company_name: Optional[str] = None
     seed: Optional[int] = None
+    # Adjustments applied on top of whatever the mode produces. This is what
+    # lets a preset be launched already customised rather than only inspected
+    # after the fact.
+    spec: Optional[Dict[str, Any]] = None
+
+
+class SpecPatch(BaseModel):
+    """A partial RunSpec, deep-merged over the run's current one."""
+    patch: Dict[str, Any]
+
+
+def _deep_merge(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+    """Recursive merge, with lists replaced wholesale.
+
+    Lists are ordered user intent — the exhibit order, the cleaning recipe, the
+    excluded KPIs. Merging them element-wise would make "remove the third step"
+    impossible to express.
+    """
+    out = dict(base)
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _load_spec(run_id: str) -> RunSpec:
+    path = RUNS_DIR / run_id / "spec.json"
+    if not path.exists():
+        raise HTTPException(404, f"Run {run_id!r} has no spec on disk")
+    return RunSpec(**json.loads(path.read_text(encoding="utf-8")))
 
 
 # --------------------------------------------------------------------------
@@ -187,7 +223,7 @@ def _build_summary(run_id: str, run_dir: Path, profile: CompanyProfile) -> Dict[
     }
 
 
-def _execute(run_id: str, profile: CompanyProfile) -> None:
+def _execute(run_id: str, spec: RunSpec) -> None:
     run_dir = RUNS_DIR / run_id
     steps: List[str] = []
 
@@ -198,13 +234,16 @@ def _execute(run_id: str, profile: CompanyProfile) -> None:
     try:
         _set(run_id, status="running", steps=["Validating profile"])
         note("Selecting KPIs from the library")
-        result = run_pipeline(profile, run_dir, quiet=True)
+        result = run_pipeline(spec.profile, run_dir, quiet=True, spec=spec)
         note("Generating data and reconciling")
         note("Computing metrics and detecting findings")
         note("Rendering dashboard, report, deck and workbook")
 
-        summary = _build_summary(run_id, run_dir, profile)
+        summary = _build_summary(run_id, run_dir, spec.profile)
         summary["steps"] = steps
+        summary["stages_ran"] = result.get("ran", [])
+        summary["stages_reused"] = result.get("skipped", [])
+        summary["seconds"] = result.get("seconds")
         (run_dir / "summary.json").write_text(
             json.dumps(summary, indent=2, default=str), encoding="utf-8")
         _set(run_id, status="done", finished_at=_now(), summary=summary)
@@ -270,6 +309,12 @@ def create_run(req: RunRequest) -> Dict[str, Any]:
             profile = surprise_profile(req.seed)
         else:
             raise HTTPException(400, f"Unknown mode {req.mode!r}")
+        spec = RunSpec.for_profile(profile)
+        if req.spec:
+            # The caller's adjustments merge over the mode's defaults, so a
+            # preset can be launched already customised.
+            merged = _deep_merge(json.loads(spec.model_dump_json()), req.spec)
+            spec = RunSpec(**merged)
     except HTTPException:
         raise
     except Exception as exc:                             # noqa: BLE001
@@ -281,8 +326,81 @@ def create_run(req: RunRequest) -> Dict[str, Any]:
     # collides with it.
     _set(run_id, status="queued", mode=req.mode,
          company=profile.identity.name, started_at=_now(), steps=[])
-    _POOL.submit(_execute, run_id, profile)
+    _POOL.submit(_execute, run_id, spec)
     return {"run_id": run_id, "status": "queued", "company": profile.identity.name}
+
+
+# --------------------------------------------------------------------------
+# Spec: read, adjust, re-run
+# --------------------------------------------------------------------------
+
+@app.get("/api/runs/{run_id}/spec")
+def get_spec(run_id: str) -> Dict[str, Any]:
+    return json.loads(_load_spec(run_id).model_dump_json())
+
+
+@app.put("/api/runs/{run_id}/spec")
+def put_spec(run_id: str, spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Replace the spec and report what a re-run would rebuild."""
+    try:
+        validated = RunSpec(**spec)
+    except Exception as exc:                             # noqa: BLE001
+        raise HTTPException(422, str(exc))
+
+    # Catch a bad KPI id here rather than letting the re-run fail on it later:
+    # the editor can point at the offending field only while the edit is still
+    # in the user's hands.
+    unknown = unknown_kpi_ids(validated.profile, validated.metrics)
+    if unknown:
+        raise HTTPException(
+            422, f"Unknown KPI id(s) in the metrics spec: {', '.join(unknown)}")
+
+    run_dir = RUNS_DIR / run_id
+    if not run_dir.exists():
+        raise HTTPException(404, "Run not found")
+    (run_dir / "spec.json").write_text(
+        validated.model_dump_json(indent=2), encoding="utf-8")
+    return plan_rerun(validated, run_dir)
+
+
+@app.patch("/api/runs/{run_id}/spec")
+def patch_spec(run_id: str, body: SpecPatch) -> Dict[str, Any]:
+    """Deep-merge a partial spec. The studio's per-field edits land here."""
+    current = _load_spec(run_id)
+    merged = _deep_merge(json.loads(current.model_dump_json()), body.patch)
+    return put_spec(run_id, merged)
+
+
+@app.get("/api/runs/{run_id}/plan")
+def get_plan(run_id: str) -> Dict[str, Any]:
+    """What a re-run would rebuild, and roughly how long it would take.
+
+    The studio calls this on every edit so the action bar can say "3 stages,
+    ~4s" before the user commits to waiting.
+    """
+    return plan_rerun(_load_spec(run_id), RUNS_DIR / run_id)
+
+
+@app.post("/api/runs/{run_id}/rerun")
+def rerun(run_id: str) -> Dict[str, Any]:
+    """Re-run the stages the current spec has invalidated."""
+    spec = _load_spec(run_id)
+    report = plan_rerun(spec, RUNS_DIR / run_id)
+    _set(run_id, status="queued", mode="rerun",
+         company=spec.profile.identity.name, started_at=_now(), steps=[])
+    _POOL.submit(_execute, run_id, spec)
+    return {"run_id": run_id, "status": "queued", **report}
+
+
+@app.get("/api/catalog/options")
+def catalog_options() -> Dict[str, Any]:
+    """What the studio is allowed to offer. Served from the engine's own
+    registries so the UI cannot drift from what the pipeline supports."""
+    return {
+        "artifacts": ALL_ARTIFACTS,
+        "detectors": DETECTOR_NAMES,
+        "themes": ["light", "dark", "auto"],
+    }
 
 
 @app.get("/api/runs")

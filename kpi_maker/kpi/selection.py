@@ -114,6 +114,24 @@ def _packs_for(profile: CompanyProfile) -> List[str]:
     return [profile.business_model.type.value]
 
 
+def unknown_kpi_ids(profile: CompanyProfile, overrides) -> List[str]:
+    """KPI ids referenced by a metrics spec that no loaded pack defines.
+
+    Exposed so an editor can reject a bad id at the moment it is typed. Finding
+    out at run time instead means the studio accepts the edit, the re-run fails
+    somewhere else, and the user has to guess which field was at fault.
+    """
+    if overrides is None:
+        return []
+    packs = list(overrides.packs) if overrides.packs else _packs_for(profile)
+    try:
+        known = {k.id for k in load_library(packs)}
+    except FileNotFoundError:
+        return []
+    referenced = set(overrides.pinned) | set(overrides.excluded) | set(overrides.overrides)
+    return sorted(referenced - known)
+
+
 def _apply_overrides(library: List[KPI], overrides) -> List[KPI]:
     """Layer the user's per-KPI edits over the library record sheets.
 
