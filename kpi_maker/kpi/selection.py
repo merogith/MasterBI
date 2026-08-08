@@ -19,7 +19,7 @@ import yaml
 
 from ..profile.schema import Audience, CompanyProfile, KpiExperience
 from .expr import evaluate
-from .schema import KPI, KPISet, Perspective, Tier, Timing
+from .schema import KPI, AlertBands, KPISet, Perspective, Tier, Timing
 
 LIBRARY_DIR = Path(__file__).parent / "library"
 
@@ -114,6 +114,48 @@ def _packs_for(profile: CompanyProfile) -> List[str]:
     return [profile.business_model.type.value]
 
 
+def _apply_overrides(library: List[KPI], overrides) -> List[KPI]:
+    """Layer the user's per-KPI edits over the library record sheets.
+
+    Applied before scoring, not after, because `tier` feeds the selection score
+    and the tier caps. Promoting a KPI to L1 has to actually change what gets
+    picked, or the control is decorative.
+    """
+    if overrides is None or not overrides.overrides:
+        return library
+
+    out: List[KPI] = []
+    for kpi in library:
+        edit = overrides.overrides.get(kpi.id)
+        if edit is None:
+            out.append(kpi)
+            continue
+
+        changes: Dict[str, object] = {}
+        if edit.target is not None:
+            changes["target_override"] = edit.target
+        if edit.tier is not None:
+            changes["tier"] = Tier(edit.tier)
+        if edit.alert_green is not None or edit.alert_red is not None:
+            base = kpi.alert_bands
+            green = edit.alert_green if edit.alert_green is not None else (
+                base.green if base else None)
+            red = edit.alert_red if edit.alert_red is not None else (
+                base.red if base else None)
+            if green is None or red is None:
+                raise ValueError(
+                    f"{kpi.id}: setting one alert band requires the other — "
+                    f"this KPI has no library bands to fall back on"
+                )
+            # AlertBands validates green/red against `direction`, so an
+            # inconsistent pair fails here with the KPI id attached rather than
+            # producing a scorecard that rates everything green.
+            changes["alert_bands"] = AlertBands(green=green, red=red)
+
+        out.append(kpi.model_copy(update=changes) if changes else kpi)
+    return out
+
+
 def _score(kpi: KPI, profile: CompanyProfile, perspective_counts: Dict[Perspective, int]) -> float:
     score = 0.0
 
@@ -153,9 +195,31 @@ def _feasible(kpi: KPI, profile: CompanyProfile) -> Tuple[bool, str]:
     return True, ""
 
 
-def select(profile: CompanyProfile, extra_packs: Optional[List[str]] = None) -> KPISet:
-    packs = _packs_for(profile) + list(extra_packs or [])
-    library = load_library(packs)
+def select(profile: CompanyProfile, extra_packs: Optional[List[str]] = None,
+           overrides=None) -> KPISet:
+    """Choose the scorecard.
+
+    `overrides` is a `spec.MetricsSpec` (or None for the library's own answer).
+    The user can force a KPI in, force one out, and edit its tier, target and
+    alert bands — but the coverage and leading-indicator warnings still fire, so
+    overriding the algorithm tells you what it cost rather than hiding it.
+    """
+    packs = (list(overrides.packs) if overrides is not None and overrides.packs
+             else _packs_for(profile))
+    packs = packs + list(extra_packs or [])
+    library = _apply_overrides(load_library(packs), overrides)
+
+    pinned = set(overrides.pinned) if overrides is not None else set()
+    excluded = set(overrides.excluded) if overrides is not None else set()
+
+    known = {k.id for k in library}
+    for unknown in sorted((pinned | excluded) - known):
+        # Silently ignoring a typo'd id would leave the user staring at a
+        # scorecard that ignored their instruction with no explanation.
+        raise ValueError(
+            f"unknown KPI id {unknown!r} in the metrics spec — "
+            f"not in packs {', '.join(packs)}"
+        )
 
     dropped: Dict[str, str] = {}
     rationale: Dict[str, str] = {}
@@ -163,6 +227,15 @@ def select(profile: CompanyProfile, extra_packs: Optional[List[str]] = None) -> 
     # --- Layers 1 & 2: applicability and feasibility -----------------------
     candidates: List[KPI] = []
     for kpi in library:
+        if kpi.id in excluded:
+            dropped[kpi.id] = "excluded by user"
+            continue
+        # A pinned KPI skips the applicability and feasibility gates: the user
+        # asserting they track something outranks our inference that they
+        # cannot. It still has to compute, and reports honestly if it does not.
+        if kpi.id in pinned:
+            candidates.append(kpi)
+            continue
         if kpi.applies_when and not evaluate(kpi.applies_when, profile):
             dropped[kpi.id] = f"not applicable: {kpi.applies_when}"
             continue
@@ -195,13 +268,16 @@ def select(profile: CompanyProfile, extra_packs: Optional[List[str]] = None) -> 
     # Without this, a scoring tie-break could drop the growth rate from a
     # margin-focused scorecard or retention from a cash-focused one. Both
     # would read as negligent to anyone senior looking at the output.
+    # A user-pinned KPI is seeded the same way, for the same reason: it must not
+    # lose a scoring tie-break to a metric the user did not ask for.
     for kpi in candidates:
-        if not kpi.core or kpi.id == north_star.id:
+        if kpi.id == north_star.id or not (kpi.core or kpi.id in pinned):
             continue
         selected.append(kpi)
         perspective_counts[kpi.perspective] = perspective_counts.get(kpi.perspective, 0) + 1
         tier_counts[kpi.tier] = tier_counts.get(kpi.tier, 0) + 1
         rationale[kpi.id] = (
+            "Pinned by the user" if kpi.id in pinned else
             "Core metric — included on every scorecard for this business model "
             "regardless of objective"
         )

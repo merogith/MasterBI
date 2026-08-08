@@ -74,6 +74,11 @@ class KPI(BaseModel):
     alert_bands: Optional[AlertBands] = None
     target_rule: Optional[str] = None
 
+    # An explicit target set by the user, which beats `target_rule` and the
+    # benchmark median. Kept separate from `target_rule` so the library's
+    # recommendation survives alongside the override and can be restored.
+    target_override: Optional[float] = None
+
     applies_when: Optional[str] = None   # expression over the CompanyProfile
     requires_data: List[str] = Field(default_factory=list)
 

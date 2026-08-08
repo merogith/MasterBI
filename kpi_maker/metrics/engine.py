@@ -500,6 +500,10 @@ def _enps(ctx):
 
 def _resolve_target(kpi: KPI, current: Optional[float]) -> Optional[float]:
     """Evaluate the KPI's target_rule. Falls back to the benchmark median."""
+    # A target the user typed is not a suggestion to be improved on.
+    if kpi.target_override is not None:
+        return float(kpi.target_override)
+
     bench = kpi.benchmark
     p50 = bench.p50 if bench else None
     rule = kpi.target_rule

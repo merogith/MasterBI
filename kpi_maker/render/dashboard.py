@@ -323,7 +323,9 @@ def _chart_html(specs: List[ChartSpec], mode: str) -> str:
 def render_dashboard(profile: CompanyProfile, kpi_set: KPISet,
                      results: List[MetricResult], findings: List[Finding],
                      tables: Dict[str, pd.DataFrame], checks: List[str],
-                     anomaly_notes: List[str]) -> str:
+                     anomaly_notes: List[str],
+                     specs_light: Optional[List[ChartSpec]] = None,
+                     specs_dark: Optional[List[ChartSpec]] = None) -> str:
     computed = [r for r in results if r.computed]
     north_star = next((r for r in computed if r.kpi.id == kpi_set.north_star), None)
     growth = next((r for r in computed if r.kpi.id == "arr_growth_yoy"), None)
@@ -332,8 +334,13 @@ def render_dashboard(profile: CompanyProfile, kpi_set: KPISet,
     l1 = [r for r in l1 if r is not north_star][:6]
 
     currency = profile.identity.currency
-    specs_light = build_all(results, tables, mode="light", currency=currency)
-    specs_dark = build_all(results, tables, mode="dark", currency=currency)
+    # Accept pre-built specs so the pipeline can build each theme once and share
+    # it with the print deliverables. Building them here was costing three
+    # `build_all` passes per run for two distinct results.
+    if specs_light is None:
+        specs_light = build_all(results, tables, mode="light", currency=currency)
+    if specs_dark is None:
+        specs_dark = build_all(results, tables, mode="dark", currency=currency)
 
     tabs_present = []
     for spec in specs_light:

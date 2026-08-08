@@ -23,6 +23,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import plotly.graph_objects as go
 import plotly.io as pio
 
 # fonttools logs a "NOT subset; don't know how to subset" warning for every
@@ -72,8 +73,14 @@ def _bootstrap_kaleido() -> None:
 
 
 def _prepare_for_print(spec: ChartSpec, width: int, height: int):
-    """Opaque surface, print-legible type, no interactive affordances."""
-    fig = spec.figure
+    """Opaque surface, print-legible type, no interactive affordances.
+
+    Works on a copy. The print treatment pins a pixel width and an opaque
+    background, which are exactly wrong for the dashboard's responsive,
+    transparent figures — and a ChartSpec is shared between the two now that
+    each theme is built once per run rather than once per renderer.
+    """
+    fig = go.Figure(spec.figure)
     fig.update_layout(
         width=width,
         height=height,
