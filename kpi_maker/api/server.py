@@ -34,9 +34,15 @@ from ..formula.evaluate import RowResolver, SeriesResolver
 from ..kpi.schema import user_kpi
 from ..kpi.selection import load_library, unknown_kpi_ids
 from ..kpi.user_library import delete_user_kpi, save_user_kpi, user_kpi_ids
+from ..ingest import detect_shape, profile_table, read_any, shape_catalog
+from ..ingest.derive import derive_profile_fields
+from ..ingest.quality import build_report
+from ..prep import describe_ops
 from ..prep.model import preview_column
+from ..prep.recipe import preview_recipe
 from ..pipeline.runner import plan_rerun
 from ..profile.schema import CompanyProfile
+from ..contract.schemas import FACT_SCHEMAS
 from ..spec.schema import ALL_ARTIFACTS, RunSpec
 from ..survey import as_json as survey_json
 from ..survey import build_profile, surprise_profile
@@ -594,6 +600,116 @@ def preview_formula(req: FormulaRequest) -> Dict[str, Any]:
         raise HTTPException(422, f"could not evaluate: {exc}")
 
 
+class RecipeRequest(BaseModel):
+    """A recipe to try, plus the table to show the result on."""
+    steps: List[Dict[str, Any]] = []
+    table: Optional[str] = None
+
+
+@app.get("/api/ops")
+def list_ops() -> Dict[str, Any]:
+    """The cleaning op registry, served from the engine so the UI cannot drift."""
+    return {"ops": describe_ops(), "shapes": shape_catalog()}
+
+
+@app.post("/api/ingest/profile")
+async def ingest_profile(file: UploadFile = File(...)) -> Dict[str, Any]:
+    """Read, profile and shape-match an upload. Nothing is applied.
+
+    Replaces the old /api/upload, which profiled columns inside the route and
+    stopped there. This returns everything the Source panel needs to show the
+    user what they have and what it could become — and every suggestion is an
+    offer, not a change.
+    """
+    suffix = Path(file.filename or "upload").suffix.lower()
+    stored = UPLOADS_DIR / f"{uuid.uuid4().hex[:8]}{suffix}"
+    stored.write_bytes(await file.read())
+
+    try:
+        result = read_any(stored)
+    except Exception as exc:                             # noqa: BLE001
+        stored.unlink(missing_ok=True)
+        raise HTTPException(422, str(exc))
+
+    profile = profile_table(result.frame)
+    proposals = detect_shape(result.frame, profile)
+
+    return {
+        "filename": file.filename,
+        "stored_as": stored.name,
+        "read": result.as_dict(),
+        "profile": profile.as_dict(),
+        "shapes": [p.as_dict() for p in proposals[:3]],
+        "preview": json.loads(
+            result.frame.head(10).where(pd.notna(result.frame.head(10)), None)
+            .to_json(orient="records")),
+    }
+
+
+@app.post("/api/runs/{run_id}/clean/preview")
+def clean_preview(run_id: str, body: RecipeRequest) -> Dict[str, Any]:
+    """Apply a recipe to this run's tables and report what it did.
+
+    Nothing is persisted: the point is to let the user see the diff before
+    committing the recipe to the spec.
+    """
+    from ..spec.schema import CleaningRecipe, CleaningStep
+    tables = _load_run_tables(run_id)
+    if not tables:
+        raise HTTPException(404, "That run has no data on disk")
+    try:
+        recipe = CleaningRecipe(steps=[CleaningStep(**s) for s in body.steps])
+        return preview_recipe(tables, recipe, table=body.table)
+    except Exception as exc:                             # noqa: BLE001
+        raise HTTPException(422, str(exc))
+
+
+@app.get("/api/runs/{run_id}/lineage")
+def get_lineage(run_id: str) -> Dict[str, Any]:
+    """What was done to this run's data. Reads the recipe from the stored spec."""
+    from ..spec.schema import CleaningRecipe
+    spec = _load_spec(run_id)
+    tables = _load_run_tables(run_id)
+    if not spec.cleaning.active:
+        return {"steps": [], "summary": "no cleaning applied"}
+    if not tables:
+        raise HTTPException(404, "That run has no data on disk")
+    try:
+        report = preview_recipe(tables, spec.cleaning)
+        return {"steps": report["steps"], "summary": report["summary"]}
+    except Exception as exc:                             # noqa: BLE001
+        raise HTTPException(422, str(exc))
+
+
+@app.get("/api/runs/{run_id}/quality")
+def get_quality(run_id: str) -> Dict[str, Any]:
+    """What is present, what is missing, and what each gap would unlock.
+
+    Shown before a run so a narrow dashboard reads as a consequence of the
+    data supplied rather than as a broken product.
+    """
+    spec = _load_spec(run_id)
+    tables = _load_run_tables(run_id)
+    origins = {t: "modelled" for t in spec.source.fill_gaps}
+    return build_report(tables, spec.profile, origins=origins).as_dict()
+
+
+@app.post("/api/ingest/derive")
+def ingest_derive(body: Dict[str, Any]) -> Dict[str, Any]:
+    """What the uploaded data can tell us about the company.
+
+    So the shortened survey asks only for what no file contains — sector,
+    objective, audience — instead of for numbers the file already holds.
+    """
+    run_id = body.get("run_id")
+    if not run_id:
+        raise HTTPException(400, "derive needs a run_id")
+    tables = _load_run_tables(run_id)
+    if not tables:
+        raise HTTPException(404, "That run has no data on disk")
+    return derive_profile_fields(tables, body.get("filename", "upload")).as_dict()
+
+
 @app.get("/api/catalog/options")
 def catalog_options() -> Dict[str, Any]:
     """What the studio is allowed to offer. Served from the engine's own
@@ -602,6 +718,9 @@ def catalog_options() -> Dict[str, Any]:
         "artifacts": ALL_ARTIFACTS,
         "detectors": DETECTOR_NAMES,
         "themes": ["light", "dark", "auto"],
+        "ops": describe_ops(),
+        "shapes": shape_catalog(),
+        "fact_tables": sorted(FACT_SCHEMAS),
     }
 
 
