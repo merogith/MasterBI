@@ -14,6 +14,8 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 |---|---|---|
 | Profile schema + cross-block validation | `kpi_maker/profile/` | done |
 | RunSpec contract + staged, cacheable pipeline | `kpi_maker/spec/`, `kpi_maker/pipeline/` | done |
+| Formula engine (KPIs + calculated columns) | `kpi_maker/formula/`, `kpi_maker/prep/` | done |
+| Studio — adjust any stage, re-run what changed | `ui/` | done |
 | KPI library + sandboxed selection engine | `kpi_maker/kpi/` | done — SaaS pack (44 KPIs, 39% leading) |
 | Synthetic data + reconciliation gate | `kpi_maker/datagen/` | done — SaaS |
 | Metrics engine + facts table | `kpi_maker/metrics/` | done — 24 implemented |
@@ -173,6 +175,45 @@ Over HTTP, the same controls:
 `POST /api/runs` also accepts a `spec`, so a sample can be launched already
 customised rather than only inspected afterwards.
 
+## Your own KPIs and calculated fields
+
+Any run opens in the **Studio** — a panel per pipeline stage, with a bar that
+says what your change costs before you commit to it ("9 stages to rebuild,
+about 1s"). Every entry point lands there, presets included.
+
+KPIs are defined by formula, in a spreadsheet-like language:
+
+```
+SAFE_DIV(SUM(marketing.spend), SUM(marketing.leads))    a cost per lead
+YOY(monthly_financials.arr) + TTM(fcf_margin)           compose existing KPIs
+SUM(mrr_movements.delta_mrr, movement_type='churn')     aggregate with a filter
+```
+
+Four fields make a KPI: **name, formula, unit, direction**. Unit drives
+formatting and direction drives the RAG colour; the rest default and sit behind
+an "advanced" accordion. User KPIs are marked as such in the appendix rather
+than presented as reviewed library metrics, and one sharing an id with a
+library KPI replaces it — recorded, not silent.
+
+The same language writes **calculated columns** on a fact table
+(`final_acv - initial_acv` on `customers`), which KPIs can then aggregate over.
+Time functions are refused there, because a row has no time axis.
+
+Three table grains, three behaviours — this is the rule worth knowing:
+
+| | |
+|---|---|
+| `monthly_financials`, `pipeline`, `product_usage`, `sales_capacity` | already monthly; reference a column directly |
+| `marketing`, `headcount`, `mrr_movements` | several rows per month; must go through an aggregate, which groups by month |
+| `customers` | one row per entity, no month at all; usable in a calculated column, never as a KPI |
+
+Referencing `marketing.spend` bare therefore fails with *"several rows per
+month, wrap it in SUM()"* rather than quietly picking an aggregation for you.
+
+Nothing reaches `eval()`. Expressions are parsed with `ast`, checked whole
+against an explicit node whitelist before anything runs, and evaluated by a
+resolver that looks names up in a mapping it built itself.
+
 ## Run from the CLI
 
 ```bash
@@ -215,6 +256,7 @@ out/
 ./.venv/Scripts/python.exe -m tests.stress          # 23-case matrix
 ./.venv/Scripts/python.exe -m tests.stress --quick  # scale extremes only
 ./.venv/Scripts/python.exe -m tests.spine           # RunSpec + stage graph
+./.venv/Scripts/python.exe -m tests.formula         # the formula language
 ```
 
 `tests/spine.py` asks a different question from `stress.py`: not "does the

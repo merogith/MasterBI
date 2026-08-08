@@ -36,6 +36,7 @@ const state = {
   steps: [],
   runId: null,
   summary: null,
+  tableNames: [],
   poll: null,
   kpiFilter: 'all',
   kpiSearch: '',
@@ -582,6 +583,9 @@ async function loadTables() {
   rail.innerHTML = '<p class="empty">Loading…</p>';
   try {
     const tables = await api(`/api/runs/${state.runId}/tables`);
+    // The Studio's calculated-column editor needs the table list too, and this
+    // is the one place it is already fetched.
+    state.tableNames = tables.map((t) => t.name);
     if (!tables.length) { rail.innerHTML = '<p class="empty">No tables.</p>'; return; }
     rail.innerHTML = tables.map((t, i) => `
       <button class="rail-btn${i === 0 ? ' active' : ''}" data-table="${esc(t.name)}">
@@ -685,3 +689,513 @@ document.addEventListener('click', async (e) => {
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
 
 show('home');
+
+/* ==========================================================================
+   Studio — edit the RunSpec, see what it costs, re-run only that.
+
+   The rail mirrors the stage graph on the server. Every control writes one
+   field of the spec and PATCHes it; the server answers with which stages that
+   invalidated, and the action bar reports it before the user commits to
+   waiting. Nothing here knows what a stage *does* — that stays server-side, so
+   adding a stage does not mean teaching the UI about it.
+   ========================================================================== */
+
+const studio = {
+  spec: null,
+  original: null,
+  catalog: [],
+  functions: [],
+  stage: 'source',
+  dirty: [],
+  patchTimer: null,
+};
+
+const ARTIFACT_LABEL = {
+  dashboard: 'Interactive dashboard', workbook: 'Data workbook',
+  report_pdf: 'Executive report (PDF)', deck_pptx: 'Board deck (PPTX)',
+  doc_docx: 'Editable report (DOCX)', charts_png: 'Chart images',
+  csv_bundle: 'Fact table CSVs', facts_csv: 'KPI facts table',
+  json_dumps: 'Profile, KPI set, findings',
+};
+const ARTIFACT_COST = {
+  charts_png: '~2.1s', report_pdf: '~1.0s', dashboard: '~0.3s', doc_docx: '~0.4s',
+  workbook: '~0.4s', deck_pptx: '~0.2s', csv_bundle: '~0.0s', facts_csv: '~0.0s',
+  json_dumps: '~0.0s',
+};
+const DETECTOR_LABEL = {
+  status_breaches: 'RAG breaches vs target',
+  benchmark_gaps: 'Position against the cohort',
+  trend_breaks: 'Trend reversals',
+  segment_outliers: 'Outlying segments',
+  operating_leverage: 'Cost growth vs revenue growth',
+  arr_bridge: 'What moved ARR',
+  channel_efficiency: 'Marketing channel efficiency',
+  runway: 'Cash runway',
+};
+
+async function openStudio() {
+  if (!state.runId) { toast('Open a run first.', true); return; }
+  show('studio');
+  $('#studio-company').textContent = state.summary?.company || 'Studio';
+  try {
+    const [spec, options, catalog, functions] = await Promise.all([
+      api(`/api/runs/${state.runId}/spec`),
+      api('/api/catalog/options'),
+      api('/api/catalog/kpis'),
+      api('/api/catalog/functions'),
+    ]);
+    studio.spec = spec;
+    studio.original = JSON.parse(JSON.stringify(spec));
+    studio.options = options;
+    studio.catalog = catalog.kpis;
+    studio.userIds = catalog.user_ids || [];
+    studio.functions = functions.functions;
+    renderStudio();
+    refreshPlan();
+  } catch (err) {
+    toast('Could not open the Studio: ' + err.message, true);
+    show('results');
+  }
+}
+
+$('#res-adjust').addEventListener('click', openStudio);
+
+$('#studio-rail').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-stage]');
+  if (!btn) return;
+  studio.stage = btn.dataset.stage;
+  $$('#studio-rail .rail-btn').forEach((b) => b.classList.toggle('active', b === btn));
+  $$('.studio-panel').forEach((p) => p.classList.toggle('active', p.dataset.panel === studio.stage));
+});
+
+/* ------------------------------------------------------------- rendering */
+
+function renderStudio() {
+  panel('source').innerHTML = sourcePanel();
+  panel('clean').innerHTML = cleanPanel();
+  panel('model').innerHTML = modelPanel();
+  panel('kpis').innerHTML = kpiPanel();
+  panel('analysis').innerHTML = analysisPanel();
+  panel('design').innerHTML = designPanel();
+  panel('outputs').innerHTML = outputsPanel();
+}
+
+const panel = (name) => $(`.studio-panel[data-panel="${name}"]`);
+
+function section(title, hint, body) {
+  return `<div class="studio-section">
+    <h2>${esc(title)}</h2>
+    <p class="hint">${hint}</p>
+    ${body}</div>`;
+}
+
+function sourcePanel() {
+  const g = studio.spec.source.generator;
+  return section('Where the numbers come from',
+    `Synthetic data, generated from the profile. The same seed always produces
+     the same company — reproducibility is a feature, not a coincidence.`,
+    `<div class="field-row">
+      <label class="field"><span>Random seed</span>
+        <input type="number" data-spec="source.generator.seed" value="${g.seed ?? ''}"
+               placeholder="${studio.spec.profile.seed}"></label>
+      <label class="field"><span>Months of history</span>
+        <input type="number" min="13" max="120" data-spec="source.generator.history_months"
+               value="${g.history_months ?? ''}" placeholder="${studio.spec.profile.history_months}"></label>
+    </div>
+    <p class="hint">Changing either regenerates the company and everything after
+       it — the most expensive edit in the Studio.</p>`);
+}
+
+function cleanPanel() {
+  return section('Cleaning and transformation',
+    `The op registry — dedupe, cast, parse dates, fill missing, clip outliers,
+     resample — lands with real-data ingestion in P2. Synthetic data arrives
+     already reconciled, so there is nothing here to fix yet.`,
+    `<p class="hint">The stage exists in the pipeline and is already wired for
+      cache invalidation; only the operations are outstanding.</p>`);
+}
+
+function modelPanel() {
+  const cols = studio.spec.model.calculated_columns || [];
+  const rows = cols.length ? cols.map((c, i) => `
+    <tr>
+      <td><span class="k-name">${esc(c.name)}</span>
+          <div class="k-id">${esc(c.table)}</div></td>
+      <td><code style="font-size:12px">${esc(c.expression)}</code></td>
+      <td><div class="k-state"><button data-drop-col="${i}">Remove</button></div></td>
+    </tr>`).join('') : '<tr><td colspan="3" class="empty">No calculated columns yet.</td></tr>';
+
+  return section('Calculated columns',
+    `Add a field to a fact table with a formula, evaluated one row at a time —
+     <code>final_acv - initial_acv</code> on customers. KPIs can then aggregate
+     over what you build here.`,
+    `<table class="kpi-table"><thead><tr>
+        <th>Column</th><th>Formula</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table>
+     <div class="field-row" style="margin-top:16px">
+       <label class="field"><span>Table</span>
+         <select id="col-table">${(state.tableNames || []).map((t) =>
+           `<option value="${esc(t)}">${esc(titleCase(t))}</option>`).join('')}</select></label>
+       <label class="field"><span>Column name</span>
+         <input id="col-name" placeholder="acv_delta" maxlength="40"></label>
+       <label class="field" style="flex:1;min-width:260px"><span>Formula</span>
+         <input id="col-expr" placeholder="final_acv - initial_acv"></label>
+       <button class="ghost" id="col-add" style="align-self:flex-end">Add column</button>
+     </div>
+     <div class="fx-status" id="col-status"></div>`);
+}
+
+function kpiPanel() {
+  const m = studio.spec.metrics;
+  const pinned = new Set(m.pinned || []);
+  const excluded = new Set(m.excluded || []);
+  const overrides = m.overrides || {};
+  const custom = m.custom || [];
+
+  const rows = [...custom.map((c) => ({ ...c, _custom: true })), ...studio.catalog]
+    .filter((k, i, all) => all.findIndex((o) => o.id === k.id) === i)
+    .map((k) => {
+      const ov = overrides[k.id] || {};
+      const isUser = k._custom || k.origin === 'user';
+      return `
+      <tr class="${excluded.has(k.id) ? 'excluded' : ''}">
+        <td>
+          <span class="k-name">${esc(k.name)}</span>${isUser ? '<span class="tag-user">yours</span>' : ''}
+          <div class="k-id">${esc(k.id)} · ${esc(k.unit)} · ${esc((k.timing || '').replace('_', ' '))}</div>
+        </td>
+        <td><input type="number" step="any" data-target="${esc(k.id)}"
+                   value="${ov.target ?? ''}" placeholder="auto"></td>
+        <td><div class="k-state">
+          <button data-pin="${esc(k.id)}" class="${pinned.has(k.id) ? 'on' : ''}">Pin</button>
+          <button data-exclude="${esc(k.id)}" class="${excluded.has(k.id) ? 'off' : ''}">Exclude</button>
+        </div></td>
+      </tr>`;
+    }).join('');
+
+  return section('Which KPIs, and your own',
+    `Pin one to force it onto the scorecard, exclude one to drop it, or set a
+     target that beats the benchmark median. The Balanced Scorecard coverage
+     warnings still fire — you can overrule the selection engine, and it will
+     tell you what that cost.`,
+    `<div style="margin-bottom:14px"><button class="primary" id="kpi-add">+ Add a KPI</button></div>
+     <table class="kpi-table">
+       <thead><tr><th>KPI</th><th>Target</th><th>State</th></tr></thead>
+       <tbody>${rows}</tbody></table>`);
+}
+
+function analysisPanel() {
+  const a = studio.spec.analysis;
+  const disabled = new Set(a.disabled || []);
+  const boxes = (studio.options.detectors || []).map((d) => `
+    <label class="toggle">
+      <input type="checkbox" data-detector="${esc(d)}" ${disabled.has(d) ? '' : 'checked'}>
+      <span>${esc(DETECTOR_LABEL[d] || titleCase(d))}
+        <span class="toggle-sub">${esc(d)}</span></span>
+    </label>`).join('');
+
+  return section('What to look for',
+    `Deterministic detectors — each one produces findings with the numbers
+     already computed. Turning some off is a real editing choice: a bank cares
+     about runway and concentration, and twenty findings bury the two that matter.`,
+    `<div class="toggle-grid">${boxes}</div>
+     <div class="field-row" style="margin-top:18px">
+       <label class="field"><span>Most findings to keep</span>
+         <input type="number" min="1" max="60" data-spec="analysis.max_findings"
+                value="${a.max_findings ?? ''}" placeholder="all"></label>
+     </div>`);
+}
+
+function designPanel() {
+  const d = studio.spec.design;
+  return section('How it looks',
+    `Theme applies to the dashboard and every exhibit in it. Brand colour, logo,
+     section ordering and exhibit choice arrive in P3.`,
+    `<div class="field-row">
+      <label class="field"><span>Theme</span>
+        <select data-spec="design.theme">
+          ${['light', 'dark', 'auto'].map((t) =>
+            `<option value="${t}" ${d.theme === t ? 'selected' : ''}>${titleCase(t)}</option>`).join('')}
+        </select></label>
+      <label class="field"><span>Page size</span>
+        <select data-spec="design.page_size">
+          ${['A4', 'Letter'].map((s) =>
+            `<option value="${s}" ${d.page_size === s ? 'selected' : ''}>${s}</option>`).join('')}
+        </select></label>
+    </div>`);
+}
+
+function outputsPanel() {
+  const chosen = new Set(studio.spec.outputs.artifacts || studio.options.artifacts);
+  const boxes = (studio.options.artifacts || []).map((a) => `
+    <label class="toggle">
+      <input type="checkbox" data-artifact="${esc(a)}" ${chosen.has(a) ? 'checked' : ''}>
+      <span>${esc(ARTIFACT_LABEL[a] || a)}
+        <span class="toggle-sub">${esc(ARTIFACT_COST[a] || '')}</span></span>
+    </label>`).join('');
+
+  return section('What to produce',
+    `Rendering is around 80% of a run, and the chart image export alone is 37%.
+     Asking for only what you need is the single biggest speed-up available —
+     dashboard-only finishes in about a second rather than seven.`,
+    `<div class="toggle-grid">${boxes}</div>`);
+}
+
+/* ------------------------------------------------------------- editing */
+
+function setPath(obj, path, value) {
+  const parts = path.split('.');
+  const last = parts.pop();
+  let node = obj;
+  for (const p of parts) node = node[p];
+  node[last] = value;
+}
+
+panelDelegate('change', (e) => {
+  const el = e.target;
+  if (el.dataset.spec) {
+    let value = el.value;
+    if (el.type === 'number') value = value === '' ? null : Number(value);
+    if (value === '') value = null;
+    setPath(studio.spec, el.dataset.spec, value);
+    return queuePatch();
+  }
+  if (el.dataset.detector) {
+    const set = new Set(studio.spec.analysis.disabled || []);
+    el.checked ? set.delete(el.dataset.detector) : set.add(el.dataset.detector);
+    studio.spec.analysis.disabled = [...set];
+    return queuePatch();
+  }
+  if (el.dataset.artifact) {
+    const all = studio.options.artifacts;
+    const set = new Set(studio.spec.outputs.artifacts || all);
+    el.checked ? set.add(el.dataset.artifact) : set.delete(el.dataset.artifact);
+    studio.spec.outputs.artifacts = all.filter((a) => set.has(a));
+    return queuePatch();
+  }
+  if (el.dataset.target) {
+    const overrides = studio.spec.metrics.overrides || (studio.spec.metrics.overrides = {});
+    if (el.value === '') delete overrides[el.dataset.target];
+    else overrides[el.dataset.target] = { ...overrides[el.dataset.target], target: Number(el.value) };
+    return queuePatch();
+  }
+});
+
+panelDelegate('click', (e) => {
+  const pin = e.target.closest('[data-pin]');
+  const exclude = e.target.closest('[data-exclude]');
+  const dropCol = e.target.closest('[data-drop-col]');
+
+  if (pin) return toggleList('pinned', pin.dataset.pin, 'excluded');
+  if (exclude) return toggleList('excluded', exclude.dataset.exclude, 'pinned');
+  if (dropCol) {
+    studio.spec.model.calculated_columns.splice(Number(dropCol.dataset.dropCol), 1);
+    panel('model').innerHTML = modelPanel();
+    return queuePatch();
+  }
+  if (e.target.closest('#kpi-add')) return openFormulaEditor();
+  if (e.target.closest('#col-add')) return addCalculatedColumn();
+});
+
+function panelDelegate(event, handler) {
+  $('#view-studio').addEventListener(event, handler);
+}
+
+// Pinning and excluding are mutually exclusive: holding both would be an
+// instruction the selection engine cannot honour, so setting one clears the other.
+function toggleList(listName, id, opposite) {
+  const list = new Set(studio.spec.metrics[listName] || []);
+  const other = new Set(studio.spec.metrics[opposite] || []);
+  list.has(id) ? list.delete(id) : (list.add(id), other.delete(id));
+  studio.spec.metrics[listName] = [...list];
+  studio.spec.metrics[opposite] = [...other];
+  panel('kpis').innerHTML = kpiPanel();
+  queuePatch();
+}
+
+async function addCalculatedColumn() {
+  const table = $('#col-table').value;
+  const name = $('#col-name').value.trim();
+  const expression = $('#col-expr').value.trim();
+  const status = $('#col-status');
+  if (!name || !expression) { status.className = 'fx-status err'; status.textContent = 'Name and formula are both needed.'; return; }
+
+  const check = await api('/api/formula/validate', {
+    method: 'POST',
+    body: JSON.stringify({ expression, scope: 'row', run_id: state.runId, table }),
+  });
+  if (!check.ok) {
+    status.className = 'fx-status err';
+    status.textContent = check.error?.message || `Unknown: ${(check.unknown || []).join(', ')}`;
+    return;
+  }
+  (studio.spec.model.calculated_columns ||= []).push({ table, name, expression, description: '' });
+  panel('model').innerHTML = modelPanel();
+  queuePatch();
+}
+
+/* ---------------------------------------------------------- patch + plan */
+
+function queuePatch() {
+  clearTimeout(studio.patchTimer);
+  $('#studio-plan').textContent = 'Checking…';
+  studio.patchTimer = setTimeout(refreshPlan, 320);
+}
+
+async function refreshPlan() {
+  try {
+    const report = await api(`/api/runs/${state.runId}/spec`, {
+      method: 'PUT', body: JSON.stringify(studio.spec),
+    });
+    studio.dirty = report.dirty || [];
+    const n = studio.dirty.length;
+    $('#studio-plan').innerHTML = n
+      ? `<strong>${n} stage${n > 1 ? 's' : ''}</strong> to rebuild — about
+         ${report.estimated_seconds}s. <span style="color:var(--muted)">${studio.dirty.join(' · ')}</span>`
+      : 'Everything is up to date.';
+    $('#studio-rerun').disabled = n === 0;
+  } catch (err) {
+    $('#studio-plan').innerHTML = `<span style="color:var(--critical)">${esc(err.message)}</span>`;
+    $('#studio-rerun').disabled = true;
+  }
+}
+
+$('#studio-rerun').addEventListener('click', async () => {
+  try {
+    await api(`/api/runs/${state.runId}/rerun`, { method: 'POST' });
+    show('running');
+    $('#run-company').textContent = studio.spec.profile.identity.name;
+    pollRun();
+  } catch (err) {
+    toast('Could not re-run: ' + err.message, true);
+  }
+});
+
+$('#studio-revert').addEventListener('click', async () => {
+  studio.spec = JSON.parse(JSON.stringify(studio.original));
+  renderStudio();
+  refreshPlan();
+});
+
+/* -------------------------------------------------------- formula editor */
+
+const fx = {
+  open: () => { $('#fx-modal').hidden = false; $('#fx-scrim').hidden = false; },
+  close: () => { $('#fx-modal').hidden = true; $('#fx-scrim').hidden = true; },
+};
+
+function openFormulaEditor() {
+  ['#fx-name', '#fx-expression', '#fx-owner'].forEach((s) => { $(s).value = ''; });
+  $('#fx-status').textContent = '';
+  $('#fx-status').className = 'fx-status';
+  $('#fx-preview').innerHTML = '';
+  $('#fx-add').disabled = true;
+  $('#fx-functions').innerHTML = studio.functions.map((f) => `
+    <div class="fx-fn"><code>${esc(f.signature)}</code><span>${esc(f.help)}</span></div>`).join('');
+  fx.open();
+  $('#fx-name').focus();
+}
+
+$('#fx-close').addEventListener('click', fx.close);
+$('#fx-cancel').addEventListener('click', fx.close);
+$('#fx-scrim').addEventListener('click', fx.close);
+
+let fxTimer;
+$('#fx-expression').addEventListener('input', () => {
+  clearTimeout(fxTimer);
+  fxTimer = setTimeout(checkFormula, 340);
+});
+
+async function checkFormula() {
+  const expression = $('#fx-expression').value.trim();
+  const status = $('#fx-status');
+  const preview = $('#fx-preview');
+  preview.innerHTML = '';
+  if (!expression) { status.textContent = ''; status.className = 'fx-status'; $('#fx-add').disabled = true; return; }
+
+  try {
+    const check = await api('/api/formula/validate', {
+      method: 'POST', body: JSON.stringify({ expression, scope: 'series', run_id: state.runId }),
+    });
+    if (!check.ok) {
+      const message = check.error
+        ? check.error.message + (check.error.hint ? ` — ${check.error.hint}` : '')
+        : `Unknown name${(check.unknown || []).length > 1 ? 's' : ''}: ${(check.unknown || []).join(', ')}`;
+      status.className = 'fx-status err';
+      status.textContent = message;
+      $('#fx-add').disabled = true;
+      return;
+    }
+    status.className = 'fx-status ok';
+    status.innerHTML = check.references.length
+      ? `Uses ${check.references.map((r) => `<code>${esc(r)}</code>`).join(' ')}`
+      : 'Valid.';
+    $('#fx-add').disabled = false;
+
+    const result = await api('/api/formula/preview', {
+      method: 'POST', body: JSON.stringify({ expression, scope: 'series', run_id: state.runId }),
+    });
+    renderSparkline(result);
+  } catch (err) {
+    status.className = 'fx-status err';
+    status.textContent = err.message;
+    $('#fx-add').disabled = true;
+  }
+}
+
+function renderSparkline(result) {
+  const points = result.points || [];
+  if (!points.length) return;
+  const values = points.map((p) => p.value).filter((v) => v !== null);
+  const lo = Math.min(...values, 0);
+  const hi = Math.max(...values);
+  const span = (hi - lo) || 1;
+  const unit = $('#fx-unit').value;
+  $('#fx-preview').innerHTML = `
+    <div style="font-size:12px;color:var(--muted)">Last ${points.length} months —
+      latest <strong style="color:var(--text-primary)">${esc(fmtValue(result.current, unit, state.summary?.currency))}</strong></div>
+    <div class="fx-spark">${points.map((p) =>
+      `<i style="height:${p.value === null ? 2 : Math.max(2, ((p.value - lo) / span) * 40)}px"
+          title="${esc(p.month)}: ${esc(fmtValue(p.value, unit, state.summary?.currency))}"></i>`).join('')}</div>`;
+}
+
+$('#fx-unit').addEventListener('change', checkFormula);
+
+$('#fx-add').addEventListener('click', async () => {
+  const payload = {
+    name: $('#fx-name').value.trim() || 'Custom KPI',
+    expression: $('#fx-expression').value.trim(),
+    unit: $('#fx-unit').value,
+    direction: $('#fx-direction').value,
+    perspective: $('#fx-perspective').value,
+    timing: $('#fx-timing').value,
+    owner_role: $('#fx-owner').value.trim() || undefined,
+  };
+  try {
+    // Persisting is optional: a KPI for this run alone lives in the spec, one
+    // kept for later is written to the user library and offered on every run.
+    if ($('#fx-persist').checked) await api('/api/catalog/kpis', {
+      method: 'POST', body: JSON.stringify(payload),
+    });
+
+    const id = payload.name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+    (studio.spec.metrics.custom ||= []).push({
+      id, name: payload.name, perspective: payload.perspective, tier: 2,
+      timing: payload.timing, direction: payload.direction,
+      formula: payload.expression, unit: payload.unit,
+      owner_role: payload.owner_role || 'Unassigned',
+      compute: { kind: 'formula', expression: payload.expression },
+      origin: 'user',
+    });
+    fx.close();
+    panel('kpis').innerHTML = kpiPanel();
+    queuePatch();
+    toast(`Added ${payload.name}.`);
+  } catch (err) {
+    $('#fx-status').className = 'fx-status err';
+    $('#fx-status').textContent = err.message;
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#fx-modal').hidden) fx.close();
+});

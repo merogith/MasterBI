@@ -162,6 +162,7 @@
         <p class="res-meta" id="res-meta"></p>
       </div>
       <div class="res-actions">
+        <button class="ghost" id="res-adjust">Adjust in Studio</button>
         <a class="primary" id="res-open-dashboard" target="_blank" rel="noopener">Open dashboard ↗</a>
       </div>
     </div>
@@ -218,6 +219,135 @@
       <div class="download-grid" id="res-downloads"></div>
     </div>
   </section>
+
+  <!-- ================= STUDIO ================= -->
+  <section class="view" id="view-studio" hidden>
+    <div class="result-head">
+      <div>
+        <button class="back" data-nav="results">← Results</button>
+        <h1 id="studio-company">Studio</h1>
+        <p class="res-meta">Every stage of the pipeline, adjustable. Change what
+           you like, then re-run only what your change affects.</p>
+      </div>
+    </div>
+
+    <div class="studio">
+      <aside class="studio-rail" id="studio-rail">
+        <button class="rail-btn active" data-stage="source">Source
+          <span class="rail-rows">data generation</span></button>
+        <button class="rail-btn" data-stage="clean">Clean
+          <span class="rail-rows">P2</span></button>
+        <button class="rail-btn" data-stage="model">Model
+          <span class="rail-rows">calculated columns</span></button>
+        <button class="rail-btn" data-stage="kpis">KPIs
+          <span class="rail-rows">select · override · add</span></button>
+        <button class="rail-btn" data-stage="analysis">Analysis
+          <span class="rail-rows">detectors</span></button>
+        <button class="rail-btn" data-stage="design">Design
+          <span class="rail-rows">theme</span></button>
+        <button class="rail-btn" data-stage="outputs">Outputs
+          <span class="rail-rows">artifacts</span></button>
+      </aside>
+
+      <div class="studio-main">
+        <div class="studio-panel active" data-panel="source"></div>
+        <div class="studio-panel" data-panel="clean"></div>
+        <div class="studio-panel" data-panel="model"></div>
+        <div class="studio-panel" data-panel="kpis"></div>
+        <div class="studio-panel" data-panel="analysis"></div>
+        <div class="studio-panel" data-panel="design"></div>
+        <div class="studio-panel" data-panel="outputs"></div>
+      </div>
+    </div>
+
+    <div class="studio-bar" id="studio-bar">
+      <div class="studio-bar-text" id="studio-plan">No changes yet.</div>
+      <div class="studio-bar-actions">
+        <button class="ghost" id="studio-revert">Revert changes</button>
+        <button class="primary" id="studio-rerun" disabled>Re-run</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= FORMULA EDITOR ================= -->
+  <div class="modal-scrim" id="fx-scrim" hidden></div>
+  <div class="modal" id="fx-modal" hidden role="dialog" aria-label="Add a KPI">
+    <div class="modal-head">
+      <h2 id="fx-title">Add a KPI</h2>
+      <button class="ghost" id="fx-close" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="fx-grid">
+        <label class="fx-field">
+          <span>Name</span>
+          <input id="fx-name" placeholder="e.g. Cost per Lead" maxlength="60">
+        </label>
+        <label class="fx-field">
+          <span>Unit</span>
+          <select id="fx-unit">
+            <option value="currency">Currency</option>
+            <option value="pct">Percentage</option>
+            <option value="ratio">Ratio</option>
+            <option value="count">Count</option>
+            <option value="months">Months</option>
+            <option value="days">Days</option>
+          </select>
+        </label>
+        <label class="fx-field">
+          <span>Better when</span>
+          <select id="fx-direction">
+            <option value="higher_is_better">Higher</option>
+            <option value="lower_is_better">Lower</option>
+            <option value="target_band">Inside a band</option>
+          </select>
+        </label>
+      </div>
+
+      <label class="fx-field fx-formula">
+        <span>Formula</span>
+        <textarea id="fx-expression" rows="3" spellcheck="false"
+                  placeholder="SAFE_DIV(SUM(marketing.spend), SUM(marketing.leads))"></textarea>
+      </label>
+
+      <div class="fx-status" id="fx-status"></div>
+      <div class="fx-preview" id="fx-preview"></div>
+
+      <details class="fx-advanced">
+        <summary>Advanced — perspective, timing, owner</summary>
+        <div class="fx-grid">
+          <label class="fx-field"><span>Perspective</span>
+            <select id="fx-perspective">
+              <option value="financial">Financial</option>
+              <option value="customer">Customer</option>
+              <option value="internal_process">Internal process</option>
+              <option value="learning_growth">Learning &amp; growth</option>
+            </select></label>
+          <label class="fx-field"><span>Timing</span>
+            <select id="fx-timing">
+              <option value="lagging">Lagging</option>
+              <option value="leading">Leading</option>
+            </select></label>
+          <label class="fx-field"><span>Owner</span>
+            <input id="fx-owner" placeholder="Unassigned" maxlength="40"></label>
+        </div>
+      </details>
+
+      <details class="fx-help">
+        <summary>What can I write?</summary>
+        <div id="fx-functions"></div>
+      </details>
+    </div>
+    <div class="modal-foot">
+      <label class="fx-save-lib">
+        <input type="checkbox" id="fx-persist">
+        <span>Keep for future runs</span>
+      </label>
+      <div class="modal-foot-actions">
+        <button class="ghost" id="fx-cancel">Cancel</button>
+        <button class="primary" id="fx-add" disabled>Add KPI</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ================= HISTORY DRAWER ================= -->
   <div class="drawer-scrim" id="drawer-scrim" hidden></div>
