@@ -538,28 +538,111 @@ def _last_valid(series: pd.Series, offset: int = 0) -> Optional[float]:
     return None if pd.isna(value) else float(value)
 
 
+class _Evaluator:
+    """Computes a KPI's series, resolving formula references on demand.
+
+    Two things make this more than a loop:
+
+    **Formulas can reference other KPIs.** `SAFE_DIV(arr, customer_count)` is
+    the natural way to write ARPA, and it is only natural because 35 builtins
+    already exist to compose. So a name in a formula is resolved by computing
+    that KPI, recursively, and memoising the result.
+
+    **A referenced KPI need not be selected.** If the user's formula needs
+    `customer_count` and the selection engine did not pick it, that is a detail
+    of their arithmetic, not a request to put it on the dashboard. So references
+    resolve against the whole known universe of KPIs and the dependency is
+    computed quietly rather than erroring.
+    """
+
+    def __init__(self, ctx: "MetricContext", universe: Dict[str, KPI]) -> None:
+        self.ctx = ctx
+        self.universe = universe
+        self._cache: Dict[str, Optional[pd.Series]] = {}
+        self._in_progress: List[str] = []
+
+    def series_for(self, kpi_id: str) -> Optional[pd.Series]:
+        if kpi_id in self._cache:
+            return self._cache[kpi_id]
+
+        if kpi_id in self._in_progress:
+            cycle = " -> ".join(self._in_progress + [kpi_id])
+            raise ValueError(f"circular reference between KPIs: {cycle}")
+
+        kpi = self.universe.get(kpi_id)
+        if kpi is None:
+            raise ValueError(f"unknown KPI {kpi_id!r}")
+
+        self._in_progress.append(kpi_id)
+        try:
+            series = self._compute_one(kpi)
+        finally:
+            self._in_progress.pop()
+
+        self._cache[kpi_id] = series
+        return series
+
+    def _compute_one(self, kpi: KPI) -> Optional[pd.Series]:
+        if not kpi.is_formula:
+            fn = _REGISTRY.get(kpi.compute_ref)
+            if fn is None:
+                raise ValueError("no implementation registered for this KPI id")
+            return fn(self.ctx)
+
+        from ..formula import FormulaError, evaluate
+        from ..formula.evaluate import SeriesResolver
+
+        resolver = SeriesResolver(
+            tables=self.ctx.tables,
+            month_index=self.ctx.fin.index,
+            kpi_lookup=self._lookup,
+            profile=self.ctx.profile,
+        )
+        try:
+            return evaluate(kpi.compute.expression or "", resolver)
+        except FormulaError as exc:
+            raise ValueError(f"formula error: {exc}") from exc
+
+    def _lookup(self, name: str) -> Optional[pd.Series]:
+        """Name resolution hook for the formula engine.
+
+        Returns None for anything that is not a KPI id, which tells the resolver
+        to carry on and try a table column — a formula referencing a nonexistent
+        name should be reported by the resolver, which knows what the
+        alternatives were, rather than here.
+        """
+        if name not in self.universe:
+            return None
+        return self.series_for(name)
+
+
+def _universe(kpi_set: KPISet) -> Dict[str, KPI]:
+    """Every KPI a formula may reference: the selected set plus the library.
+
+    The selected set alone is not enough — see `_Evaluator`. Selected entries
+    win on an id clash, because a per-run override of a library KPI should be
+    what other formulas in that run see too.
+    """
+    from ..kpi.selection import load_all_known
+    known = {k.id: k for k in load_all_known()}
+    known.update({k.id: k for k in kpi_set.kpis})
+    return known
+
+
 def compute(kpi_set: KPISet, tables: Dict[str, pd.DataFrame],
             profile: CompanyProfile) -> List[MetricResult]:
     ctx = MetricContext(profile=profile, tables=tables)
+    evaluator = _Evaluator(ctx, _universe(kpi_set))
     results: List[MetricResult] = []
 
     for kpi in kpi_set.kpis:
-        fn = _REGISTRY.get(kpi.id)
-        if fn is None:
-            results.append(MetricResult(
-                kpi=kpi, series=None, current=None, prior_year=None, prior_month=None,
-                target=None, status="unknown", benchmark_position=None,
-                computed=False, reason="no implementation registered for this KPI id",
-            ))
-            continue
-
         try:
-            series = fn(ctx)
+            series = evaluator.series_for(kpi.id)
         except Exception as exc:                      # noqa: BLE001 - reported, not swallowed
             results.append(MetricResult(
                 kpi=kpi, series=None, current=None, prior_year=None, prior_month=None,
                 target=None, status="unknown", benchmark_position=None,
-                computed=False, reason=f"computation error: {exc}",
+                computed=False, reason=str(exc),
             ))
             continue
 

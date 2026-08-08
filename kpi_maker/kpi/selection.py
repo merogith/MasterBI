@@ -80,8 +80,8 @@ NORTH_STAR_BY_MODEL = {
 }
 
 
-def load_library(packs: Optional[List[str]] = None) -> List[KPI]:
-    """Load and validate KPI record sheets from YAML."""
+def _load_packs(packs: Optional[List[str]] = None) -> List[KPI]:
+    """Load and validate KPI record sheets from the shipped library."""
     # A pack may span several files (`saas.yaml`, `saas_product.yaml`, ...) so
     # a sector library can grow without any one file becoming unreviewable.
     if packs:
@@ -104,10 +104,59 @@ def load_library(packs: Optional[List[str]] = None) -> List[KPI]:
         for entry in raw:
             kpi = KPI(**entry)   # pydantic validates the record sheet is complete
             if kpi.id in seen:
+                # Two shipped packs defining the same id is an authoring bug.
+                # A user overriding one deliberately is not — see `load_library`.
                 raise ValueError(f"duplicate KPI id {kpi.id!r} in {path.name}")
             seen.add(kpi.id)
             kpis.append(kpi)
     return kpis
+
+
+def load_library(packs: Optional[List[str]] = None,
+                 include_user: bool = True) -> List[KPI]:
+    """The shipped packs, with stored user KPIs layered on top.
+
+    A user KPI sharing an id with a library one **replaces** it. "Your CAC
+    payback is wrong, here is how we calculate it" is a real and reasonable
+    thing to want, and it is the whole point of letting people define metrics.
+    """
+    return _load_with_overrides(packs, include_user)[0]
+
+
+def _load_with_overrides(packs: Optional[List[str]],
+                         include_user: bool = True) -> Tuple[List[KPI], Dict[str, str]]:
+    """(kpis, notes) where notes explains each user replacement or load failure."""
+    kpis = _load_packs(packs)
+    if not include_user:
+        return kpis, {}
+
+    from .user_library import load_user_kpis
+    user_kpis, broken = load_user_kpis()
+
+    notes: Dict[str, str] = {
+        kpi_id: f"user KPI could not be loaded: {reason}"
+        for kpi_id, reason in broken.items()
+    }
+
+    by_id = {k.id: i for i, k in enumerate(kpis)}
+    for kpi in user_kpis:
+        if kpi.id in by_id:
+            kpis[by_id[kpi.id]] = kpi
+            notes[kpi.id] = "user definition replaces the library record sheet"
+        else:
+            by_id[kpi.id] = len(kpis)
+            kpis.append(kpi)
+    return kpis, notes
+
+
+def load_all_known() -> List[KPI]:
+    """Every KPI that exists anywhere — every pack, plus user definitions.
+
+    The resolution universe for formula references. A formula may reference a
+    KPI the selection engine did not pick, and that should compute rather than
+    fail; see `metrics/engine.py:_Evaluator`.
+    """
+    return load_library(None, include_user=True)
 
 
 def _packs_for(profile: CompanyProfile) -> List[str]:
@@ -126,6 +175,7 @@ def unknown_kpi_ids(profile: CompanyProfile, overrides) -> List[str]:
     packs = list(overrides.packs) if overrides.packs else _packs_for(profile)
     try:
         known = {k.id for k in load_library(packs)}
+        known |= {e.get("id", "") for e in (overrides.custom or [])}
     except FileNotFoundError:
         return []
     referenced = set(overrides.pinned) | set(overrides.excluded) | set(overrides.overrides)
@@ -225,11 +275,35 @@ def select(profile: CompanyProfile, extra_packs: Optional[List[str]] = None,
     packs = (list(overrides.packs) if overrides is not None and overrides.packs
              else _packs_for(profile))
     packs = packs + list(extra_packs or [])
-    library = _apply_overrides(load_library(packs), overrides)
+    library, load_notes = _load_with_overrides(packs)
 
     pinned = set(overrides.pinned) if overrides is not None else set()
     excluded = set(overrides.excluded) if overrides is not None else set()
 
+    # Per-run custom KPIs. Unlike a stored user KPI — which is a reusable pack
+    # entry and competes for a slot like anything else — one added to THIS run
+    # is an explicit "put this on my scorecard", so it is pinned by default.
+    custom_notes: Dict[str, str] = {}
+    if overrides is not None and overrides.custom:
+        by_id = {k.id: i for i, k in enumerate(library)}
+        for entry in overrides.custom:
+            try:
+                kpi = KPI(**entry)
+            except Exception as exc:                     # noqa: BLE001
+                raise ValueError(
+                    f"custom KPI {entry.get('id') or entry.get('name') or '?'!r} "
+                    f"is not valid: {exc}"
+                ) from exc
+            if kpi.id in by_id:
+                library[by_id[kpi.id]] = kpi
+                custom_notes[kpi.id] = "custom KPI defined for this run"
+            else:
+                by_id[kpi.id] = len(library)
+                library.append(kpi)
+                custom_notes[kpi.id] = "custom KPI defined for this run"
+            pinned.add(kpi.id)
+
+    library = _apply_overrides(library, overrides)
     known = {k.id for k in library}
     for unknown in sorted((pinned | excluded) - known):
         # Silently ignoring a typo'd id would leave the user staring at a
@@ -241,6 +315,12 @@ def select(profile: CompanyProfile, extra_packs: Optional[List[str]] = None,
 
     dropped: Dict[str, str] = {}
     rationale: Dict[str, str] = {}
+
+    # Surface where a definition came from. A user replacing a library metric
+    # must be visible in the output, or two runs of "the same" KPI silently
+    # disagree and nobody can tell why.
+    for kpi_id, note in {**load_notes, **custom_notes}.items():
+        rationale[f"_origin:{kpi_id}"] = note
 
     # --- Layers 1 & 2: applicability and feasibility -----------------------
     candidates: List[KPI] = []

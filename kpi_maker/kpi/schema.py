@@ -6,6 +6,7 @@ an under-specified metric.
 """
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Dict, List, Optional
 
@@ -38,6 +39,37 @@ class Tier(int, Enum):
     operational_l3 = 3
 
 
+class ComputeKind(str, Enum):
+    builtin = "builtin"      # a registered Python function in metrics/engine.py
+    formula = "formula"      # a user expression, evaluated by kpi_maker.formula
+
+
+class Compute(BaseModel):
+    """How a KPI's number is produced.
+
+    Absent means `{kind: builtin, ref: <the KPI's own id>}`, which is what every
+    library record sheet relied on before formulas existed — so all 44 of them
+    keep working untouched.
+    """
+    kind: ComputeKind = ComputeKind.builtin
+    ref: Optional[str] = None          # builtin: registry key, defaults to the id
+    expression: Optional[str] = None   # formula: the user's expression
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "Compute":
+        if self.kind == ComputeKind.formula and not (self.expression or "").strip():
+            raise ValueError("a formula KPI needs a non-empty expression")
+        if self.kind == ComputeKind.builtin and self.expression:
+            raise ValueError(
+                "a builtin KPI cannot carry an expression — set kind: formula")
+        return self
+
+
+class Origin(str, Enum):
+    library = "library"
+    user = "user"
+
+
 class Benchmark(BaseModel):
     p25: Optional[float] = None
     p50: Optional[float] = None
@@ -64,11 +96,22 @@ class KPI(BaseModel):
     # what gives the dashboard its drill-down and the report its waterfall.
     driver_parent: Optional[str] = None
 
-    formula: str          # human-readable; the metrics engine implements by id
+    formula: str          # human-readable prose; rendered into the definitions
+                          # tab and the report appendix. NOT executable — see
+                          # `compute` for that.
     unit: str             # currency | pct | months | days | count | ratio | score
     frequency: str = "monthly"
     owner_role: str
     source_systems: List[str] = Field(default_factory=list)
+
+    # How to actually compute it. Defaults to the builtin registered under this
+    # KPI's own id, which is how every library entry behaved before formulas.
+    compute: Compute = Field(default_factory=Compute)
+
+    # Library KPIs carry a reviewed record sheet; user KPIs are as good as the
+    # four fields someone typed. The report appendix says which is which rather
+    # than presenting them as equally authoritative.
+    origin: Origin = Origin.library
 
     benchmark: Optional[Benchmark] = None
     alert_bands: Optional[AlertBands] = None
@@ -96,6 +139,15 @@ class KPI(BaseModel):
 
     # Objectives this KPI directly serves; drives the selection score.
     serves_objectives: List[str] = Field(default_factory=list)
+
+    @property
+    def compute_ref(self) -> str:
+        """The metrics-registry key for a builtin KPI."""
+        return self.compute.ref or self.id
+
+    @property
+    def is_formula(self) -> bool:
+        return self.compute.kind == ComputeKind.formula
 
     @model_validator(mode="after")
     def _bands_match_direction(self) -> "KPI":
@@ -176,6 +228,46 @@ class KPI(BaseModel):
         if p25 is not None and value >= p25:
             return "bottom_quartile"
         return "below_median"
+
+
+def slugify(name: str) -> str:
+    """A KPI id from a display name: 'Net Burn / FTE' -> 'net_burn_fte'."""
+    cleaned = re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
+    return cleaned or "custom_kpi"
+
+
+def user_kpi(name: str, expression: str, unit: str, direction: str,
+             kpi_id: Optional[str] = None, **overrides) -> KPI:
+    """Build a KPI from the four fields a user actually has to decide.
+
+    The record sheet mandates eight fields with no defaults, deliberately: a
+    metric with no owner, formula, source or target is a number, not a KPI. But
+    holding a user's own calculation to that bar means an eight-field form to
+    add one expression, and nobody does that twice.
+
+    The four required here are the ones that change what the user sees — `unit`
+    drives formatting (a ratio shown as currency is gibberish) and `direction`
+    drives the RAG colour (backwards, and green means trouble). The rest get
+    honest defaults, `origin` marks the result as user-defined so the appendix
+    does not pass it off as reviewed, and anything can still be set through
+    **overrides for someone who wants the full sheet.
+    """
+    return KPI(
+        id=kpi_id or slugify(name),
+        name=name.strip(),
+        perspective=overrides.pop("perspective", Perspective.financial),
+        tier=overrides.pop("tier", Tier.functional_l2),
+        timing=overrides.pop("timing", Timing.lagging),
+        direction=Direction(direction),
+        # The prose `formula` field is what renders into the definitions tab.
+        # The expression is the most honest description of a user KPI there is.
+        formula=overrides.pop("formula", expression),
+        unit=unit,
+        owner_role=overrides.pop("owner_role", "Unassigned"),
+        compute=Compute(kind=ComputeKind.formula, expression=expression),
+        origin=Origin.user,
+        **overrides,
+    )
 
 
 class KPISet(BaseModel):
