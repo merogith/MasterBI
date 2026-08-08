@@ -440,9 +440,24 @@ def growth_note(tables: Dict[str, pd.DataFrame], profile) -> Optional[str]:
     """
     stated = profile.financials.growth_rate_yoy
     fin = tables.get("monthly_financials")
-    if stated is None or fin is None or len(fin) < 13 or fin["arr"].iloc[-13] <= 0:
+    if stated is None or fin is None or len(fin) < 13:
         return None
-    achieved = float(fin["arr"].iloc[-1] / fin["arr"].iloc[-13] - 1.0)
+
+    # Growth is measured on whatever the archetype's top line is. A
+    # subscription business compounds ARR, which is already annualised; a
+    # retailer has no such column, so the comparable figure is trailing-twelve
+    # revenue. Reading `arr` unconditionally is what this used to do, and it
+    # raised a KeyError the first time a non-subscription archetype reached it.
+    if "arr" in fin.columns:
+        series = fin["arr"]
+    elif len(fin) >= 24:
+        series = fin["revenue"].rolling(12).sum()
+    else:
+        return None
+
+    if pd.isna(series.iloc[-13]) or series.iloc[-13] <= 0:
+        return None
+    achieved = float(series.iloc[-1] / series.iloc[-13] - 1.0)
     if abs(achieved - stated) > max(0.10, abs(stated) * 0.35):
         return (f"NOTE: stated growth {stated:+.0%} vs modelled {achieved:+.0%} — "
                 f"the customer-count target constrains how far the book can "

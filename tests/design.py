@@ -527,9 +527,25 @@ def test_exhibits(ctx: S.SectionContext) -> None:
 
     order = default_exhibits()
     check("every registered chart is listed", len(order) == len(CHARTS))
-    check("order comes from the decorator, not the file",
-          order[0] == "arr_trend" and order[-1] == "indexed_growth", str(order))
     check("ids are unique", len(set(order)) == len(order))
+
+    # Order comes from the decorator, not from where the function happens to
+    # sit in the file. Pinned as the subscription run's sequence rather than as
+    # the whole list, so registering a new sector's exhibits does not break it.
+    subscription = ["arr_trend", "arr_bridge", "benchmark_position", "retention",
+                    "segment_churn", "cohort_heatmap", "cac_payback",
+                    "channel_cost", "indexed_growth"]
+    check("the subscription exhibits keep their editorial order",
+          [e for e in order if e in set(subscription)] == subscription, str(order))
+    # charts.py groups its builders by topic, so definition order differs from
+    # the running order — which is the whole reason `order` is explicit.
+    import inspect
+    from kpi_maker.viz import charts as charts_module
+    source = inspect.getsource(charts_module)
+    defined = sorted(subscription, key=lambda e: source.index(f'@chart("{e}"'))
+    check("and that order is not the definition order",
+          defined != subscription,
+          "if these ever coincide this test proves nothing")
 
     check("no request means all of them", resolve_exhibits(None) == order)
     check("a request selects and orders",

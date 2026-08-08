@@ -577,3 +577,172 @@ def build_all(results: List[MetricResult],
             spec.width = widths[eid]
         specs.append(spec)
     return specs
+
+
+# --------------------------------------------------------------------------
+# E-commerce exhibits
+# --------------------------------------------------------------------------
+#
+# Registered here rather than in a sector module because the registry is the
+# thing that decides what a run can draw, and a chart that silently omits
+# itself when its table is absent is already the mechanism that keeps a
+# subscription run from showing these. Ordered after the subscription set for
+# the same reason: `default_exhibits` is the order a reader meets them in, and
+# a run only ever produces one sector's worth.
+
+@chart("revenue_orders", order=20, takes=("tables",))
+def revenue_and_orders(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """Two lines that answer "is growth price or volume?" in one look."""
+    orders = tables.get("orders")
+    if orders is None or orders.empty:
+        return None
+    net = orders["gross_revenue"] - orders["discounts"] - orders["returns"]
+    by_month = orders.assign(net=net).groupby("month").agg(
+        net=("net", "sum"), orders=("orders", "sum")).sort_index()
+    x = _months(by_month.index)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=x, y=by_month["net"].values, mode="lines", name="Net revenue",
+        line=dict(color=LIGHT["series_1"], width=2),
+        fill="tozeroy", fillcolor=_rgba(LIGHT["series_1"], 0.10),
+        hovertemplate="%{x}<br><b>%{customdata}</b><extra>Net revenue</extra>",
+        customdata=[_money(v) for v in by_month["net"].values],
+    ))
+    # Orders on their own axis, indexed to the same start, so the two are
+    # comparable in shape without implying they are comparable in level.
+    scale = (by_month["net"].iloc[0] / by_month["orders"].iloc[0]
+             if by_month["orders"].iloc[0] else 1.0)
+    fig.add_trace(go.Scatter(
+        x=x, y=(by_month["orders"] * scale).values, mode="lines", name="Orders",
+        line=dict(color=LIGHT["series_2"], width=2, dash="dot"),
+        hovertemplate="%{x}<br><b>%{customdata:,.0f} orders</b><extra></extra>",
+        customdata=by_month["orders"].values,
+    ))
+    _base_layout(fig, height=360)
+    fig.update_layout(hovermode="x unified")
+    return ChartSpec(
+        id="revenue_orders", title="Net revenue and order volume",
+        subtitle="Orders rescaled to the revenue axis at the first month — "
+                 "shape is comparable, level is not",
+        figure=fig, tab="overview", width="full",
+        note="Revenue rising faster than orders is price or basket size; the "
+             "other way round is discounting.",
+        trace_tokens={0: "series_1", 1: "series_2"},
+    )
+
+
+@chart("aov_conversion", order=21, takes=("tables",))
+def aov_and_conversion(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """The two levers that do not need more traffic."""
+    orders, traffic = tables.get("orders"), tables.get("traffic")
+    if orders is None or traffic is None or orders.empty or traffic.empty:
+        return None
+    net = orders["gross_revenue"] - orders["discounts"] - orders["returns"]
+    by_month = orders.assign(net=net).groupby("month").agg(
+        net=("net", "sum"), orders=("orders", "sum")).sort_index()
+    aov = (by_month["net"] / by_month["orders"].replace(0, np.nan))
+    funnel = traffic.groupby("month").agg(
+        sessions=("sessions", "sum"), orders=("orders", "sum")).sort_index()
+    conversion = (funnel["orders"] / funnel["sessions"].replace(0, np.nan))
+
+    x = _months(aov.index)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=x, y=aov.values, mode="lines", name="AOV",
+        line=dict(color=LIGHT["series_1"], width=2),
+        hovertemplate="%{x}<br><b>%{customdata}</b><extra>AOV</extra>",
+        customdata=[_money(v) for v in aov.values],
+    ))
+    fig.add_trace(go.Scatter(
+        x=_months(conversion.index), y=conversion.values, mode="lines",
+        name="Conversion", yaxis="y2",
+        line=dict(color=LIGHT["series_2"], width=2),
+        hovertemplate="%{x}<br><b>%{y:.2%}</b><extra>Conversion</extra>",
+    ))
+    _base_layout(fig)
+    # The one place a second axis is justified: the two series share a story
+    # and cannot share a scale. Both are direct-labelled in the legend.
+    fig.update_layout(
+        hovermode="x unified",
+        yaxis2=dict(overlaying="y", side="right", tickformat=".1%",
+                    showgrid=False, tickfont=dict(color=LIGHT["muted"], size=11)),
+    )
+    return ChartSpec(
+        id="aov_conversion", title="Average order value and conversion rate",
+        subtitle="Basket size on the left, conversion on the right",
+        figure=fig, tab="growth", width="full",
+        note="Both respond faster than acquisition does, and neither needs "
+             "more traffic to move.",
+        trace_tokens={0: "series_1", 1: "series_2"},
+    )
+
+
+@chart("category_returns", order=22, takes=("tables",))
+def category_returns(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """Return rate by category — the thing a blended rate hides."""
+    orders = tables.get("orders")
+    if orders is None or orders.empty or "category" not in orders.columns:
+        return None
+    grouped = orders.groupby("category").agg(
+        gross=("gross_revenue", "sum"), discounts=("discounts", "sum"),
+        returns=("returns", "sum"))
+    rate = (grouped["returns"] / (grouped["gross"] - grouped["discounts"])
+            .replace(0, np.nan)).sort_values()
+    if rate.dropna().empty:
+        return None
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=rate.values, y=[c.replace("_", " ").title() for c in rate.index],
+        orientation="h", marker=dict(color=LIGHT["series_1"]),
+        text=[f"{v:.1%}" for v in rate.values], textposition="outside",
+        textfont=dict(color=LIGHT["text_secondary"], size=11),
+        hovertemplate="%{y}<br><b>%{x:.1%} returned</b><extra></extra>",
+    ))
+    _base_layout(fig)
+    fig.update_layout(xaxis=dict(tickformat=".0%", showgrid=True,
+                                 gridcolor=LIGHT["grid"]))
+    blended = grouped["returns"].sum() / max(
+        (grouped["gross"] - grouped["discounts"]).sum(), 1e-9)
+    return ChartSpec(
+        id="category_returns", title="Return rate by category",
+        subtitle=f"Blended rate {blended:.1%} — the number a dashboard usually shows",
+        figure=fig, tab="retention", width="half",
+        note="A blended return rate that rises may only mean the worst "
+             "category grew. This is why the dimension is carried.",
+        trace_tokens={0: "series_1"},
+    )
+
+
+@chart("buyer_mix", order=23, takes=("tables",))
+def buyer_mix(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """New against repeat buyers — retail's retention picture."""
+    buyers = tables.get("buyers")
+    if buyers is None or buyers.empty:
+        return None
+    frame = buyers.sort_values("month")
+    x = _months(frame["month"])
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=x, y=frame["repeat_buyers"].values, name="Repeat",
+        marker=dict(color=LIGHT["series_1"]),
+        hovertemplate="%{x}<br><b>%{y:,.0f} repeat</b><extra></extra>",
+    ))
+    fig.add_trace(go.Bar(
+        x=x, y=frame["new_buyers"].values, name="New",
+        marker=dict(color=LIGHT["series_2"]),
+        hovertemplate="%{x}<br><b>%{y:,.0f} new</b><extra></extra>",
+    ))
+    _base_layout(fig, height=360)
+    fig.update_layout(barmode="stack", hovermode="x unified")
+    share = frame["repeat_buyers"].sum() / max(frame["active_buyers"].sum(), 1e-9)
+    return ChartSpec(
+        id="buyer_mix", title="Who bought: new against repeat",
+        subtitle=f"{share:.0%} of purchases came from buyers who had bought before",
+        figure=fig, tab="retention", width="full",
+        note="A business growing on new buyers alone is renting its revenue. "
+             "The repeat band is the part that does not have to be bought twice.",
+        trace_tokens={0: "series_1", 1: "series_2"},
+    )

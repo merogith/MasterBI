@@ -61,6 +61,7 @@
     An order is not a customer. A repeat buyer inflates this without widening
     the base — check it against active buyers before reading it as reach.
   serves_objectives: [growth]
+  core: true
 
 - id: aov
   name: Average Order Value
@@ -312,6 +313,7 @@
     Not the same as the customer list, which only ever grows, nor the same as
     the trailing-year base. The gap between them is the lapsed file.
   serves_objectives: [growth, retention]
+  core: true
 
 - id: inventory_turns
   name: Inventory Turns
