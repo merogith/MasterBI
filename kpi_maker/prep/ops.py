@@ -142,6 +142,10 @@ def _rename(frame, p):
 class CastParams(BaseModel):
     column: str
     to: str = Field(pattern="^(number|integer|text|boolean)$")
+    # European exports write 1.234,56 where Anglo ones write 1,234.56. Reading
+    # the first as Anglo yields 1.23456 — a plausible number that is wrong by
+    # three orders of magnitude, so the convention has to be explicit.
+    decimal: str = Field(default="anglo", pattern="^(anglo|european)$")
 
 
 @op("cast", "Change a column's type",
@@ -153,9 +157,9 @@ def _cast(frame, p):
     out = frame.copy()
     before_missing = int(out[p.column].isna().sum())
     if p.to == "number":
-        out[p.column] = pd.to_numeric(out[p.column], errors="coerce")
+        out[p.column] = _to_number(out[p.column], p.decimal)
     elif p.to == "integer":
-        out[p.column] = pd.to_numeric(out[p.column], errors="coerce").round().astype("Int64")
+        out[p.column] = _to_number(out[p.column], p.decimal).round().astype("Int64")
     elif p.to == "boolean":
         out[p.column] = out[p.column].map(
             lambda v: _as_bool(v)).astype("boolean")
@@ -164,7 +168,22 @@ def _cast(frame, p):
     new_missing = int(out[p.column].isna().sum()) - before_missing
     tail = (f", leaving {_plural(new_missing, 'value')} unconvertible and blank"
             if new_missing > 0 else "")
-    return out, f"Converted {p.column} to {p.to}{tail}."
+    style = " (European decimals)" if p.decimal == "european" else ""
+    return out, f"Converted {p.column} to {p.to}{style}{tail}."
+
+
+def _to_number(series: pd.Series, convention: str = "anglo") -> pd.Series:
+    """Parse money-ish text: currency symbols, thousands separators, (500) = -500."""
+    if pd.api.types.is_numeric_dtype(series):
+        return series.astype(float)
+    text = (series.astype(str).str.strip()
+            .str.replace(r"[$\u20ac\u00a3\u20ba\u00a5%\s]", "", regex=True)
+            .str.replace(r"^\((.*)\)$", r"-\1", regex=True))
+    if convention == "european":
+        text = text.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+    else:
+        text = text.str.replace(",", "", regex=False)
+    return pd.to_numeric(text, errors="coerce")
 
 
 _TRUE = {"true", "t", "yes", "y", "1"}
