@@ -19,7 +19,7 @@ theme toggle can restyle without re-rendering.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -66,6 +66,69 @@ class ChartSpec:
     colorscale_tokens: List[str] = field(default_factory=list)
 
 
+# --------------------------------------------------------------------------
+# The exhibit registry
+# --------------------------------------------------------------------------
+#
+# This was a literal list of nine lambdas inside `build_all`, which made the
+# set of exhibits a fact about one function body rather than something the
+# spec could select from. Each builder now declares itself and says which
+# inputs it wants, so `design.exhibits` can choose and order them.
+#
+# `tab` and `width` still come from the ChartSpec each builder returns — the
+# builder knows whether its chart needs the full width. The spec can override
+# the width; it cannot invent an exhibit.
+
+@dataclass
+class ChartEntry:
+    id: str
+    fn: Callable[..., Optional[ChartSpec]]
+    takes: Tuple[str, ...]
+    # Explicit, because the running order is an editorial decision — it is the
+    # order a reader meets the charts in. Definition order in this file is
+    # grouped by topic and would silently reshuffle the dashboard.
+    order: int = 100
+
+
+CHARTS: Dict[str, ChartEntry] = {}
+
+
+def chart(id: str, order: int, takes: Tuple[str, ...] = ("results",)):
+    def wrap(fn):
+        CHARTS[id] = ChartEntry(id=id, fn=fn, takes=takes, order=order)
+        return fn
+    return wrap
+
+
+class UnknownExhibit(ValueError):
+    """An exhibit id that is not registered."""
+
+
+def default_exhibits() -> List[str]:
+    return [e.id for e in sorted(CHARTS.values(), key=lambda e: e.order)]
+
+
+def resolve_exhibits(requested: Optional[Sequence[str]]) -> List[str]:
+    """The exhibit ids to build, in order. `None` means all of them.
+
+    Refused rather than skipped on an unknown id, for the same reason sections
+    are: a typo should not quietly remove a chart from a board pack.
+    """
+    if requested is None:
+        return default_exhibits()
+    unknown = [e for e in requested if e not in CHARTS]
+    if unknown:
+        raise UnknownExhibit(
+            f"unknown exhibit(s): {', '.join(unknown)}. "
+            f"Available: {', '.join(default_exhibits())}")
+    seen, out = set(), []
+    for eid in requested:
+        if eid not in seen:
+            seen.add(eid)
+            out.append(eid)
+    return out
+
+
 def _base_layout(fig: go.Figure, height: int = 320) -> go.Figure:
     """Recessive chrome; the data carries the ink."""
     fig.update_layout(
@@ -108,6 +171,7 @@ def _money(v: float) -> str:
 
 # --------------------------------------------------------------------------
 
+@chart("arr_trend", order=1, takes=("results",))
 def arr_trend(results: List[MetricResult]) -> Optional[ChartSpec]:
     r = next((x for x in results if x.kpi.id == "arr" and x.computed), None)
     if r is None:
@@ -143,6 +207,7 @@ def arr_trend(results: List[MetricResult]) -> Optional[ChartSpec]:
     )
 
 
+@chart("arr_bridge", order=2, takes=("tables",))
 def arr_bridge(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     """The single most useful diagnostic in a subscription business."""
     mov = tables["mrr_movements"]
@@ -186,6 +251,7 @@ def arr_bridge(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     )
 
 
+@chart("retention", order=4, takes=("results",))
 def retention_lines(results: List[MetricResult]) -> Optional[ChartSpec]:
     nrr = next((x for x in results if x.kpi.id == "nrr" and x.computed), None)
     grr = next((x for x in results if x.kpi.id == "grr" and x.computed), None)
@@ -226,6 +292,7 @@ def retention_lines(results: List[MetricResult]) -> Optional[ChartSpec]:
     )
 
 
+@chart("segment_churn", order=5, takes=("tables",))
 def segment_churn(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     """Emphasis form: the worst segment is the story, the rest are context."""
     mov, cust = tables["mrr_movements"], tables["customers"]
@@ -259,6 +326,7 @@ def segment_churn(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     )
 
 
+@chart("indexed_growth", order=9, takes=("results", "tables"))
 def indexed_growth(results: List[MetricResult],
                    tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     """ARR vs headcount, both indexed to 100.
@@ -300,6 +368,7 @@ def indexed_growth(results: List[MetricResult],
     )
 
 
+@chart("cac_payback", order=7, takes=("results",))
 def cac_payback(results: List[MetricResult]) -> Optional[ChartSpec]:
     r = next((x for x in results if x.kpi.id == "cac_payback_months" and x.computed), None)
     if r is None:
@@ -330,6 +399,7 @@ def cac_payback(results: List[MetricResult]) -> Optional[ChartSpec]:
     )
 
 
+@chart("cohort_heatmap", order=6, takes=("tables",))
 def cohort_heatmap(tables: Dict[str, pd.DataFrame], quarters: int = 8,
                    horizon: int = 12) -> Optional[ChartSpec]:
     """Revenue retention by acquisition cohort. Sequential single hue."""
@@ -387,6 +457,7 @@ def cohort_heatmap(tables: Dict[str, pd.DataFrame], quarters: int = 8,
     )
 
 
+@chart("channel_cost", order=8, takes=("tables",))
 def channel_dumbbell(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     """Before -> after per channel. One hue, two shades."""
     mkt = tables["marketing"]
@@ -436,6 +507,7 @@ def channel_dumbbell(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     )
 
 
+@chart("benchmark_position", order=3, takes=("results",))
 def benchmark_position(results: List[MetricResult]) -> Optional[ChartSpec]:
     """Diverging bar: distance from the cohort median, signed by good/bad."""
     rows = []
@@ -479,31 +551,29 @@ def build_all(results: List[MetricResult],
               tables: Dict[str, pd.DataFrame],
               mode: str = "light",
               currency: str = "USD",
-              tokens: Optional[Dict[str, str]] = None) -> List[ChartSpec]:
+              tokens: Optional[Dict[str, str]] = None,
+              exhibits: Optional[Sequence[str]] = None,
+              widths: Optional[Dict[str, str]] = None) -> List[ChartSpec]:
     set_mode(mode, tokens)
     set_currency(currency)
-    builders = [
-        lambda: arr_trend(results),
-        lambda: arr_bridge(tables),
-        lambda: benchmark_position(results),
-        lambda: retention_lines(results),
-        lambda: segment_churn(tables),
-        lambda: cohort_heatmap(tables),
-        lambda: cac_payback(results),
-        lambda: channel_dumbbell(tables),
-        lambda: indexed_growth(results, tables),
-    ]
+    widths = widths or {}
+    inputs = {"results": results, "tables": tables}
+
     specs = []
-    for build in builders:
+    for eid in resolve_exhibits(exhibits):
+        entry = CHARTS[eid]
         try:
-            spec = build()
-        except KeyError as exc:
+            spec = entry.fn(*(inputs[name] for name in entry.takes))
+        except KeyError:
             # An exhibit whose fact table was not uploaded simply does not
             # appear. Builders already return None when they have nothing to
             # draw; a missing table is the same situation arriving by a
             # different route, and a partial upload must narrow the dashboard
             # rather than fail to produce one.
             continue
-        if spec is not None:
-            specs.append(spec)
+        if spec is None:
+            continue
+        if eid in widths:
+            spec.width = widths[eid]
+        specs.append(spec)
     return specs

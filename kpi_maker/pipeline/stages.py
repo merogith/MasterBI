@@ -186,12 +186,14 @@ def _visualise(ctx) -> Dict[str, List[Any]]:
     """
     results, tables = ctx.get("metrics"), ctx.get("model")
     currency = ctx.spec.resolve_currency()
-    palette = _palettes(ctx)
+    palette, design = _palettes(ctx), ctx.spec.design
     return {
         "light": build_all(results, tables, mode="light", currency=currency,
-                           tokens=palette["light"]),
+                           tokens=palette["light"], exhibits=design.exhibits,
+                           widths=design.exhibit_widths),
         "dark": build_all(results, tables, mode="dark", currency=currency,
-                          tokens=palette["dark"]),
+                          tokens=palette["dark"], exhibits=design.exhibits,
+                          widths=design.exhibit_widths),
     }
 
 

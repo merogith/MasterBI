@@ -197,6 +197,10 @@ class DesignSpec(SpecModel):
     page_size: str = "A4"
     sections: Optional[List[str]] = None               # None -> the fixed 8
     exhibits: Optional[List[str]] = None               # None -> every chart that builds
+    # id -> "half" | "full". Selection and order live in `exhibits`; this only
+    # changes how much of the row a chart takes, which is a layout decision
+    # separate from whether it appears at all.
+    exhibit_widths: Dict[str, str] = Field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------
