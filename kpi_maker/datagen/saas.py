@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from ..contract.gate import ReconciliationError, run_gate
 from ..profile.schema import CompanyProfile, Stage
 
 WARMUP_MONTHS = 24
@@ -87,8 +88,9 @@ class GeneratedData:
         return self.tables[key]
 
 
-class ReconciliationError(AssertionError):
-    """Raised when generated data fails an accounting identity."""
+# `ReconciliationError` is imported above from `contract.gate`, where it now
+# lives alongside the identities it reports on. Re-exported from here because
+# `datagen` has always been where callers import it from.
 
 
 def generate(profile: CompanyProfile) -> GeneratedData:
@@ -672,163 +674,13 @@ def _build_sales_capacity(profile, rng, months, movements, headcount) -> pd.Data
 # --------------------------------------------------------------------------
 
 def reconcile(tables: Dict[str, pd.DataFrame], profile: CompanyProfile) -> List[str]:
-    """Assert the accounting identities. Failure here means the data is fiction."""
-    checks: List[str] = []
-    fin = tables["monthly_financials"]
-    mov = tables["mrr_movements"]
-    cust = tables["customers"]
+    """Assert the accounting identities. Failure here means the data is fiction.
 
-    def check(name: str, condition: bool, detail: str = "") -> None:
-        if not condition:
-            raise ReconciliationError(f"{name} FAILED. {detail}")
-        checks.append(f"{name}: pass")
-
-    # 1. P&L internal consistency
-    check(
-        "gross_profit = revenue - cogs",
-        bool(np.allclose(fin["gross_profit"], fin["revenue"] - fin["cogs"], rtol=1e-9)),
-    )
-    check(
-        "ebitda = gross_profit - total_opex",
-        bool(np.allclose(fin["ebitda"], fin["gross_profit"] - fin["total_opex"], rtol=1e-9)),
-    )
-    check(
-        "total_opex = sum of opex lines",
-        bool(np.allclose(
-            fin["total_opex"],
-            fin[["sales_cost", "marketing_cost", "rnd_cost", "ga_cost"]].sum(axis=1),
-            rtol=1e-9,
-        )),
-    )
-
-    # 2. ARR ties to the MRR book
-    check("arr = mrr x 12", bool(np.allclose(fin["arr"], fin["mrr"] * 12.0, rtol=1e-9)))
-
-    # 3. Revenue lands on the profile's stated figure
-    ending_arr = float(fin["arr"].iloc[-1])
-    target = profile.financials.revenue
-    drift = abs(ending_arr - target) / target
-    check(
-        "ending ARR matches profile revenue",
-        drift < 0.02,
-        f"ending ARR {ending_arr:,.0f} vs profile {target:,.0f} ({drift:.1%} drift)",
-    )
-
-    # 4. The book's SHAPE matches the profile, not just its total
-    if profile.market.customer_count > 0:
-        active = int(cust["is_active"].sum())
-        target_customers = profile.market.customer_count
-        drift = abs(active - target_customers) / target_customers
-        # The gate must be looser than the calibrator's own target, or a run
-        # that legitimately converged to the noise floor still fails here.
-        gate = calibration_tolerance(target_customers) * 2.0
-        check(
-            "active customer count matches profile",
-            drift <= gate,
-            f"{active} active vs profile {target_customers} "
-            f"({drift:.1%} drift, gate {gate:.1%})",
-        )
-
-    # Blended ACV must stay near the segment-weighted average, or we have hit
-    # the revenue target with a book that looks nothing like the one described.
-    expected_acv = sum(s.share * s.avg_acv for s in profile.market.segments)
-    if expected_acv > 0:
-        actual_acv = float(cust.loc[cust["is_active"], "final_acv"].mean())
-        drift = abs(actual_acv - expected_acv) / expected_acv
-        # ACVs are drawn lognormally, so the sample mean's own error scales with
-        # 1/sqrt(N). On a three-customer book a 40% gate is a coin flip; the
-        # gate has to widen or it fails companies that are perfectly valid.
-        n_active = max(int(cust["is_active"].sum()), 1)
-        gate = max(0.40, 1.6 / math.sqrt(n_active))
-        check(
-            "blended ACV matches segment mix",
-            drift <= gate,
-            f"blended ACV {actual_acv:,.0f} vs expected {expected_acv:,.0f} "
-            f"({drift:.1%} drift, gate {gate:.1%})",
-        )
-
-    # 5. Plausibility bands
-    check(
-        "gross margin within [0.3, 0.95]",
-        bool(fin["gross_margin_pct"].between(0.30, 0.95).all()),
-    )
-    check("MRR never negative", bool((fin["mrr"] >= 0).all()))
-    check("no negative customer ACV", bool((cust["final_acv"] >= -1e-6).all()))
-
-    # 5b. Forward-revenue identities. Billings, deferred revenue and RPO are
-    # the three numbers an investor cross-checks first, so they must tie.
-    # These identities are verified from the SECOND reported month onward. The
-    # first row's deferred-revenue movement was computed against the warm-up
-    # month that trimming removed, so it cannot be re-derived from the table
-    # alone — the value is correct, but this frame no longer contains its input.
-    check(
-        "billings = revenue + change in deferred revenue",
-        bool(np.allclose(
-            fin["billings"].iloc[1:],
-            (fin["revenue"] + fin["deferred_revenue"].diff()).iloc[1:],
-            rtol=1e-9,
-        )),
-    )
-    check(
-        "free cash flow = ebitda + deferred revenue movement - capex",
-        bool(np.allclose(
-            fin["free_cash_flow"].iloc[1:],
-            (fin["ebitda"] + fin["deferred_revenue"].diff() - fin["capex"]).iloc[1:],
-            rtol=1e-9,
-        )),
-    )
-    check("cRPO never exceeds RPO", bool((fin["crpo"] <= fin["rpo"] + 1e-6).all()))
-    check("deferred revenue never negative", bool((fin["deferred_revenue"] >= 0).all()))
-
-    # 5c. Product and capacity tables must be internally possible
-    if "product_usage" in tables:
-        usage = tables["product_usage"]
-        check("daily actives never exceed monthly actives",
-              bool((usage["dau"] <= usage["mau"] + 1e-6).all()))
-        check("activated accounts never exceed new accounts",
-              bool((usage["activated_accounts"] <= usage["new_accounts"]).all()))
-    if "sales_capacity" in tables:
-        cap = tables["sales_capacity"]
-        check("ramping + productive reps = total reps",
-              bool((cap["reps_ramping"] + cap["reps_productive"] == cap["reps_total"]).all()))
-
-    # 5d. Did we actually deliver the growth the user stated?
-    # Not a hard gate — the customer-count target and a steeply declining book
-    # are jointly unsatisfiable, so a turnaround company legitimately lands
-    # short. But the user must never be told a number that contradicts what
-    # they told us, so any material gap is surfaced rather than swallowed.
-    stated_growth = profile.financials.growth_rate_yoy
-    if stated_growth is not None and len(fin) >= 13:
-        achieved = float(fin["arr"].iloc[-1] / fin["arr"].iloc[-13] - 1.0) \
-            if fin["arr"].iloc[-13] > 0 else None
-        if achieved is not None:
-            gap = abs(achieved - stated_growth)
-            if gap > max(0.10, abs(stated_growth) * 0.35):
-                checks.append(
-                    f"NOTE: stated growth {stated_growth:+.0%} vs modelled "
-                    f"{achieved:+.0%} — the customer-count target constrains how "
-                    f"far the book can decline; treat the trajectory as indicative"
-                )
-            else:
-                checks.append(
-                    f"modelled growth {achieved:+.0%} matches stated {stated_growth:+.0%}: pass"
-                )
-
-    # 6. Movement types are complete and signed correctly
-    positive = {"new", "expansion", "reactivation"}
-    bad_sign = mov[
-        (mov["movement_type"].isin(positive) & (mov["delta_mrr"] < 0))
-        | (~mov["movement_type"].isin(positive) & (mov["delta_mrr"] > 0))
-    ]
-    check("movement signs match movement type", bad_sign.empty, f"{len(bad_sign)} bad rows")
-
-    # 7. Churned customers do not appear as active
-    churned_ids = set(mov.loc[mov["movement_type"] == "churn", "customer_id"])
-    still_active = set(cust.loc[cust["is_active"], "customer_id"])
-    check(
-        "churned customers are not active",
-        not (churned_ids & still_active),
-        f"{len(churned_ids & still_active)} overlapping ids",
-    )
-
-    return checks
+    The identities themselves now live in `kpi_maker/contract/`, because they
+    were never really about synthetic data — uploaded data has to satisfy the
+    structural ones too. Generated data is held to BOTH tiers: matching the
+    profile is this generator's whole job, so a calibration miss is a bug here
+    even though it is only a warning for a file someone uploaded.
+    """
+    result = run_gate(tables, profile, source="synthetic")
+    return result.checks

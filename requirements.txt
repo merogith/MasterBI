@@ -13,6 +13,11 @@ PyYAML>=6.0
 plotly>=5.18,<6
 kaleido==0.2.1
 
+# Fact-table contract. Declares what a valid dataset looks like, so uploaded
+# data can be held to the same bar as generated data and the failure report
+# names the column rather than raising four stages downstream.
+pandera>=0.20,<1
+
 # Deliverables
 XlsxWriter>=3.1          # writing formatted workbooks
 openpyxl>=3.1            # reading them back (and, later, ingesting uploads)
