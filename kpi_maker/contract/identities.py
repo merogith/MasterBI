@@ -95,6 +95,7 @@ def check(name: str, tier: Tier, requires: tuple = (),
 
 
 SUBSCRIPTION = ("saas",)
+ECOMMERCE = ("ecommerce",)
 
 
 def _ok(condition: bool, detail: str = "") -> CheckResult:
@@ -279,6 +280,154 @@ def _margin_band(t, p):
     worst = fin.loc[~inside, "gross_margin_pct"]
     return _ok(False, f"{len(worst)} months outside the band "
                       f"(min {worst.min():.1%}, max {worst.max():.1%})")
+
+
+# --------------------------------------------------------------------------
+# E-commerce
+# --------------------------------------------------------------------------
+#
+# Most of these hold by construction rather than by luck: the generator derives
+# revenue from orders and the funnel backwards from orders, so the arithmetic
+# has one direction. They are asserted anyway, because "it holds by
+# construction" is a claim about code that someone will change.
+
+ORD = ("orders",)
+
+
+@check("net revenue = gross - discounts - returns", Tier.structural, ORD,
+       archetypes=ECOMMERCE)
+def _net_revenue(t, p):
+    o = t["orders"]
+    net = o["gross_revenue"] - o["discounts"] - o["returns"]
+    return _ok((net >= -1e-6).all(),
+               f"{int((net < -1e-6).sum())} row(s) where discounts and returns "
+               f"exceed gross revenue")
+
+
+@check("order revenue ties to the P&L", Tier.structural, ("orders", "monthly_financials"),
+       archetypes=ECOMMERCE)
+def _orders_tie(t, p):
+    o = t["orders"]
+    net = (o["gross_revenue"] - o["discounts"] - o["returns"])
+    by_month = o.assign(net=net).groupby("month")["net"].sum()
+    fin = t["monthly_financials"].set_index("month")["revenue"]
+    joined = by_month.reindex(fin.index).fillna(0.0)
+    return _ok(np.allclose(joined.to_numpy(), fin.to_numpy(), rtol=1e-6, atol=1e-6),
+               "the order lines and the revenue line disagree — one of them was "
+               "changed without the other")
+
+
+@check("checkouts never exceed carts, carts never exceed sessions",
+       Tier.structural, ("traffic",), archetypes=ECOMMERCE)
+def _funnel_order(t, p):
+    tr = t["traffic"]
+    bad_carts = int((tr["add_to_carts"] > tr["sessions"] + 1e-6).sum())
+    bad_checkouts = int((tr["checkouts"] > tr["add_to_carts"] + 1e-6).sum())
+    return _ok(not (bad_carts or bad_checkouts),
+               f"{bad_carts} row(s) with more carts than sessions, "
+               f"{bad_checkouts} with more checkouts than carts")
+
+
+@check("orders never exceed checkouts", Tier.structural, ("traffic",),
+       archetypes=ECOMMERCE)
+def _orders_within_funnel(t, p):
+    tr = t["traffic"]
+    return _ok((tr["orders"] <= tr["checkouts"] + 1e-6).all(),
+               f"{int((tr['orders'] > tr['checkouts'] + 1e-6).sum())} row(s) with "
+               f"more orders than checkouts")
+
+
+@check("units and order counts never negative", Tier.structural, ORD,
+       archetypes=ECOMMERCE)
+def _counts_non_negative(t, p):
+    o = t["orders"]
+    return _ok((o["orders"] >= 0).all() and (o["units"] >= 0).all())
+
+
+@check("stock on hand never negative", Tier.structural, ("inventory",),
+       archetypes=ECOMMERCE)
+def _stock_non_negative(t, p):
+    return _ok((t["inventory"]["units_on_hand"] >= -1e-6).all())
+
+
+@check("units sold reconcile between orders and inventory", Tier.structural,
+       ("orders", "inventory"), archetypes=ECOMMERCE)
+def _units_tie(t, p):
+    sold = t["orders"].groupby("month")["units"].sum()
+    stocked = t["inventory"].groupby("month")["units_sold"].sum()
+    joined = stocked.reindex(sold.index).fillna(0.0)
+    return _ok(np.allclose(joined.to_numpy(), sold.to_numpy(), rtol=1e-6, atol=1e-6),
+               "the order lines and the inventory movement disagree on units")
+
+
+@check("new + repeat buyers = active buyers", Tier.structural, ("buyers",),
+       archetypes=ECOMMERCE)
+def _buyer_split(t, p):
+    b = t["buyers"]
+    return _ok(np.allclose(b["new_buyers"] + b["repeat_buyers"],
+                           b["active_buyers"], rtol=1e-9, atol=1e-9),
+               "the buyer split does not add up to the buyer count")
+
+
+@check("buyers never exceed orders", Tier.structural, ("buyers", "orders"),
+       archetypes=ECOMMERCE)
+def _buyers_vs_orders(t, p):
+    b = t["buyers"].set_index("month")["active_buyers"]
+    o = t["orders"].groupby("month")["orders"].sum()
+    joined = b.reindex(o.index).fillna(0.0)
+    return _ok((joined <= o + 1e-6).all(),
+               f"{int((joined > o + 1e-6).sum())} month(s) with more buyers than "
+               f"orders, which would mean someone bought without ordering")
+
+
+@check("ending revenue matches profile revenue", Tier.calibration, ORD,
+       archetypes=ECOMMERCE)
+def _revenue_vs_profile(t, p):
+    target = p.financials.revenue
+    if target <= 0:
+        return CheckResult(True, "no stated revenue", skipped=True)
+    o = t["orders"]
+    net = (o["gross_revenue"] - o["discounts"] - o["returns"])
+    by_month = o.assign(net=net).groupby("month")["net"].sum().sort_index()
+    if len(by_month) < 12:
+        return CheckResult(True, "less than a year of orders", skipped=True)
+    trailing = float(by_month.iloc[-12:].sum())
+    drift = abs(trailing - target) / target
+    return _ok(drift < 0.02,
+               f"trailing-year revenue {trailing:,.0f} vs profile {target:,.0f} "
+               f"({drift:.1%} drift)")
+
+
+@check("active buyer count matches profile", Tier.calibration, ("customers",),
+       archetypes=ECOMMERCE)
+def _buyers_vs_profile(t, p):
+    target = p.market.customer_count
+    if target <= 0:
+        return CheckResult(True, "no stated customer count", skipped=True)
+    from ..datagen.base import calibration_tolerance
+    active = int(t["customers"]["is_active"].sum())
+    drift = abs(active - target) / target
+    gate = calibration_tolerance(target) * 2.0
+    return _ok(drift <= gate,
+               f"{active} active buyers vs profile {target} "
+               f"({drift:.1%} drift, gate {gate:.1%})")
+
+
+@check("average order value is plausible", Tier.calibration, ORD,
+       archetypes=ECOMMERCE)
+def _aov_band(t, p):
+    o = t["orders"]
+    orders = float(o["orders"].sum())
+    if orders <= 0:
+        return CheckResult(True, "no orders", skipped=True)
+    net = float((o["gross_revenue"] - o["discounts"] - o["returns"]).sum())
+    aov = net / orders
+    # A band rather than a point: AOV is an outcome of the simulation, not an
+    # input, and the profile does not state one. What would be wrong is an AOV
+    # of 40p or of six thousand pounds, either of which means the order-count
+    # sizing has come adrift from the spend.
+    return _ok(2.0 <= aov <= 5000.0,
+               f"average order value {aov:,.2f} is outside a plausible retail band")
 
 
 def growth_note(tables: Dict[str, pd.DataFrame], profile) -> Optional[str]:

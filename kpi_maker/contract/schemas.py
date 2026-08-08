@@ -192,18 +192,105 @@ SUBSCRIPTION_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
 
 
 # --------------------------------------------------------------------------
+# E-commerce
+# --------------------------------------------------------------------------
+
+ECOMMERCE_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
+
+    "orders": pa.DataFrameSchema(
+        {
+            "month": MONTH,
+            "channel": pa.Column(nullable=False),
+            "category": pa.Column(nullable=False),
+            "orders": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "units": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "gross_revenue": _money(ge=NON_NEGATIVE),
+            "discounts": _money(ge=NON_NEGATIVE),
+            "returns": _money(ge=NON_NEGATIVE),
+        },
+        strict=False, name="orders",
+        description="Month x channel x category. Everything else derives from this.",
+    ),
+
+    "traffic": pa.DataFrameSchema(
+        {
+            "month": MONTH,
+            "channel": pa.Column(nullable=False),
+            "sessions": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "add_to_carts": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "checkouts": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "orders": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+        },
+        strict=False, name="traffic",
+        description="Month x channel. The funnel, derived backwards from orders.",
+    ),
+
+    "inventory": pa.DataFrameSchema(
+        {
+            "month": MONTH,
+            "category": pa.Column(nullable=False),
+            "units_sold": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "units_on_hand": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "stockout_days": pa.Column(float, coerce=True,
+                                       checks=pa.Check.in_range(0.0, 31.0)),
+        },
+        strict=False, name="inventory",
+        description="Month x category.",
+    ),
+
+    "buyers": pa.DataFrameSchema(
+        {
+            "month": MONTH,
+            "new_buyers": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "repeat_buyers": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "active_buyers": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+        },
+        strict=False, unique=["month"], name="buyers",
+        description=("Month. How many people actually bought, split by whether "
+                     "they had bought before — retail's analogue of the "
+                     "movements table."),
+    ),
+
+    # Same table name as subscription's, deliberately different columns. A
+    # buyer has orders and a last order date; a subscriber has an ACV and a
+    # churn month. Sharing the name keeps "customers" meaning the customer
+    # table everywhere, and the per-archetype lookup is what stops one
+    # definition being applied to the other.
+    "customers": pa.DataFrameSchema(
+        {
+            "customer_id": IDENTIFIER,
+            "segment": pa.Column(nullable=False),
+            "acquired_month": MONTH,
+            "last_order_month": MONTH,
+            "orders": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "revenue": _money(),
+            "is_active": pa.Column(bool, coerce=True),
+        },
+        strict=False, unique=["customer_id"], name="customers",
+        description="One row per buyer. No month column — entity grain.",
+    ),
+}
+
+
+# --------------------------------------------------------------------------
 # The per-archetype lookup
 # --------------------------------------------------------------------------
 
 SCHEMAS_BY_ARCHETYPE: Dict[str, Dict[str, pa.DataFrameSchema]] = {
     "saas": {**UNIVERSAL_SCHEMAS, **SUBSCRIPTION_SCHEMAS},
+    "ecommerce": {**UNIVERSAL_SCHEMAS, **ECOMMERCE_SCHEMAS},
 }
 
-# The union, for callers with no archetype to hand. Ingestion is the case: a
-# user uploads a file before anyone has decided what kind of business it
-# describes, and the quality report still has to say what is wrong with it.
-# Later archetypes merge in the same way, so a table shared between two of them
-# is declared once and validated identically for both.
+# The best-effort set for callers with no archetype to hand. Ingestion is the
+# case: a user uploads a file before anyone has decided what kind of business
+# it describes, and the quality report still has to say what is wrong with it.
+#
+# It cannot be a true union, because two archetypes disagree about `customers`
+# — a buyer has orders and a last order date where a subscriber has an ACV and
+# a churn month. A dict cannot hold both, and guessing would mean telling a
+# retailer their customer file is missing `final_acv`. So the unclassified path
+# keeps the subscription reading, which is what ingestion was built against,
+# and anything that knows its archetype uses `schemas_for`.
 FACT_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
     **UNIVERSAL_SCHEMAS, **SUBSCRIPTION_SCHEMAS,
 }

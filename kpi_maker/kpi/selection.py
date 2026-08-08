@@ -95,8 +95,17 @@ def _load_packs(packs: Optional[List[str]] = None) -> List[KPI]:
     else:
         files = sorted(LIBRARY_DIR.glob("*.yaml"))
 
+    # A duplicate id WITHIN one sector's packs is an authoring bug and still
+    # raises. Across sectors it is correct and expected: a retailer's gross
+    # margin and a software vendor's are the same definition with different
+    # benchmarks — p50 0.42 against 0.75 — and forcing one record on both would
+    # tell a healthy retailer it is failing. So the guard applies to a
+    # requested pack group; the load-everything view takes the first and
+    # records the rest.
+    scoped = bool(packs)
+
     kpis: List[KPI] = []
-    seen = set()
+    seen: Dict[str, str] = {}
     for path in files:
         if not path.exists():
             raise FileNotFoundError(f"KPI pack not found: {path}")
@@ -104,10 +113,13 @@ def _load_packs(packs: Optional[List[str]] = None) -> List[KPI]:
         for entry in raw:
             kpi = KPI(**entry)   # pydantic validates the record sheet is complete
             if kpi.id in seen:
-                # Two shipped packs defining the same id is an authoring bug.
-                # A user overriding one deliberately is not — see `load_library`.
-                raise ValueError(f"duplicate KPI id {kpi.id!r} in {path.name}")
-            seen.add(kpi.id)
+                if scoped:
+                    raise ValueError(
+                        f"duplicate KPI id {kpi.id!r} in {path.name} — already "
+                        f"defined in {seen[kpi.id]}. Two files in the same pack "
+                        f"may not define the same KPI.")
+                continue
+            seen[kpi.id] = path.name
             kpis.append(kpi)
     return kpis
 
