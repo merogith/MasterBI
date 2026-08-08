@@ -263,7 +263,8 @@ def _report_pdf(ctx):
                   ctx.get("visualise")["light"], ctx.get("source").checks,
                   [a.description for a in ctx.get("source").anomalies], ctx.period,
                   tokens=_palettes(ctx)["light"],
-                  section_order=ctx.spec.design.sections, logo=_logo(ctx))
+                  section_order=ctx.spec.design.sections, logo=_logo(ctx),
+                  origins=ctx.origins)
     return path
 
 
@@ -290,7 +291,8 @@ def _doc_docx(ctx):
                ctx.get("visualise")["light"], ctx.get("source").checks,
                [a.description for a in ctx.get("source").anomalies], ctx.period,
                tokens=_palettes(ctx)["light"],
-               section_order=ctx.spec.design.sections, logo=_logo(ctx))
+               section_order=ctx.spec.design.sections, logo=_logo(ctx),
+               origins=ctx.origins)
     return path
 
 

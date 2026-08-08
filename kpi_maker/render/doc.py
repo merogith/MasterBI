@@ -186,7 +186,7 @@ def render_doc(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                anomaly_notes: List[str], period: str = "",
                tokens: Optional[Dict[str, str]] = None,
                section_order: Optional[List[str]] = None,
-               logo=None) -> Path:
+               logo=None, origins: Optional[Dict[str, str]] = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     doc = Document()
     doc.logo = logo
@@ -199,7 +199,7 @@ def render_doc(path: Path, profile: CompanyProfile, kpi_set: KPISet,
     ctx = SectionContext(
         profile=profile, kpi_set=kpi_set, results=results, findings=findings,
         images=images, specs=specs, checks=checks,
-        anomaly_notes=anomaly_notes, period=period)
+        anomaly_notes=anomaly_notes, period=period, origins=origins or {})
 
     for content in build_sections(ctx, section_order):
         if content.id == "cover":

@@ -163,6 +163,10 @@ class SectionContext:
     checks: List[str] = field(default_factory=list)
     anomaly_notes: List[str] = field(default_factory=list)
     period: str = ""
+    # {table: "measured" | "modelled"} for uploads the user asked to gap-fill.
+    # Empty for a synthetic run, where there is no gap to fill and every table
+    # is as real as any other.
+    origins: Dict[str, str] = field(default_factory=dict)
 
     @property
     def currency(self) -> str:
@@ -468,6 +472,58 @@ def _actions(ctx: SectionContext, limit: int = 12) -> SectionContent:
     return content
 
 
+def _basis_block(ctx: SectionContext) -> Optional[Block]:
+    """Which numbers came from the user's data and which the generator supplied.
+
+    A modelled number presented as measured is the worst thing this product can
+    do, and the print deliverables were the one place the marker had not
+    reached — the dashboard, facts.csv and the workbook all carried it.
+
+    Returns None when there is nothing to say. That is the common case: a
+    synthetic run has no gaps to fill, so every table is as real as any other
+    and a paragraph explaining the distinction would only teach the reader to
+    skip it.
+    """
+    # Computed results only. A KPI that could not be computed at all has no
+    # basis worth reporting, and counting one as measured is how the first
+    # version of this paragraph came to say "18 of 25 KPIs were computed
+    # entirely from your own data" about a run where 18 were not computed at
+    # all and every one of the remaining 7 was modelled. A reassuring number
+    # that is wrong is worse here than no number.
+    computed = ctx.computed
+    modelled = sorted(t for t, origin in (ctx.origins or {}).items()
+                      if origin and origin != "measured")
+    affected = [r for r in computed
+                if getattr(r, "basis", "measured") != "measured"]
+    if not modelled and not affected:
+        return None
+
+    block = Block(
+        title="Measured and modelled figures",
+        intro=("Some figures in this report were not computed from your data. "
+               "You asked for the tables below to be filled in by the "
+               "generator, because your upload did not contain them; every "
+               "number that reads from one is marked here and wherever else "
+               "it appears."))
+    for table in modelled:
+        block.lines.append(
+            f"{table} — supplied by the generator, not present in your upload")
+
+    for label, kind in (("Modelled", "modelled"), ("Part modelled", "mixed")):
+        names = sorted(r.kpi.name for r in affected
+                       if getattr(r, "basis", "") == kind)
+        if names:
+            block.lines.append(f"{label}: {', '.join(names)}")
+
+    if computed:
+        clean = len(computed) - len(affected)
+        block.lines.append(
+            f"{clean} of the {len(computed)} KPIs on this report "
+            f"{'was' if len(computed) == 1 else 'were'} computed entirely from "
+            f"your own data.")
+    return block
+
+
 @section("appendix", title="Appendix", order=8)
 def _appendix(ctx: SectionContext) -> SectionContent:
     p = ctx.profile
@@ -494,6 +550,10 @@ def _appendix(ctx: SectionContext) -> SectionContent:
               f"report was produced. The pipeline refuses to render on data "
               f"that fails them.",
         lines=list(ctx.checks), marker="-"))
+
+    basis = _basis_block(ctx)
+    if basis is not None:
+        content.blocks.append(basis)
 
     if ctx.anomaly_notes:
         content.blocks.append(Block(title="Known events in this dataset",
