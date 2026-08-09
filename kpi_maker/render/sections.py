@@ -126,6 +126,12 @@ class SectionContent:
     id: str
     title: str
     intro: str = ""
+    # AI-written connective prose, empty unless `spec.ai.enabled` (P5). It sits
+    # between the deterministic `intro` and the section's content, and it is
+    # additive by construction: every bullet, table and exhibit below is
+    # unchanged, so dropping a paragraph that failed the number check costs the
+    # section nothing but the framing.
+    narrative: List[str] = field(default_factory=list)
     bullets: List[Bullet] = field(default_factory=list)
     tables: List[Table] = field(default_factory=list)
     exhibits: List[Exhibit] = field(default_factory=list)
@@ -167,6 +173,13 @@ class SectionContext:
     # Empty for a synthetic run, where there is no gap to fill and every table
     # is as real as any other.
     origins: Dict[str, str] = field(default_factory=dict)
+    # Section ids that carry AI-written prose (P5). Empty on every run that did
+    # not enable it, which is the default — and the appendix says nothing new
+    # when it is empty, so an unconfigured report is unchanged.
+    narrated: List[str] = field(default_factory=list)
+    # Sentences from the AI layer about what it could not do: a dropped
+    # narrative, a refusal, a missing key. Reported rather than swallowed.
+    ai_notes: List[str] = field(default_factory=list)
 
     @property
     def currency(self) -> str:
@@ -240,14 +253,23 @@ def resolve_order(requested: Optional[Sequence[str]]) -> List[str]:
 
 
 def build(ctx: SectionContext, requested: Optional[Sequence[str]] = None,
-          limits: Optional[Dict[str, Dict[str, Any]]] = None
+          limits: Optional[Dict[str, Dict[str, Any]]] = None,
+          narrative: Optional[Dict[str, List[str]]] = None
           ) -> List[SectionContent]:
     """Every selected section's content, in order, with its heading number set.
 
     Numbers come from position, so reordering renumbers rather than leaving a
     report whose section 5 follows section 7.
+
+    `narrative` is the AI overlay, applied here rather than inside each section
+    function for two reasons: a section builder should not have to know the
+    layer exists, and applying it in one place is what guarantees the PDF, the
+    DOCX and the deck carry identical prose. A section the narrator said
+    nothing about, or whose prose failed the number check, simply gets an empty
+    list — which is what it has always had.
     """
     limits = limits or {}
+    narrative = narrative or {}
     out, number = [], 0
     for sid in resolve_order(requested):
         spec = REGISTRY[sid]
@@ -255,6 +277,9 @@ def build(ctx: SectionContext, requested: Optional[Sequence[str]] = None,
         if spec.numbered:
             number += 1
             content.title = f"{number}. {content.title}"
+        paragraphs = narrative.get(sid)
+        if paragraphs:
+            content.narrative = list(paragraphs)
         out.append(content)
     return out
 
@@ -524,6 +549,45 @@ def _basis_block(ctx: SectionContext) -> Optional[Block]:
     return block
 
 
+def _narration_block(ctx: SectionContext) -> Optional[Block]:
+    """Which sections were narrated by a model, and what was checked.
+
+    The methodology paragraph has always ended "no number in this document was
+    produced by a language model", and that stays true — the narrator copies
+    figures, it does not compute them. But leaning on the precise wording of
+    that sentence to cover AI-written prose would be exactly the kind of
+    technically-accurate reassurance the measured-versus-modelled paragraph
+    exists to avoid. So when a model wrote anything, the report says so, names
+    where, and states the check that was applied.
+
+    Returns None on every run that did not enable it, which keeps the appendix
+    byte-identical by default.
+    """
+    if not ctx.narrated and not ctx.ai_notes:
+        return None
+    block = Block(
+        title="AI-written narrative",
+        intro=("The connective paragraphs in the sections below were written "
+               "by a language model. It was shown the computed KPI table and "
+               "the findings, never the underlying data, and every figure it "
+               "wrote was checked against that table before this report was "
+               "produced — prose containing a number the table does not "
+               "support is discarded rather than printed. The bullets, tables "
+               "and exhibits are unchanged deterministic output."))
+    # Listed in the order the reader will meet them, not alphabetically by id
+    # — sorting on the id gave "Recommended actions, Benchmarks, Diagnostic,
+    # Executive summary", which looks like no order at all.
+    narrated = set(ctx.narrated)
+    for section_id in default_order():
+        if section_id in narrated:
+            block.lines.append(REGISTRY[section_id].title)
+    for section_id in sorted(narrated - set(default_order())):
+        block.lines.append(section_id)
+    for note in ctx.ai_notes:
+        block.tinted.append((note, "serious"))
+    return block
+
+
 @section("appendix", title="Appendix", order=8)
 def _appendix(ctx: SectionContext) -> SectionContent:
     p = ctx.profile
@@ -554,6 +618,10 @@ def _appendix(ctx: SectionContext) -> SectionContent:
     basis = _basis_block(ctx)
     if basis is not None:
         content.blocks.append(basis)
+
+    narration = _narration_block(ctx)
+    if narration is not None:
+        content.blocks.append(narration)
 
     if ctx.anomaly_notes:
         content.blocks.append(Block(title="Known events in this dataset",

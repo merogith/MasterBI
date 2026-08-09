@@ -22,10 +22,15 @@ Build the pipeline once; the modes are thin.
 
 | LLM does | Deterministic code does |
 |---|---|
-| Ask intake questions, fill the profile schema | Select KPIs from the library |
-| Choose which KPI packs / sections apply | Generate or ingest the data |
-| Write narrative from a computed facts table | Compute every metric |
-| QA the narrative against the facts | Render every chart and export |
+| Propose which KPIs, sections and exhibits apply — as a reviewable spec patch | Select KPIs from the library |
+| Write narrative from a computed facts table | Generate or ingest the data, and map its columns |
+| | Compute every metric |
+| | Render every chart and export |
+| | **QA the narrative against the facts** — §5 |
+
+Two rows moved right when the layer was actually built. Intake became the survey plus derivation
+from the upload, and the critic became arithmetic: checking that a number in the prose appears in
+the facts table needs matching, not judgement.
 
 This is what makes results reproducible, cheap in tokens, and defensible to a client. It also answers
 your "optimized for data used" point: the model sees the profile and an aggregated facts table
@@ -356,29 +361,50 @@ in prose. It cannot invent a finding, because it only ever sees the detector out
 
 ---
 
-## 5. The AI layer (Mode 3) — multi-agent design
+## 5. The AI layer (Mode 3) — two agents on the spec
 
-Built on the **Claude Agent SDK**. Your instinct about a planner + a technical agent is right; the
-refinement is that the executor should mostly *not* be an LLM.
+*Built. `kpi_maker/ai/`. Originally designed as seven agents; five of them turned out to be
+deterministic work that the phases before it did properly, which is the whole point of the
+"AI layer comes LAST" ordering rule.*
 
-| Agent | Model | Job | Output |
-|---|---|---|---|
-| **Intake** | Sonnet | Conversational; asks multiple-choice questions with a free-text escape; inspects uploaded file headers/samples only | validated `CompanyProfile` (via tool call, schema-enforced) |
-| **Mapper** | Sonnet | Maps uploaded columns → canonical fact-table fields; proposes transforms; flags unmappable | `mapping.json` + confidence per field |
-| **Planner** | Opus | Profile + intent → which KPI packs, which report sections, which exhibits, what to emphasize | `plan.json`, validated against schema |
-| **Executor** | *none — code* | Runs the deterministic pipeline against the plan | all artifacts |
-| **Custom transform** | Sonnet | Only when the plan needs something outside the library; writes a sandboxed pandas function | reviewed code, run in restricted subprocess |
-| **Narrator** | Opus | Facts table → prose (summary, observations, recommendations) | markdown sections |
-| **Critic** | Sonnet | Every number in the prose must appear in the facts table; checks BSC coverage, leading/lagging mix, unsupported causal claims | pass/fail + fixes |
+| Role | Originally | As built |
+|---|---|---|
+| **Intake** | Sonnet → `CompanyProfile` | **code** — the survey plus `ingest/derive.py`, which reads revenue, customer count, currency and date range off the upload and tags each as `ingested:<file>` in `_provenance`. |
+| **Mapper** | Sonnet → `mapping.json` | **code** — `ingest/mapping.py`: name similarity, dtype compatibility, value-distribution fit, confidence per field. A deterministic matcher that reports its uncertainty beats a model that does not. |
+| **Planner** | Opus → `plan.json` | **`ai/planner.py`** → a **`RunSpec` patch**. Once every decision lives in one validated document there is no second format to invent, and a patch can be reviewed hunk by hunk. |
+| **Executor** | code | the P0 stage graph. |
+| **Transform** | Sonnet → sandboxed pandas in a subprocess | **P1's formula engine.** The user writes the formula. No generated code, so no sandbox to get wrong. |
+| **Narrator** | Opus → prose | **`ai/narrator.py`**, a cacheable stage between `analyse` and the renderers. |
+| **Critic** | Sonnet → pass/fail | **`ai/verify.py`, code.** See below. |
 
-**Token economics.** The model never touches row-level data. Intake ≈ 10–20K tokens; Planner ≈ 15K;
-Narrator ≈ 20K; Critic ≈ 15K. A full AI Builder run lands around **60–120K tokens ≈ well under $1**
-at Sonnet-heavy mix. Modes 1 and 2 cost **zero tokens** — they are pure code. That is the right
-place for the free tier.
+**The critic is not a model, and that is a deliberate change.** Its job — *every number in the prose
+must appear in the facts table* — is decidable by arithmetic. Handing it to an LLM would add cost,
+latency and non-determinism to a check that string matching settles exactly, and a critic that can
+hallucinate is not a critic. This is the same refinement the executor row already made, applied one
+row further down. What makes it tractable is upstream: the narrator is handed the **pre-formatted**
+`fmt_value` renderings and told to quote them verbatim, so the check is set membership rather than
+fuzzy numeric comparison.
 
-**Failure handling:** schema validation on every agent boundary, one retry with the validation error
-fed back, then fall back to the deterministic default for that field. The pipeline must always
-produce a deliverable, even if degraded — a partially-defaulted report beats an error page.
+**What the two agents can and cannot do.** The narrator sees `facts_table()` and the findings, never
+a data row, and its prose is checked number by number before it reaches a deliverable. The planner
+proposes a patch that must survive `RunSpec` validation, may only name ids the registries already
+know, and **may not touch `profile`** — changing who the company is would change the numbers.
+Neither agent can move a number. That bound is structural, not prompt-level, which is what makes
+prompt injection through an uploaded column name a nuisance rather than a hazard.
+
+**Off by default.** `spec.ai.enabled` is `False`, `anthropic` lives in `requirements-ai.txt`, and the
+client is constructed lazily — so a machine with neither package nor key runs the whole pipeline and
+produces all nine artifacts. Modes 1 and 2 cost **zero tokens** unless someone deliberately opts in.
+
+**Token economics.** Measured on the reference profile: one planner call and one narrator call,
+≈21K tokens worst case, ≈$0.42 at Opus 5 list — an order of magnitude under the 60–120K originally
+estimated, because a `RunSpec` and a facts table are both small. `count_tokens` prices the exact
+requests before either is sent; `runs/<id>/ai.json` records what was actually spent.
+
+**Failure handling:** validate → one retry with the error fed back → fall back to the deterministic
+default. In practice: prose that fails the number check twice loses its paragraph, and the section
+keeps every bullet, table and exhibit it had. The pipeline must always produce a deliverable, even
+if degraded — a partially-defaulted report beats an error page.
 
 ---
 

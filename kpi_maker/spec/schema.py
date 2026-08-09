@@ -204,6 +204,52 @@ class DesignSpec(SpecModel):
 
 
 # --------------------------------------------------------------------------
+# AI — the one part of the pipeline that is not deterministic
+# --------------------------------------------------------------------------
+
+# The narrator's default beat. Sections whose content is a table or a chart
+# grid do not want a paragraph in front of them, and the appendix is a
+# reference rather than an argument. Narrating everything was the obvious first
+# guess and it reads as padding.
+NARRATABLE_SECTIONS = ["exec_summary", "diagnostic", "benchmarks", "risks",
+                       "actions"]
+
+
+class AISpec(SpecModel):
+    """Whether, and how, a model is allowed near this run.
+
+    **Off by default, and that is a contract rather than a shy default.** A
+    preset click, a survey run and a CLI invocation all cost zero tokens unless
+    somebody deliberately turns this on, which is what keeps ROADMAP M7's
+    "Modes 1 and 2 stay at zero" literally true. It is also what makes the
+    no-regression gate provable: with `enabled` false the client is never
+    constructed, so every artifact is byte-identical to the run before this
+    block existed.
+
+    The two agents this gates are deliberately unequal in reach. The narrator
+    writes prose that is checked number by number against `facts.csv` before it
+    is allowed into a deliverable. The planner only ever proposes a patch to
+    this document, which the user reviews hunk by hunk. Neither can move a
+    number.
+    """
+    enabled: bool = False
+    model: str = "claude-opus-5"
+    # None -> NARRATABLE_SECTIONS. A list selects; an empty list narrates
+    # nothing, which is a legitimate way to buy the planner without the
+    # narrator.
+    narrate_sections: Optional[List[str]] = None
+    max_paragraphs: int = Field(default=1, ge=1, le=3)
+    # A hard ceiling on what one run may spend, checked against the pre-flight
+    # estimate before the first call rather than discovered afterwards.
+    max_tokens_per_run: int = Field(default=150_000, ge=1_000)
+
+    def resolve_narrate_sections(self) -> List[str]:
+        if self.narrate_sections is None:
+            return list(NARRATABLE_SECTIONS)
+        return list(self.narrate_sections)
+
+
+# --------------------------------------------------------------------------
 # Outputs — which artifacts to actually produce
 # --------------------------------------------------------------------------
 
@@ -252,6 +298,7 @@ class RunSpec(SpecModel):
     analysis: AnalysisSpec = Field(default_factory=AnalysisSpec)
     design: DesignSpec = Field(default_factory=DesignSpec)
     outputs: OutputSpec = Field(default_factory=OutputSpec)
+    ai: AISpec = Field(default_factory=AISpec)
 
     # -- derivation: the one place a None default becomes a real value -----
 
@@ -296,3 +343,15 @@ class RunSpec(SpecModel):
         when the profile changes, and several of them do.
         """
         return getattr(self, name)
+
+
+# Sections an automated patch is allowed to touch.
+#
+# `profile` is excluded on purpose, and it is the most important line in this
+# module. The planner's job is to change what the pipeline DOES; changing who
+# the company is would change the numbers, and the one rule this codebase does
+# not bend is that the model never produces a number. `version` is excluded for
+# the duller reason that a schema migration is not a suggestion.
+PATCHABLE_SECTIONS = frozenset({
+    "source", "cleaning", "model", "metrics", "analysis", "design", "outputs",
+})

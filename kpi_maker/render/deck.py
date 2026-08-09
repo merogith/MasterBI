@@ -48,7 +48,24 @@ class Deck:
         self.blank = self.prs.slide_layouts[6]
 
     def _slide(self):
-        return self.prs.slides.add_slide(self.blank)
+        slide = self.prs.slides.add_slide(self.blank)
+        self.last = slide
+        return slide
+
+    def speaker_note(self, paragraphs: List[str]) -> None:
+        """Narrative prose belongs in the notes pane, not on the slide.
+
+        This is the one place the deck treats the AI paragraph differently from
+        the PDF and the DOCX, and it is not a compromise. Connective prose is
+        what a presenter *says* while a slide is up — putting it on the slide
+        would mean either shrinking it to a bullet, which loses the connective
+        work, or a wall of text on a deck whose whole discipline is one message
+        per slide. The notes pane is where that sentence already lives.
+        """
+        slide = getattr(self, "last", None)
+        if slide is None or not paragraphs:
+            return
+        slide.notes_slide.notes_text_frame.text = "\n\n".join(paragraphs)
 
     def _text(self, slide, text, left, top, width, height, size=14, bold=False,
               color="text_primary", align=PP_ALIGN.LEFT, wrap=True):
@@ -286,15 +303,18 @@ def render_deck(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                 images: Dict[str, bytes], specs: List, period: str = "",
                 tokens: Optional[Dict[str, str]] = None,
                 section_order: Optional[List[str]] = None,
-                logo=None) -> Path:
+                logo=None,
+                narrative: Optional[Dict[str, List[str]]] = None) -> Path:
     deck = Deck(profile, tokens)
     deck.logo = logo
     cur = profile.identity.currency
 
     ctx = SectionContext(
         profile=profile, kpi_set=kpi_set, results=results, findings=findings,
-        images=images, specs=specs, period=period)
-    contents = build_sections(ctx, section_order, limits=DECK_LIMITS)
+        images=images, specs=specs, period=period,
+        narrated=sorted(narrative or {}))
+    contents = build_sections(ctx, section_order, limits=DECK_LIMITS,
+                              narrative=narrative)
     enabled = {c.id for c in contents}
     by_id = {c.id: c for c in contents}
     exhibits_done = False
@@ -338,6 +358,10 @@ def render_deck(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                     [[row[0][:110], row[2], row[3], row[4]] for row in table.rows],
                     kicker="Recommended actions",
                     col_widths=[0.58, 0.14, 0.14, 0.14])
+
+        # Attached to whichever slide this section finished on, which is the
+        # one a presenter will be looking at when they need the sentence.
+        deck.speaker_note(content.narrative)
 
     appendix = by_id.get("appendix")
     if appendix is not None:

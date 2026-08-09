@@ -213,32 +213,38 @@ on everything.
 and the same nine artifacts.
 
 ## M7 · AI Builder (Mode 3)
-**2 weeks · built on the Claude Agent SDK**
+**Mostly done.** Shipped as P5 of the modular-pipeline programme — two agents,
+not seven, because the phases before it absorbed the other five.
 
-Your instinct — a planning AI plus a technical AI — is right. The refinement:
-**the executor should not be an LLM.**
+| Agent | As planned | As built |
+|---|---|---|
+| **Intake** | Sonnet → `CompanyProfile` | **deterministic** — the survey, plus `ingest/derive.py` reading revenue, customer count, currency and date range straight off the upload. A conversational front door is still open (see below). |
+| **Mapper** | Sonnet → `mapping.json` | **deterministic** — `ingest/mapping.py` scores name similarity, dtype compatibility and value distribution, and reports confidence per field. No model needed. |
+| **Planner** | Opus → `plan.json` | **`ai/planner.py`** → a **RunSpec patch**, not a new format. Reviewed hunk by hunk in the studio. `profile` is unpatchable. |
+| **Executor** | code, not a model | the P0 stage graph. |
+| **Transform** | Sonnet → sandboxed pandas | **P1's formula engine.** Users write the formula; no subprocess, no generated code. |
+| **Narrator** | Opus → prose | **`ai/narrator.py`**, a cacheable pipeline stage. Sees `facts_table()` and the findings; never a data row. |
+| **Critic** | Sonnet → pass/fail | **`ai/verify.py`, code not a model.** "Every number in the prose appears in the facts table" is decidable by arithmetic; an LLM would add cost, latency and non-determinism to a check that string matching settles exactly. Same refinement M7 already made for the executor, one row further down. |
 
-| Agent | Model | Output | Guard |
-|---|---|---|---|
-| **Intake** | Sonnet | `CompanyProfile` | schema-enforced tool call |
-| **Mapper** | Sonnet | `mapping.json` + confidence | deterministic matcher runs first |
-| **Planner** | Opus | `plan.json` — packs, sections, exhibits | validated against schema |
-| **Executor** | *code, not a model* | all artifacts | — |
-| **Transform** | Sonnet | sandboxed pandas fn, only when the plan needs something the library lacks | restricted subprocess, no network/fs |
-| **Narrator** | Opus | prose sections | sees ONLY the facts table |
-| **Critic** | Sonnet | pass/fail + fixes | every number in the prose must appear in the facts table |
+- [x] `kpi_maker/ai/` — `client · meter · planner · narrator · verify`, schema
+      at every boundary, prompts as reviewable files.
+- [x] **Failure policy:** validate → one retry with the error fed back → fall
+      back to the deterministic default. Held: a section whose prose fails the
+      number check twice loses its paragraph and keeps its bullets, tables and
+      exhibits.
+- [x] Token metering per run, in `runs/<id>/ai.json`, plus a `count_tokens`
+      estimate shown **before** the user commits.
+- [ ] Conversation UI: multiple-choice questions with a free-text escape.
+      Deliberately not in P5 — the survey and derivation already build profiles,
+      and a chat front door is a front-end phase rather than an AI-on-the-spec
+      one.
 
-- [ ] `agents/` — one module per agent, schema at every boundary.
-- [ ] **Failure policy:** validate → one retry with the error fed back → fall
-      back to the deterministic default. The pipeline must ALWAYS produce a
-      deliverable. A partially-defaulted report beats an error page.
-- [ ] Token metering per run, surfaced to the user before they commit.
-- [ ] Conversation UI: multiple-choice questions with a free-text escape at the
-      end, exactly as you described.
-
-**Economics:** the model never touches row-level data. Intake ~15K, Planner ~15K,
-Narrator ~20K, Critic ~15K → **~60–120K tokens, well under $1/run.** Modes 1 and
-2 stay at zero. That is the right shape for a free tier.
+**Economics:** the model never touches row-level data, and `spec.ai.enabled` is
+**False by default**, so Modes 1 and 2 stay at literal zero unless somebody
+turns this on. Measured on the reference profile: one planner call and one
+narrator call, ~21K tokens worst case, ~$0.42 at Opus 5 list — an order of
+magnitude under the 60–120K the estimate assumed, because the RunSpec and the
+facts table are both small.
 
 ---
 

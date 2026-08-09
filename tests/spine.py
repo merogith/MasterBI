@@ -128,17 +128,30 @@ def test_invalidation(tmp: Path) -> None:
          {"visualise", "dashboard"}),
         ("metrics.excluded",
          lambda s: setattr(s.metrics, "excluded", ["cac_payback_months"]),
-         {"select", "metrics", "analyse", "visualise", "dashboard",
+         {"select", "metrics", "analyse", "narrate", "visualise", "dashboard",
           "facts_csv", "json_dumps"}),
         ("source.generator.seed",
          lambda s: setattr(s.source.generator, "seed", 4242),
-         {"source", "clean", "model", "metrics", "analyse", "visualise",
-          "dashboard", "facts_csv", "json_dumps", "csv_bundle"}),
+         {"source", "clean", "model", "metrics", "analyse", "narrate",
+          "visualise", "dashboard", "facts_csv", "json_dumps", "csv_bundle"}),
         # json_dumps writes findings.json, so it is correctly downstream of a
         # change to how many findings there are.
         ("analysis.max_findings",
          lambda s: setattr(s.analysis, "max_findings", 5),
-         {"analyse", "dashboard", "json_dumps"}),
+         {"analyse", "narrate", "dashboard", "json_dumps"}),
+        # The AI section reaches narration and the renderers that carry its
+        # prose, and nothing else.
+        ("ai.enabled", lambda s: setattr(s.ai, "enabled", True),
+         {"narrate", "dashboard"}),
+        ("ai.model", lambda s: setattr(s.ai, "model", "claude-sonnet-5"),
+         {"narrate", "dashboard"}),
+        # The counterpart property, and the one that pays for the stage
+        # reading `ai` and `profile` but deliberately NOT `design`: restyling a
+        # report must not re-buy its prose. `visualise` and `dashboard` go
+        # dirty; `narrate` does not.
+        ("design.brand.primary — narration is reused",
+         lambda s: setattr(s.design.brand, "primary", "#7C3AED"),
+         {"visualise", "dashboard"}),
     ]
 
     for label, mutate, expected in cases:

@@ -129,6 +129,8 @@ def _draw_section(doc: Document, c: SectionContent,
     doc.add_heading(c.title, level=1)
     if c.intro:
         doc.add_paragraph(c.intro)
+    for paragraph in c.narrative:
+        doc.add_paragraph(paragraph)
 
     for b in c.bullets:
         p = doc.add_paragraph(style="List Bullet")
@@ -186,7 +188,9 @@ def render_doc(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                anomaly_notes: List[str], period: str = "",
                tokens: Optional[Dict[str, str]] = None,
                section_order: Optional[List[str]] = None,
-               logo=None, origins: Optional[Dict[str, str]] = None) -> Path:
+               logo=None, origins: Optional[Dict[str, str]] = None,
+               narrative: Optional[Dict[str, List[str]]] = None,
+               ai_notes: Optional[List[str]] = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     doc = Document()
     doc.logo = logo
@@ -199,9 +203,10 @@ def render_doc(path: Path, profile: CompanyProfile, kpi_set: KPISet,
     ctx = SectionContext(
         profile=profile, kpi_set=kpi_set, results=results, findings=findings,
         images=images, specs=specs, checks=checks,
-        anomaly_notes=anomaly_notes, period=period, origins=origins or {})
+        anomaly_notes=anomaly_notes, period=period, origins=origins or {},
+        narrated=sorted(narrative or {}), ai_notes=list(ai_notes or []))
 
-    for content in build_sections(ctx, section_order):
+    for content in build_sections(ctx, section_order, narrative=narrative):
         if content.id == "cover":
             _draw_cover(doc, content)
             continue

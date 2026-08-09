@@ -738,11 +738,16 @@ async function openStudio() {
   show('studio');
   $('#studio-company').textContent = state.summary?.company || 'Studio';
   try {
-    const [spec, options, catalog, functions] = await Promise.all([
+    const [spec, options, catalog, functions, ai] = await Promise.all([
       api(`/api/runs/${state.runId}/spec`),
       api('/api/catalog/options'),
       api('/api/catalog/kpis'),
       api('/api/catalog/functions'),
+      // Never fatal. The AI layer is optional by design, so a studio that
+      // cannot reach this endpoint shows the panel as unavailable rather than
+      // refusing to open.
+      api('/api/ai/status').catch(() => ({ available: false,
+        reason: 'the AI status endpoint is not available' })),
     ]);
     studio.ops = options.ops || [];
     studio.opLabels = Object.fromEntries(studio.ops.map((o) => [o.name, o.label]));
@@ -752,6 +757,8 @@ async function openStudio() {
     studio.catalog = catalog.kpis;
     studio.userIds = catalog.user_ids || [];
     studio.functions = functions.functions;
+    studio.ai = ai;
+    studio.aiEstimate = null;
     renderStudio();
     refreshPlan();
     loadLineage();
@@ -800,6 +807,7 @@ function renderStudio() {
   panel('design').innerHTML = designPanel();
   refreshBrandPreview();
   panel('outputs').innerHTML = outputsPanel();
+  panel('ai').innerHTML = aiPanel();
 }
 
 const panel = (name) => $(`.studio-panel[data-panel="${name}"]`);
@@ -1227,6 +1235,183 @@ function outputsPanel() {
     `<div class="toggle-grid">${boxes}</div>`);
 }
 
+/* ------------------------------------------------------------------- ai */
+
+const SECTION_LABEL = {
+  cover: 'Cover', exec_summary: 'Executive summary', scorecard: 'Scorecard',
+  diagnostic: 'Diagnostic', deep_dives: 'Deep dives', benchmarks: 'Benchmarks',
+  risks: 'Risks', actions: 'Actions', appendix: 'Appendix',
+};
+
+function aiPanel() {
+  const ai = studio.spec.ai || {};
+  const status = studio.ai || {};
+  const narratable = status.narratable_sections || [];
+  const chosen = new Set(ai.narrate_sections || narratable);
+
+  if (!status.available) {
+    // Say what is missing and what to type. An "AI unavailable" badge with no
+    // remedy is the same as no feature at all.
+    return section('AI',
+      `Off, and the pipeline does not need it — every artifact is produced
+       without a model. ${esc(status.reason || 'Not configured.')}`,
+      `<pre class="ai-setup">pip install -r requirements-ai.txt
+export ANTHROPIC_API_KEY=…</pre>`);
+  }
+
+  const boxes = narratable.map((s) => `
+    <label class="toggle">
+      <input type="checkbox" data-narrate="${esc(s)}" ${chosen.has(s) ? 'checked' : ''}>
+      <span>${esc(SECTION_LABEL[s] || s)}</span>
+    </label>`).join('');
+
+  const est = studio.aiEstimate;
+  const estimateLine = est
+    ? `Estimated at most <strong>${est.worst_case_tokens.toLocaleString()}</strong>
+       tokens, about <strong>$${est.worst_case_cost_usd.toFixed(2)}</strong> for
+       both requests. Output is assumed at the ceiling, so the real cost is
+       usually well under this.`
+    : 'Press Estimate to price both requests before spending anything on them.';
+
+  return section('AI',
+    `Off by default. The narrator writes the connective paragraph in each
+     section from the computed KPI table — never the underlying data — and
+     every figure it writes is checked against that table before it is
+     printed. The planner proposes changes to this configuration, which you
+     review one at a time. Neither can change a number.`,
+    `<label class="toggle ai-master">
+       <input type="checkbox" data-spec-bool="ai.enabled" ${ai.enabled ? 'checked' : ''}>
+       <span>Write the narrative on the next run
+         <span class="toggle-sub">${esc(ai.model || status.default_model)}</span></span>
+     </label>
+
+     <h3 class="studio-sub">Sections to narrate</h3>
+     <div class="toggle-grid">${boxes}</div>
+
+     <h3 class="studio-sub">Cost</h3>
+     <p class="hint" id="ai-estimate">${estimateLine}</p>
+     <button class="ghost" id="ai-estimate-btn">Estimate</button>
+
+     <h3 class="studio-sub">Let the AI configure this run</h3>
+     <p class="hint">Proposes changes to the KPIs, sections, exhibits,
+       detectors and outputs — never to the profile. You accept or reject each
+       one before anything is written.</p>
+     <button class="ghost" id="ai-plan-btn">Suggest changes</button>`);
+}
+
+/* The proposed patch, held here between "suggest" and "apply". Nothing in it
+   reaches the spec until the user presses Apply on the rows they ticked. */
+let plan = { changes: [], chosen: new Set() };
+
+async function requestPlan() {
+  const btn = $('#ai-plan-btn');
+  btn.disabled = true;
+  btn.textContent = 'Thinking…';
+  try {
+    const result = await api(`/api/ai/plan/${state.runId}`, { method: 'POST' });
+    plan.changes = result.changes || [];
+    // Pre-tick the legal ones: the common case is accepting most of a good
+    // patch, and starting from nothing ticked makes the reviewer do clerical
+    // work before they can do the actual review.
+    plan.chosen = new Set(plan.changes.map((c, i) => (c.ok ? i : -1))
+      .filter((i) => i >= 0));
+    openPlanModal(result.summary || '');
+  } catch (err) {
+    toast('Could not get a plan: ' + err.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Suggest changes';
+  }
+}
+
+const showValue = (v) => (v === undefined || v === null
+  ? '—' : (typeof v === 'string' ? v : JSON.stringify(v)));
+
+function openPlanModal(summary) {
+  $('#plan-summary').textContent = summary;
+  $('#plan-changes').innerHTML = plan.changes.length
+    ? plan.changes.map((c, i) => `
+      <div class="plan-change ${c.ok ? '' : 'plan-refused'}">
+        <label class="plan-pick">
+          <input type="checkbox" data-plan="${i}"
+            ${c.ok ? '' : 'disabled'} ${plan.chosen.has(i) ? 'checked' : ''}>
+          <code>${esc(c.path)}</code>
+        </label>
+        <div class="plan-diff">
+          <span class="plan-before${
+            c.before === null || c.before === undefined ? ' plan-unset' : ''
+          }">${esc(showValue(c.before))}</span>
+          <span class="plan-arrow">→</span>
+          <span class="plan-after">${esc(showValue(c.value))}</span>
+        </div>
+        <p class="plan-why">${esc(c.rationale || '')}</p>
+        ${c.ok ? '' : `<p class="plan-reject">Refused — ${esc(c.rejected)}</p>`}
+      </div>`).join('')
+    : '<p class="hint">The planner proposed no changes.</p>';
+  refreshPlanCount();
+  $('#plan-scrim').hidden = false;
+  $('#plan-modal').hidden = false;
+}
+
+function closePlanModal() {
+  $('#plan-scrim').hidden = true;
+  $('#plan-modal').hidden = true;
+}
+
+function refreshPlanCount() {
+  const refused = plan.changes.filter((c) => !c.ok).length;
+  $('#plan-count').textContent =
+    `${plan.chosen.size} of ${plan.changes.length} selected`
+    + (refused ? ` · ${refused} refused` : '');
+  $('#plan-apply').disabled = plan.chosen.size === 0;
+}
+
+async function applyPlan() {
+  const changes = [...plan.chosen].sort((a, b) => a - b)
+    .map((i) => ({ path: plan.changes[i].path, value: plan.changes[i].value }));
+  try {
+    await api(`/api/ai/apply/${state.runId}`, {
+      method: 'POST', body: JSON.stringify({ changes }),
+    });
+    // Re-read rather than patching the local copy: the server validated and
+    // may have normalised, and the studio should show what is actually stored.
+    studio.spec = await api(`/api/runs/${state.runId}/spec`);
+    renderStudio();
+    refreshBrandPreview();
+    refreshPlan();
+    closePlanModal();
+    toast(`Applied ${changes.length} change${changes.length === 1 ? '' : 's'}.`);
+  } catch (err) {
+    toast('Could not apply: ' + err.message, true);
+  }
+}
+
+async function estimateAi() {
+  const btn = $('#ai-estimate-btn');
+  btn.disabled = true;
+  try {
+    studio.aiEstimate = await api(`/api/ai/estimate/${state.runId}`,
+      { method: 'POST' });
+    panel('ai').innerHTML = aiPanel();
+  } catch (err) {
+    toast('Could not estimate: ' + err.message, true);
+  } finally {
+    if ($('#ai-estimate-btn')) $('#ai-estimate-btn').disabled = false;
+  }
+}
+
+$('#plan-close').addEventListener('click', closePlanModal);
+$('#plan-cancel').addEventListener('click', closePlanModal);
+$('#plan-scrim').addEventListener('click', closePlanModal);
+$('#plan-apply').addEventListener('click', applyPlan);
+$('#plan-changes').addEventListener('change', (e) => {
+  const box = e.target.closest('[data-plan]');
+  if (!box) return;
+  const i = Number(box.dataset.plan);
+  box.checked ? plan.chosen.add(i) : plan.chosen.delete(i);
+  refreshPlanCount();
+});
+
 /* ------------------------------------------------------------- editing */
 
 function setPath(obj, path, value) {
@@ -1265,6 +1450,16 @@ panelDelegate('change', (e) => {
     const set = new Set(studio.spec.outputs.artifacts || all);
     el.checked ? set.add(el.dataset.artifact) : set.delete(el.dataset.artifact);
     studio.spec.outputs.artifacts = all.filter((a) => set.has(a));
+    return queuePatch();
+  }
+  if (el.dataset.narrate) {
+    const all = (studio.ai || {}).narratable_sections || [];
+    const set = new Set(studio.spec.ai.narrate_sections || all);
+    el.checked ? set.add(el.dataset.narrate) : set.delete(el.dataset.narrate);
+    // Written out in the registry's order, not click order, so the stored
+    // spec is stable and the cache key does not move when a user unticks and
+    // re-ticks the same box.
+    studio.spec.ai.narrate_sections = all.filter((s) => set.has(s));
     return queuePatch();
   }
   if (el.dataset.specBool) {
@@ -1324,6 +1519,8 @@ panelDelegate('click', (e) => {
   }
   if (e.target.closest('#kpi-add')) return openFormulaEditor();
   if (e.target.closest('#col-add')) return addCalculatedColumn();
+  if (e.target.closest('#ai-plan-btn')) return requestPlan();
+  if (e.target.closest('#ai-estimate-btn')) return estimateAi();
 
   const move = e.target.closest('[data-op-move]');
   const toggle = e.target.closest('[data-op-toggle]');

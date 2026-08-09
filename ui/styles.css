@@ -679,6 +679,36 @@ tbody tr:hover { background: var(--accent-soft); }
 /* ---------------------------------------------------- Studio: design panel */
 .studio-sub { font-size: 13px; font-weight: 600; margin: 22px 0 6px; }
 
+/* ---- AI panel and plan review ---- */
+.ai-setup { background: var(--raised); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px; font-size: 12.5px; margin: 0;
+  white-space: pre-wrap; color: var(--text-secondary); }
+.ai-master { margin-bottom: 4px; }
+.plan-summary { margin: 0 0 18px; color: var(--text-secondary); font-size: 14px;
+  line-height: 1.6; }
+.plan-change { border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; margin-bottom: 10px; }
+/* A refused change is shown, not hidden: a suggestion that silently vanishes
+   is indistinguishable from one that was never made. */
+.plan-refused { opacity: 0.62; }
+.plan-pick { display: flex; align-items: center; gap: 9px; cursor: pointer; }
+.plan-pick code { font-size: 12.5px; }
+.plan-diff { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  margin: 8px 0 0 25px; font-size: 12.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* A section order is one unbroken JSON token and runs past the modal edge
+   with wrapping alone; the reviewer has to be able to read the whole value
+   they are accepting. */
+.plan-diff > span { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.plan-before { color: var(--text-secondary); text-decoration: line-through; }
+/* Nothing to strike through when there was no previous value. */
+.plan-before.plan-unset { text-decoration: none; color: var(--muted); }
+.plan-arrow { color: var(--muted); }
+.plan-after { color: var(--text-primary); font-weight: 600; }
+.plan-why { margin: 7px 0 0 25px; font-size: 13px; color: var(--text-secondary);
+  line-height: 1.55; }
+.plan-reject { margin: 6px 0 0 25px; font-size: 12.5px; color: var(--serious); }
+
 .brand-preview { margin: 12px 0 4px; }
 .swatch-row { display: flex; flex-wrap: wrap; gap: 18px; margin-bottom: 10px; }
 .swatch { display: inline-flex; align-items: center; gap: 8px; font-size: 12px;

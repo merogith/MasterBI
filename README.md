@@ -260,7 +260,17 @@ out/
 ./.venv/Scripts/python.exe -m tests.spine           # RunSpec + stage graph
 ./.venv/Scripts/python.exe -m tests.formula         # the formula language
 ./.venv/Scripts/python.exe -m tests.ingest          # ingestion, cleaning, the gate
+./.venv/Scripts/python.exe -m tests.design          # colour, sections, exhibits
+./.venv/Scripts/python.exe -m tests.sector          # archetypes and the vacuity guard
+./.venv/Scripts/python.exe -m tests.ai              # the AI layer, entirely offline
 ```
+
+`tests/ai.py` needs no API key and makes no network call — the client is
+swapped for a transcript player at one module seam. A gate nobody can run is
+not a gate. Its central assertions are that with AI off no client is ever
+*constructed*, and that a single invented figure in the prose is caught, fed
+back once, and then costs that section its paragraph while the rest of the
+report stands.
 
 `tests/spine.py` asks a different question from `stress.py`: not "does the
 product lie?" but "does adjusting the pipeline do exactly what it says, and
@@ -285,14 +295,23 @@ for any company:
 
 ## The two rules the codebase enforces
 
-**1. The LLM never produces numbers or charts.** It fills the profile, plans, and
-writes prose from a pre-computed facts table. Everything numeric is deterministic
-Python. Modes 1 and 2 therefore cost zero tokens.
+**1. The LLM never produces numbers or charts.** It does two things: propose a
+patch to the run's configuration, which you review change by change and which
+cannot touch the company profile, and write the connective prose in a report
+section from a pre-computed facts table. Every figure in that prose is checked
+against the facts table by `ai/verify.py` before it is printed, and prose that
+fails is discarded rather than shown. Everything numeric is deterministic
+Python. `spec.ai.enabled` is **off by default**, so a preset, a survey run or a
+CLI invocation costs **zero tokens** unless you turn it on.
 
-**2. Nothing renders on data that fails reconciliation.** `datagen/saas.py`
-asserts twelve accounting identities — the P&L ties, ARR ties to the MRR book,
-the customer count and blended ACV match the profile — before any artifact is
-written. `ReconciliationError` is a hard stop, not a warning.
+**2. Nothing renders on data that fails reconciliation.** `kpi_maker/contract/`
+holds the identities as a registry, tagged by tier and by archetype. Tier 1 is
+definitional arithmetic — the P&L ties, ARR ties to the MRR book, checkouts
+never exceed sessions — and is a hard stop whatever the source. Tier 2 compares
+the data against what you said about yourself, and is fatal only for generated
+data, where hitting the profile is the generator's job. A *generated* archetype
+that contributes no structural checks is refused outright, so a new sector
+cannot pass the gate on an empty set.
 
 ## Environment traps worth knowing
 

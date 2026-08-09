@@ -39,9 +39,9 @@
       <button class="mode-card" data-nav="samples">
         <span class="mode-num">01</span>
         <h2>Try a sample</h2>
-        <p>Three finished companies with real stories — a churn problem, a cash
-           problem, a concentration risk. See the complete end product in
-           seconds.</p>
+        <p>Four finished companies with real stories — a churn problem, a cash
+           problem, a concentration risk, a margin problem. See the complete end
+           product in seconds, then adjust any of it in the Studio.</p>
         <span class="mode-meta">Instant · No input needed</span>
         <span class="mode-go" aria-hidden="true">→</span>
       </button>
@@ -58,10 +58,11 @@
       <button class="mode-card" data-nav="builder">
         <span class="mode-num">03</span>
         <h2>Bring your data</h2>
-        <p>Upload a spreadsheet and inspect what's in it before deciding how to
-           model it. Column profiling works today; the AI mapping layer is not
-           connected yet.</p>
-        <span class="mode-meta">Partially built · See roadmap</span>
+        <p>Upload a spreadsheet, see what's in it, clean it with an ordered
+           recipe, and map its columns onto the fact tables with a confidence
+           score per field. Anything the data cannot support is dropped with a
+           reason rather than invented.</p>
+        <span class="mode-meta">CSV or Excel · Nothing runs until you approve it</span>
         <span class="mode-go" aria-hidden="true">→</span>
       </button>
     </div>
@@ -247,6 +248,8 @@
           <span class="rail-rows">theme</span></button>
         <button class="rail-btn" data-stage="outputs">Outputs
           <span class="rail-rows">artifacts</span></button>
+        <button class="rail-btn" data-stage="ai">AI
+          <span class="rail-rows">narrative · plan</span></button>
       </aside>
 
       <div class="studio-main">
@@ -257,6 +260,7 @@
         <div class="studio-panel" data-panel="analysis"></div>
         <div class="studio-panel" data-panel="design"></div>
         <div class="studio-panel" data-panel="outputs"></div>
+        <div class="studio-panel" data-panel="ai"></div>
       </div>
     </div>
 
@@ -345,6 +349,29 @@
       <div class="modal-foot-actions">
         <button class="ghost" id="fx-cancel">Cancel</button>
         <button class="primary" id="fx-add" disabled>Add KPI</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= AI PLAN REVIEW =================
+       Every change the planner proposes is a row here, individually accepted
+       or rejected. Nothing reaches the spec until Apply is pressed. -->
+  <div class="modal-scrim" id="plan-scrim" hidden></div>
+  <div class="modal" id="plan-modal" hidden role="dialog"
+       aria-label="Review the proposed changes">
+    <div class="modal-head">
+      <h2>Proposed changes</h2>
+      <button class="ghost" id="plan-close" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="plan-summary" id="plan-summary"></p>
+      <div id="plan-changes"></div>
+    </div>
+    <div class="modal-foot">
+      <span class="hint" id="plan-count"></span>
+      <div class="modal-foot-actions">
+        <button class="ghost" id="plan-cancel">Discard</button>
+        <button class="primary" id="plan-apply" disabled>Apply selected</button>
       </div>
     </div>
   </div>

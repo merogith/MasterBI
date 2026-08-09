@@ -1,0 +1,16 @@
+# The AI layer (P5) — deliberately NOT in requirements.txt.
+#
+# `spec.ai.enabled` is False by default, so the entire pipeline runs, and every
+# one of the nine artifacts is produced, without any of this installed. The
+# only thing a machine without it cannot do is turn narration or planning on,
+# and `GET /api/ai/status` says so in a sentence rather than failing with an
+# ImportError from four frames down.
+#
+# Keeping it separate is what lets the core install stay small and lets the
+# no-regression gate assert something strong: with AI off, no client is ever
+# constructed.
+#
+#     pip install -r requirements.txt -r requirements-ai.txt
+#     export ANTHROPIC_API_KEY=...
+
+anthropic>=0.40

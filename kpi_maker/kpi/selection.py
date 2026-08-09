@@ -175,6 +175,23 @@ def _packs_for(profile: CompanyProfile) -> List[str]:
     return [profile.business_model.type.value]
 
 
+def candidates_for(profile: CompanyProfile, overrides=None) -> List[KPI]:
+    """Every KPI this company's packs define, before any selection happens.
+
+    The catalog, as against `select()`'s result. The studio needs it to offer
+    a pin/exclude list and the planner needs it to know which ids exist; both
+    were reaching for `load_library(_packs_for(...))` and would have drifted
+    the first time pack resolution changed.
+    """
+    packs = (list(overrides.packs) if overrides is not None and overrides.packs
+             else _packs_for(profile))
+    try:
+        library = load_library(packs)
+    except FileNotFoundError:
+        return []
+    return sorted(library, key=lambda k: (int(k.tier), k.id))
+
+
 def unknown_kpi_ids(profile: CompanyProfile, overrides) -> List[str]:
     """KPI ids referenced by a metrics spec that no loaded pack defines.
 

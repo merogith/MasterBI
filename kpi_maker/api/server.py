@@ -48,7 +48,7 @@ from ..design.logo import LogoError, load_logo
 from ..design.palette import derive_tokens
 from ..render.sections import REGISTRY as SECTION_REGISTRY, default_order
 from ..viz.charts import CHARTS, default_exhibits
-from ..spec.schema import ALL_ARTIFACTS, RunSpec
+from ..spec.schema import ALL_ARTIFACTS, PATCHABLE_SECTIONS, RunSpec
 from ..survey import as_json as survey_json
 from ..survey import build_profile, surprise_profile
 
@@ -754,6 +754,164 @@ def catalog_options() -> Dict[str, Any]:
         "exhibits": default_exhibits(),
         "widths": ["half", "full"],
     }
+
+
+# --------------------------------------------------------------------------
+# The AI layer. Every route here is inert unless the user has turned it on.
+# --------------------------------------------------------------------------
+
+class ChangeRequest(BaseModel):
+    """One accepted hunk from the diff review."""
+    path: str
+    value: Any = None
+
+
+class ApplyRequest(BaseModel):
+    changes: List[ChangeRequest]
+
+
+@app.get("/api/ai/status")
+def ai_status() -> Dict[str, Any]:
+    """Whether a model could run, and what it would cost per million tokens.
+
+    Answered without constructing a client, so the studio can ask on every page
+    load. When the answer is no it carries the sentence that says what to do
+    about it rather than a bare false.
+    """
+    from ..ai.client import availability
+    from ..ai.meter import PRICES
+    from ..spec.schema import NARRATABLE_SECTIONS
+
+    state = availability()
+    return {**state, "prices": {m: {"input": i, "output": o}
+                                for m, (i, o) in PRICES.items()},
+            "default_model": "claude-opus-5",
+            "narratable_sections": list(NARRATABLE_SECTIONS)}
+
+
+@app.post("/api/ai/estimate/{run_id}")
+def ai_estimate(run_id: str) -> Dict[str, Any]:
+    """Price the two requests before either is sent.
+
+    ROADMAP M7 asks for metering "surfaced to the user before they commit", and
+    a receipt after the fact is not that. This builds the exact prompts the
+    narrator and the planner would send and counts them, so the number in the
+    studio is the number that will be spent rather than a guess at it.
+    """
+    from ..ai.client import AIUnavailable, build_client
+    from ..ai.meter import estimate
+    from ..ai.narrator import build_request as narrator_request
+    from ..ai.planner import build_request as planner_request, catalog
+
+    spec = _load_spec(run_id)
+    # Built first, deliberately. Assembling the prompts means re-running the
+    # compute spine, and doing that only to discover there is no key would
+    # spend a second of the user's time to tell them something the status
+    # endpoint already knew.
+    try:
+        client = build_client(spec.ai.model)
+    except AIUnavailable as exc:
+        raise HTTPException(503, str(exc))
+
+    try:
+        payload = _run_inputs(run_id, spec)
+    except FileNotFoundError as exc:
+        raise HTTPException(409, str(exc))
+
+    requests = {
+        "plan": planner_request(spec, catalog(spec.profile)),
+        "narrate": narrator_request(
+            spec.profile, payload["results"], payload["findings"],
+            payload["contents"], payload["period"],
+            max_paragraphs=spec.ai.max_paragraphs),
+    }
+    try:
+        return estimate(client, requests, spec.ai.model)
+    except AIUnavailable as exc:
+        raise HTTPException(503, str(exc))
+
+
+@app.post("/api/ai/plan/{run_id}")
+def ai_plan(run_id: str) -> Dict[str, Any]:
+    """Ask for a RunSpec patch. Nothing is applied.
+
+    The response carries rejected changes alongside accepted ones so the studio
+    can show what the planner wanted and why it was refused — a suggestion that
+    silently disappears is indistinguishable from one that was never made.
+    """
+    from ..ai.client import AIUnavailable
+    from ..ai.planner import propose
+
+    spec = _load_spec(run_id)
+    try:
+        return propose(spec).as_dict()
+    except AIUnavailable as exc:
+        raise HTTPException(503, str(exc))
+
+
+@app.post("/api/ai/apply/{run_id}")
+def ai_apply(run_id: str, body: ApplyRequest) -> Dict[str, Any]:
+    """Write the hunks the user accepted, and report what a re-run would rebuild.
+
+    Applied here rather than by the studio assembling a nested merge patch: the
+    planner speaks in dotted paths, and turning those into nested dictionaries
+    in JavaScript would put the one step that must not go wrong in the layer
+    with no schema. `apply_changes` validates, so an accepted set that does not
+    compose is a 422 and not a broken spec on disk.
+    """
+    from ..ai.planner import Change, apply_changes
+
+    current = _load_spec(run_id)
+    changes = [Change(path=c.path, value=c.value) for c in body.changes]
+    illegal = [c.path for c in changes
+               if c.path.split(".")[0] not in PATCHABLE_SECTIONS]
+    if illegal:
+        raise HTTPException(422, f"not patchable: {', '.join(illegal)}")
+    try:
+        merged = apply_changes(current, changes)
+    except Exception as exc:                             # noqa: BLE001
+        raise HTTPException(422, str(exc))
+    return put_spec(run_id, json.loads(merged.model_dump_json()))
+
+
+@app.get("/api/ai/usage/{run_id}")
+def ai_usage(run_id: str) -> Dict[str, Any]:
+    """What this run actually spent, or an empty report if it spent nothing."""
+    path = RUNS_DIR / run_id / "ai.json"
+    if not path.exists():
+        return {"calls": 0, "total_tokens": 0, "estimated_cost_usd": 0.0,
+                "notes": [], "detail": []}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _run_inputs(run_id: str, spec: RunSpec) -> Dict[str, Any]:
+    """Recompute the compute spine for a finished run, without rendering.
+
+    The estimate needs the same results, findings and section briefs the
+    narrator would see, and the stage cache is process-local — a server
+    restarted since the run has nothing to reuse. Running the compute half
+    costs ~10% of a full run (measured in P0) and is the honest way to price
+    the request that will actually be sent.
+    """
+    from ..pipeline.runner import execute
+    from ..render.sections import SectionContext, build as build_sections
+
+    run_dir = RUNS_DIR / run_id
+    if not run_dir.exists():
+        raise FileNotFoundError("Run not found")
+    # `json_dumps` is what pulls `analyse` into the walk. Asking for
+    # `facts_csv` alone stops at `metrics` — the graph pruning correctly, and
+    # leaving the findings this needs unbuilt.
+    result = execute(spec, run_dir, artifacts=["facts_csv", "json_dumps"],
+                     uploads_dir=UPLOADS_DIR)
+    values = result.values
+    ctx = SectionContext(
+        profile=values["resolve"], kpi_set=values["select"],
+        results=values["metrics"], findings=values["analyse"],
+        period="")
+    wanted = spec.ai.resolve_narrate_sections()
+    return {"results": values["metrics"], "findings": values["analyse"],
+            "contents": build_sections(ctx, wanted), "period": ""}
 
 
 class BrandRequest(BaseModel):

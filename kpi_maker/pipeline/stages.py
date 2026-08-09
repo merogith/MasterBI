@@ -164,6 +164,78 @@ def _analyse(ctx) -> List[Any]:
                       spec=ctx.spec.analysis)
 
 
+@stage("narrate", needs=("analyse", "select", "metrics"),
+       reads=("profile", "ai"), label="Writing the narrative")
+def _narrate(ctx) -> Dict[str, Any]:
+    """AI prose per section — the only stage that is not deterministic.
+
+    Two things about where it sits in the graph.
+
+    It **reads `ai` and `profile`, not `design`.** Narration is keyed on what
+    the numbers say, not on how the report is laid out, so changing a brand
+    colour or reordering sections reuses the cached prose instead of buying it
+    again. Section selection is applied downstream, where the renderers already
+    drop content for sections they are not drawing.
+
+    And it **returns an empty result rather than being pruned** when AI is off.
+    A stage that vanishes from the graph would change every downstream cache
+    key and make "the default run is byte-identical" a claim about the cache
+    rather than about the output. Two empty containers cost nothing and keep
+    the graph the same shape either way.
+
+    The notes ride along with the prose because they are cached together: on a
+    re-run that reuses this stage, "narrative was dropped for the risks
+    section" has to survive, or the appendix would quietly stop explaining a
+    gap that is still there.
+    """
+    empty: Dict[str, Any] = {"sections": {}, "notes": []}
+    ai = ctx.spec.ai
+    wanted = ai.resolve_narrate_sections() if ai.enabled else []
+    if not wanted:
+        return empty
+
+    # Imported here, not at module scope. The AI package is the only part of
+    # the pipeline with an optional third-party dependency behind it, and a run
+    # that never enables it should never touch the import.
+    from ..render.sections import SectionContext, build as build_sections
+    from ..ai.meter import Meter
+    from ..ai.narrator import narrate
+
+    section_ctx = SectionContext(
+        profile=ctx.get("resolve"), kpi_set=ctx.get("select"),
+        results=ctx.get("metrics"), findings=ctx.get("analyse"),
+        checks=ctx.get("source").checks if ctx.spec.source.kind.value != "upload"
+        else [],
+        period=ctx.period, origins=ctx.origins or {})
+    # Built here only for the briefs the narrator is shown. Cheap — every
+    # section function is selection and sorting over lists already in memory —
+    # and it is what lets the prompt say "this section already contains these
+    # five bullets, frame them" instead of asking for prose in the dark.
+    contents = build_sections(section_ctx, wanted)
+
+    meter = Meter()
+    try:
+        narrative, meter = narrate(
+            ctx.get("resolve"), ctx.get("metrics"), ctx.get("analyse"),
+            contents, ctx.period, spec=ai, meter=meter)
+    except Exception as exc:                     # noqa: BLE001
+        # The pipeline must ALWAYS produce a deliverable (ARCHITECTURE §5).
+        # An unexpected failure in the one non-deterministic stage is exactly
+        # the case that rule was written for, so it degrades to no prose and
+        # says why rather than taking the report down with it.
+        narrative = {}
+        meter.note(f"Narration failed and was skipped: {exc}")
+
+    meter.write(ctx.out_dir)
+    for note in meter.notes:
+        ctx.say(f"  WARNING   {note}")
+    if narrative:
+        ctx.say(f"  Narrated  {len(narrative)} section(s), "
+                f"{meter.spent:,} tokens, ~${meter.cost():.2f}")
+    return {"sections": narrative, "notes": list(meter.notes),
+            "usage": meter.summary()}
+
+
 def _logo(ctx):
     """The brand logo, loaded once per run.
 
@@ -175,6 +247,20 @@ def _logo(ctx):
         cached = load_logo(ctx.spec.design.brand.logo_path, ctx.uploads_dir)
         object.__setattr__(ctx, "_logo_cache", cached)
     return cached
+
+
+def _narration(ctx) -> Dict[str, Any]:
+    """The narrate stage's output, or nothing if it was pruned.
+
+    A caller can ask for `--only dashboard`, and `required_stages` walks back
+    from artifacts, so `narrate` is present whenever a renderer needs it. This
+    guard covers the direct-call path used by the tests and by
+    `tools/build_pages.py`, where a renderer may be exercised on its own.
+    """
+    try:
+        return ctx.get("narrate") or {}
+    except KeyError:
+        return {}
 
 
 def _palettes(ctx) -> Dict[str, Dict[str, str]]:
@@ -225,7 +311,8 @@ def _charts_png(ctx) -> Dict[str, bytes]:
                                tokens=_palettes(ctx)["light"])
 
 
-@stage("dashboard", needs=("visualise", "analyse", "select", "model", "source"),
+@stage("dashboard", needs=("visualise", "analyse", "select", "model", "source",
+                           "narrate"),
        reads=("profile", "design"),
        artifact="dashboard", label="Rendering the dashboard")
 def _dashboard(ctx):
@@ -239,6 +326,7 @@ def _dashboard(ctx):
             specs_light=specs["light"], specs_dark=specs["dark"],
             tokens_light=_palettes(ctx)["light"],
             tokens_dark=_palettes(ctx)["dark"], logo=_logo(ctx),
+            narrative=_narration(ctx).get("sections"),
         ),
         encoding="utf-8",
     )
@@ -256,7 +344,8 @@ def _workbook(ctx):
     return path
 
 
-@stage("report_pdf", needs=("charts_png", "analyse", "select", "visualise", "source"),
+@stage("report_pdf", needs=("charts_png", "analyse", "select", "visualise",
+                            "source", "narrate"),
        reads=("profile", "design"),
        artifact="report_pdf", label="Rendering the PDF report")
 def _report_pdf(ctx):
@@ -267,11 +356,14 @@ def _report_pdf(ctx):
                   [a.description for a in ctx.get("source").anomalies], ctx.period,
                   tokens=_palettes(ctx)["light"],
                   section_order=ctx.spec.design.sections, logo=_logo(ctx),
-                  origins=ctx.origins)
+                  origins=ctx.origins,
+                  narrative=_narration(ctx).get("sections"),
+                  ai_notes=_narration(ctx).get("notes"))
     return path
 
 
-@stage("deck_pptx", needs=("charts_png", "analyse", "select", "visualise"),
+@stage("deck_pptx", needs=("charts_png", "analyse", "select", "visualise",
+                           "narrate"),
        reads=("profile", "design"),
        artifact="deck_pptx", label="Building the deck")
 def _deck_pptx(ctx):
@@ -280,11 +372,13 @@ def _deck_pptx(ctx):
                 ctx.get("analyse"), ctx.get("charts_png"),
                 ctx.get("visualise")["light"], ctx.period,
                 tokens=_palettes(ctx)["light"],
-                section_order=ctx.spec.design.sections, logo=_logo(ctx))
+                section_order=ctx.spec.design.sections, logo=_logo(ctx),
+                narrative=_narration(ctx).get("sections"))
     return path
 
 
-@stage("doc_docx", needs=("charts_png", "analyse", "select", "visualise", "source"),
+@stage("doc_docx", needs=("charts_png", "analyse", "select", "visualise",
+                          "source", "narrate"),
        reads=("profile", "design"),
        artifact="doc_docx", label="Writing the editable report")
 def _doc_docx(ctx):
@@ -295,7 +389,9 @@ def _doc_docx(ctx):
                [a.description for a in ctx.get("source").anomalies], ctx.period,
                tokens=_palettes(ctx)["light"],
                section_order=ctx.spec.design.sections, logo=_logo(ctx),
-               origins=ctx.origins)
+               origins=ctx.origins,
+               narrative=_narration(ctx).get("sections"),
+               ai_notes=_narration(ctx).get("notes"))
     return path
 
 

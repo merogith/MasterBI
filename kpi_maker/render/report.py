@@ -275,6 +275,23 @@ WIDTHS = {
 }
 
 
+def _draw_narrative(pdf: PDFReport, c: SectionContent) -> None:
+    """The AI paragraph, in ordinary body style.
+
+    Deliberately not boxed, tinted or badged. Every figure in it was checked
+    against the same facts table the scorecard is built from, so setting it
+    apart would imply a lower standard of evidence than the sentence beside it
+    — and a disclaimer box in the middle of a board report reads as a defect.
+    Where it came from is disclosed in the methodology appendix, alongside the
+    measured-versus-modelled note, which is where a reader goes to ask that
+    kind of question.
+    """
+    for paragraph in c.narrative:
+        pdf.body(paragraph)
+    if c.narrative:
+        pdf.ln(1)
+
+
 def _draw_cover(pdf: PDFReport, c: SectionContent) -> None:
     pdf.add_page()
     if pdf.logo is not None:
@@ -323,6 +340,7 @@ def _draw_bullets(pdf: PDFReport, c: SectionContent) -> None:
     if c.intro:
         pdf.body(c.intro)
         pdf.ln(1)
+    _draw_narrative(pdf, c)
     if not c.bullets:
         if c.empty:
             pdf.body(c.empty)
@@ -347,6 +365,7 @@ def _draw_scorecard(pdf: PDFReport, c: SectionContent) -> None:
     pdf.add_page()
     pdf.h1(c.title)
     pdf.body(c.intro)
+    _draw_narrative(pdf, c)
     for table in c.tables:
         if table.group:
             pdf.h2(table.group)
@@ -365,6 +384,7 @@ def _draw_exhibits(pdf: PDFReport, c: SectionContent, gap: float = 0.0) -> None:
     pdf.h1(c.title)
     if c.intro:
         pdf.body(c.intro)
+    _draw_narrative(pdf, c)
     for e in c.exhibits:
         pdf.exhibit(pdf.images.get(e.id), e.title, e.caption, e.note)
         for label, text in (("Observation", e.observation),
@@ -383,6 +403,7 @@ def _draw_benchmarks(pdf: PDFReport, c: SectionContent) -> None:
     pdf.add_page()
     pdf.h1(c.title)
     pdf.body(c.intro)
+    _draw_narrative(pdf, c)
     for e in c.exhibits:
         pdf.exhibit(pdf.images.get(e.id), e.title, e.caption, e.note)
     for table in c.tables:
@@ -395,6 +416,7 @@ def _draw_actions(pdf: PDFReport, c: SectionContent) -> None:
     pdf.add_page()
     pdf.h1(c.title)
     pdf.body(c.intro)
+    _draw_narrative(pdf, c)
     if not c.tables:
         pdf.body(c.empty)
         return
@@ -461,7 +483,9 @@ def render_report(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                   anomaly_notes: List[str], period: str = "",
                   tokens: Optional[Dict[str, str]] = None,
                   section_order: Optional[List[str]] = None,
-                  logo=None, origins: Optional[Dict[str, str]] = None) -> Path:
+                  logo=None, origins: Optional[Dict[str, str]] = None,
+                  narrative: Optional[Dict[str, List[str]]] = None,
+                  ai_notes: Optional[List[str]] = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     pdf = PDFReport(profile, tokens)
     pdf.images = images
@@ -470,8 +494,9 @@ def render_report(path: Path, profile: CompanyProfile, kpi_set: KPISet,
     ctx = SectionContext(
         profile=profile, kpi_set=kpi_set, results=results, findings=findings,
         images=images, specs=specs, checks=checks,
-        anomaly_notes=anomaly_notes, period=period, origins=origins or {})
-    for content in build_sections(ctx, section_order):
+        anomaly_notes=anomaly_notes, period=period, origins=origins or {},
+        narrated=sorted(narrative or {}), ai_notes=list(ai_notes or []))
+    for content in build_sections(ctx, section_order, narrative=narrative):
         DRAW[content.id](pdf, content)
 
     pdf.output(str(path))
