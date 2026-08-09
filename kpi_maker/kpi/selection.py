@@ -19,7 +19,7 @@ import yaml
 
 from ..profile.schema import Audience, CompanyProfile, KpiExperience
 from .expr import evaluate
-from .schema import KPI, KPISet, Perspective, Tier, Timing
+from .schema import KPI, AlertBands, KPISet, Perspective, Tier, Timing
 
 LIBRARY_DIR = Path(__file__).parent / "library"
 
@@ -80,8 +80,8 @@ NORTH_STAR_BY_MODEL = {
 }
 
 
-def load_library(packs: Optional[List[str]] = None) -> List[KPI]:
-    """Load and validate KPI record sheets from YAML."""
+def _load_packs(packs: Optional[List[str]] = None) -> List[KPI]:
+    """Load and validate KPI record sheets from the shipped library."""
     # A pack may span several files (`saas.yaml`, `saas_product.yaml`, ...) so
     # a sector library can grow without any one file becoming unreviewable.
     if packs:
@@ -95,8 +95,17 @@ def load_library(packs: Optional[List[str]] = None) -> List[KPI]:
     else:
         files = sorted(LIBRARY_DIR.glob("*.yaml"))
 
+    # A duplicate id WITHIN one sector's packs is an authoring bug and still
+    # raises. Across sectors it is correct and expected: a retailer's gross
+    # margin and a software vendor's are the same definition with different
+    # benchmarks — p50 0.42 against 0.75 — and forcing one record on both would
+    # tell a healthy retailer it is failing. So the guard applies to a
+    # requested pack group; the load-everything view takes the first and
+    # records the rest.
+    scoped = bool(packs)
+
     kpis: List[KPI] = []
-    seen = set()
+    seen: Dict[str, str] = {}
     for path in files:
         if not path.exists():
             raise FileNotFoundError(f"KPI pack not found: {path}")
@@ -104,14 +113,144 @@ def load_library(packs: Optional[List[str]] = None) -> List[KPI]:
         for entry in raw:
             kpi = KPI(**entry)   # pydantic validates the record sheet is complete
             if kpi.id in seen:
-                raise ValueError(f"duplicate KPI id {kpi.id!r} in {path.name}")
-            seen.add(kpi.id)
+                if scoped:
+                    raise ValueError(
+                        f"duplicate KPI id {kpi.id!r} in {path.name} — already "
+                        f"defined in {seen[kpi.id]}. Two files in the same pack "
+                        f"may not define the same KPI.")
+                continue
+            seen[kpi.id] = path.name
             kpis.append(kpi)
     return kpis
 
 
+def load_library(packs: Optional[List[str]] = None,
+                 include_user: bool = True) -> List[KPI]:
+    """The shipped packs, with stored user KPIs layered on top.
+
+    A user KPI sharing an id with a library one **replaces** it. "Your CAC
+    payback is wrong, here is how we calculate it" is a real and reasonable
+    thing to want, and it is the whole point of letting people define metrics.
+    """
+    return _load_with_overrides(packs, include_user)[0]
+
+
+def _load_with_overrides(packs: Optional[List[str]],
+                         include_user: bool = True) -> Tuple[List[KPI], Dict[str, str]]:
+    """(kpis, notes) where notes explains each user replacement or load failure."""
+    kpis = _load_packs(packs)
+    if not include_user:
+        return kpis, {}
+
+    from .user_library import load_user_kpis
+    user_kpis, broken = load_user_kpis()
+
+    notes: Dict[str, str] = {
+        kpi_id: f"user KPI could not be loaded: {reason}"
+        for kpi_id, reason in broken.items()
+    }
+
+    by_id = {k.id: i for i, k in enumerate(kpis)}
+    for kpi in user_kpis:
+        if kpi.id in by_id:
+            kpis[by_id[kpi.id]] = kpi
+            notes[kpi.id] = "user definition replaces the library record sheet"
+        else:
+            by_id[kpi.id] = len(kpis)
+            kpis.append(kpi)
+    return kpis, notes
+
+
+def load_all_known() -> List[KPI]:
+    """Every KPI that exists anywhere — every pack, plus user definitions.
+
+    The resolution universe for formula references. A formula may reference a
+    KPI the selection engine did not pick, and that should compute rather than
+    fail; see `metrics/engine.py:_Evaluator`.
+    """
+    return load_library(None, include_user=True)
+
+
 def _packs_for(profile: CompanyProfile) -> List[str]:
     return [profile.business_model.type.value]
+
+
+def candidates_for(profile: CompanyProfile, overrides=None) -> List[KPI]:
+    """Every KPI this company's packs define, before any selection happens.
+
+    The catalog, as against `select()`'s result. The studio needs it to offer
+    a pin/exclude list and the planner needs it to know which ids exist; both
+    were reaching for `load_library(_packs_for(...))` and would have drifted
+    the first time pack resolution changed.
+    """
+    packs = (list(overrides.packs) if overrides is not None and overrides.packs
+             else _packs_for(profile))
+    try:
+        library = load_library(packs)
+    except FileNotFoundError:
+        return []
+    return sorted(library, key=lambda k: (int(k.tier), k.id))
+
+
+def unknown_kpi_ids(profile: CompanyProfile, overrides) -> List[str]:
+    """KPI ids referenced by a metrics spec that no loaded pack defines.
+
+    Exposed so an editor can reject a bad id at the moment it is typed. Finding
+    out at run time instead means the studio accepts the edit, the re-run fails
+    somewhere else, and the user has to guess which field was at fault.
+    """
+    if overrides is None:
+        return []
+    packs = list(overrides.packs) if overrides.packs else _packs_for(profile)
+    try:
+        known = {k.id for k in load_library(packs)}
+        known |= {e.get("id", "") for e in (overrides.custom or [])}
+    except FileNotFoundError:
+        return []
+    referenced = set(overrides.pinned) | set(overrides.excluded) | set(overrides.overrides)
+    return sorted(referenced - known)
+
+
+def _apply_overrides(library: List[KPI], overrides) -> List[KPI]:
+    """Layer the user's per-KPI edits over the library record sheets.
+
+    Applied before scoring, not after, because `tier` feeds the selection score
+    and the tier caps. Promoting a KPI to L1 has to actually change what gets
+    picked, or the control is decorative.
+    """
+    if overrides is None or not overrides.overrides:
+        return library
+
+    out: List[KPI] = []
+    for kpi in library:
+        edit = overrides.overrides.get(kpi.id)
+        if edit is None:
+            out.append(kpi)
+            continue
+
+        changes: Dict[str, object] = {}
+        if edit.target is not None:
+            changes["target_override"] = edit.target
+        if edit.tier is not None:
+            changes["tier"] = Tier(edit.tier)
+        if edit.alert_green is not None or edit.alert_red is not None:
+            base = kpi.alert_bands
+            green = edit.alert_green if edit.alert_green is not None else (
+                base.green if base else None)
+            red = edit.alert_red if edit.alert_red is not None else (
+                base.red if base else None)
+            if green is None or red is None:
+                raise ValueError(
+                    f"{kpi.id}: setting one alert band requires the other — "
+                    f"this KPI has no library bands to fall back on"
+                )
+            # AlertBands validates green/red against `direction`, so an
+            # inconsistent pair fails here with the KPI id attached rather than
+            # producing a scorecard that rates everything green.
+            changes["alert_bands"] = AlertBands(green=green, red=red)
+
+        out.append(kpi.model_copy(update=changes) if changes else kpi)
+    return out
 
 
 def _score(kpi: KPI, profile: CompanyProfile, perspective_counts: Dict[Perspective, int]) -> float:
@@ -153,16 +292,77 @@ def _feasible(kpi: KPI, profile: CompanyProfile) -> Tuple[bool, str]:
     return True, ""
 
 
-def select(profile: CompanyProfile, extra_packs: Optional[List[str]] = None) -> KPISet:
-    packs = _packs_for(profile) + list(extra_packs or [])
-    library = load_library(packs)
+def select(profile: CompanyProfile, extra_packs: Optional[List[str]] = None,
+           overrides=None) -> KPISet:
+    """Choose the scorecard.
+
+    `overrides` is a `spec.MetricsSpec` (or None for the library's own answer).
+    The user can force a KPI in, force one out, and edit its tier, target and
+    alert bands — but the coverage and leading-indicator warnings still fire, so
+    overriding the algorithm tells you what it cost rather than hiding it.
+    """
+    packs = (list(overrides.packs) if overrides is not None and overrides.packs
+             else _packs_for(profile))
+    packs = packs + list(extra_packs or [])
+    library, load_notes = _load_with_overrides(packs)
+
+    pinned = set(overrides.pinned) if overrides is not None else set()
+    excluded = set(overrides.excluded) if overrides is not None else set()
+
+    # Per-run custom KPIs. Unlike a stored user KPI — which is a reusable pack
+    # entry and competes for a slot like anything else — one added to THIS run
+    # is an explicit "put this on my scorecard", so it is pinned by default.
+    custom_notes: Dict[str, str] = {}
+    if overrides is not None and overrides.custom:
+        by_id = {k.id: i for i, k in enumerate(library)}
+        for entry in overrides.custom:
+            try:
+                kpi = KPI(**entry)
+            except Exception as exc:                     # noqa: BLE001
+                raise ValueError(
+                    f"custom KPI {entry.get('id') or entry.get('name') or '?'!r} "
+                    f"is not valid: {exc}"
+                ) from exc
+            if kpi.id in by_id:
+                library[by_id[kpi.id]] = kpi
+                custom_notes[kpi.id] = "custom KPI defined for this run"
+            else:
+                by_id[kpi.id] = len(library)
+                library.append(kpi)
+                custom_notes[kpi.id] = "custom KPI defined for this run"
+            pinned.add(kpi.id)
+
+    library = _apply_overrides(library, overrides)
+    known = {k.id for k in library}
+    for unknown in sorted((pinned | excluded) - known):
+        # Silently ignoring a typo'd id would leave the user staring at a
+        # scorecard that ignored their instruction with no explanation.
+        raise ValueError(
+            f"unknown KPI id {unknown!r} in the metrics spec — "
+            f"not in packs {', '.join(packs)}"
+        )
 
     dropped: Dict[str, str] = {}
     rationale: Dict[str, str] = {}
 
+    # Surface where a definition came from. A user replacing a library metric
+    # must be visible in the output, or two runs of "the same" KPI silently
+    # disagree and nobody can tell why.
+    for kpi_id, note in {**load_notes, **custom_notes}.items():
+        rationale[f"_origin:{kpi_id}"] = note
+
     # --- Layers 1 & 2: applicability and feasibility -----------------------
     candidates: List[KPI] = []
     for kpi in library:
+        if kpi.id in excluded:
+            dropped[kpi.id] = "excluded by user"
+            continue
+        # A pinned KPI skips the applicability and feasibility gates: the user
+        # asserting they track something outranks our inference that they
+        # cannot. It still has to compute, and reports honestly if it does not.
+        if kpi.id in pinned:
+            candidates.append(kpi)
+            continue
         if kpi.applies_when and not evaluate(kpi.applies_when, profile):
             dropped[kpi.id] = f"not applicable: {kpi.applies_when}"
             continue
@@ -195,13 +395,16 @@ def select(profile: CompanyProfile, extra_packs: Optional[List[str]] = None) -> 
     # Without this, a scoring tie-break could drop the growth rate from a
     # margin-focused scorecard or retention from a cash-focused one. Both
     # would read as negligent to anyone senior looking at the output.
+    # A user-pinned KPI is seeded the same way, for the same reason: it must not
+    # lose a scoring tie-break to a metric the user did not ask for.
     for kpi in candidates:
-        if not kpi.core or kpi.id == north_star.id:
+        if kpi.id == north_star.id or not (kpi.core or kpi.id in pinned):
             continue
         selected.append(kpi)
         perspective_counts[kpi.perspective] = perspective_counts.get(kpi.perspective, 0) + 1
         tier_counts[kpi.tier] = tier_counts.get(kpi.tier, 0) + 1
         rationale[kpi.id] = (
+            "Pinned by the user" if kpi.id in pinned else
             "Core metric — included on every scorecard for this business model "
             "regardless of objective"
         )

@@ -21,9 +21,9 @@ from ..insight.detectors import Finding
 from ..kpi.schema import KPISet
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
+from .sections import SectionContext, build as build_sections
 from ..viz.theme import TOKENS
 
-PRINT = TOKENS["light"]
 FONT = "Segoe UI"
 
 SLIDE_W = Inches(13.333)
@@ -37,7 +37,10 @@ def _rgb(hex_color: str) -> RGBColor:
 
 
 class Deck:
-    def __init__(self, profile: CompanyProfile):
+    def __init__(self, profile: CompanyProfile,
+                 tokens: Optional[Dict[str, str]] = None):
+        self.t = dict(tokens or TOKENS["light"])
+        self.logo = None
         self.prs = Presentation()
         self.prs.slide_width = SLIDE_W
         self.prs.slide_height = SLIDE_H
@@ -45,7 +48,24 @@ class Deck:
         self.blank = self.prs.slide_layouts[6]
 
     def _slide(self):
-        return self.prs.slides.add_slide(self.blank)
+        slide = self.prs.slides.add_slide(self.blank)
+        self.last = slide
+        return slide
+
+    def speaker_note(self, paragraphs: List[str]) -> None:
+        """Narrative prose belongs in the notes pane, not on the slide.
+
+        This is the one place the deck treats the AI paragraph differently from
+        the PDF and the DOCX, and it is not a compromise. Connective prose is
+        what a presenter *says* while a slide is up — putting it on the slide
+        would mean either shrinking it to a bullet, which loses the connective
+        work, or a wall of text on a deck whose whole discipline is one message
+        per slide. The notes pane is where that sentence already lives.
+        """
+        slide = getattr(self, "last", None)
+        if slide is None or not paragraphs:
+            return
+        slide.notes_slide.notes_text_frame.text = "\n\n".join(paragraphs)
 
     def _text(self, slide, text, left, top, width, height, size=14, bold=False,
               color="text_primary", align=PP_ALIGN.LEFT, wrap=True):
@@ -60,7 +80,7 @@ class Deck:
         run.font.size = Pt(size)
         run.font.bold = bold
         run.font.name = FONT
-        run.font.color.rgb = _rgb(PRINT[color])
+        run.font.color.rgb = _rgb(self.t[color])
         return box
 
     def _headline(self, slide, message: str, kicker: str = ""):
@@ -73,7 +93,7 @@ class Deck:
         line = slide.shapes.add_shape(1, MARGIN, Inches(1.62),
                                       SLIDE_W - 2 * MARGIN, Emu(9525))
         line.fill.solid()
-        line.fill.fore_color.rgb = _rgb(PRINT["grid"])
+        line.fill.fore_color.rgb = _rgb(self.t["grid"])
         line.line.fill.background()
         line.shadow.inherit = False
 
@@ -85,6 +105,9 @@ class Deck:
     def title_slide(self, results: List[MetricResult], kpi_set: KPISet, period: str):
         s = self._slide()
         p = self.profile
+        if self.logo is not None:
+            s.shapes.add_picture(io.BytesIO(self.logo.data), MARGIN,
+                                 Inches(1.2), height=Inches(0.55))
         self._text(s, "PERFORMANCE REVIEW", MARGIN, Inches(2.3),
                    Inches(8), Inches(0.3), size=11, color="muted")
         self._text(s, p.identity.name, MARGIN, Inches(2.8),
@@ -118,7 +141,7 @@ class Deck:
             run.text = item
             run.font.size = Pt(14)
             run.font.name = FONT
-            run.font.color.rgb = _rgb(PRINT["text_secondary"])
+            run.font.color.rgb = _rgb(self.t["text_secondary"])
             p.space_after = Pt(11)
         return s
 
@@ -164,7 +187,7 @@ class Deck:
             para.runs[0].font.size = Pt(10)
             para.runs[0].font.bold = True
             para.runs[0].font.name = FONT
-            para.runs[0].font.color.rgb = _rgb(PRINT["text_primary"])
+            para.runs[0].font.color.rgb = _rgb(self.t["text_primary"])
 
         for r, row in enumerate(rows, start=1):
             for c, val in enumerate(row):
@@ -174,7 +197,7 @@ class Deck:
                 para.runs[0].font.size = Pt(10)
                 para.runs[0].font.name = FONT
                 para.runs[0].font.color.rgb = _rgb(
-                    PRINT["text_primary"] if c == 0 else PRINT["text_secondary"])
+                    self.t["text_primary"] if c == 0 else self.t["text_secondary"])
         return s
 
     def save(self, path: Path) -> Path:
@@ -183,31 +206,44 @@ class Deck:
         return path
 
 
-SEVERITY_WORD = {"critical": "Critical", "high": "High", "medium": "Medium",
-                 "low": "Low", "positive": "Strength"}
+# The deck shares the report's *content* for the three sections where the two
+# genuinely say the same thing — the executive summary, the risks and the
+# actions. It keeps its own title slide, its own top-tier scorecard and its own
+# exhibit plan, because those are not the report's sections rendered smaller:
+# the scorecard shows only tier-1 KPIs with five columns, and every exhibit
+# gets a headline written from its finding rather than the chart's topic. That
+# is a different document, and forcing it through the shared registry would
+# either change the deck or fill the registry with per-format branches.
+#
+# Section toggles still reach all of it: a section switched off in the spec
+# produces no slide here either.
+
+# Fewer rows than a page holds. Recorded here rather than left as a bare 8.
+DECK_LIMITS = {"exec_summary": {"limit": 5}, "risks": {"limit": 5},
+               "actions": {"limit": 8}}
+
+# Which section owns each planned exhibit, so that disabling a section drops
+# its charts from the deck too.
+EXHIBIT_PLAN = [
+    ("arr_trend", "arr", "Trajectory", "deep_dives"),
+    ("arr_bridge", "net_new_arr", "Diagnostic", "diagnostic"),
+    ("retention", "nrr", "Retention", "deep_dives"),
+    ("segment_churn", "logo_churn_rate", "Retention", "deep_dives"),
+    ("cohort_heatmap", "grr", "Retention", "diagnostic"),
+    ("cac_payback", "cac_payback_months", "Efficiency", "deep_dives"),
+    ("channel_cost", "blended_cac", "Efficiency", "deep_dives"),
+    ("indexed_growth", "arr_per_fte", "Leverage", "deep_dives"),
+    ("benchmark_position", None, "Benchmarks", "benchmarks"),
+]
+EXHIBIT_SECTIONS = ("diagnostic", "deep_dives", "benchmarks")
+
 STATUS_WORD = {"green": "On track", "amber": "Watch", "red": "Off track",
                "unscored": "No target", "unknown": "No data"}
 
 
-def render_deck(path: Path, profile: CompanyProfile, kpi_set: KPISet,
-                results: List[MetricResult], findings: List[Finding],
-                images: Dict[str, bytes], specs: List, period: str = "") -> Path:
-    deck = Deck(profile)
-    cur = profile.identity.currency
+def _scorecard_slide(deck: Deck, results: List[MetricResult], cur: str) -> None:
     computed = [r for r in results if r.computed]
-
-    deck.title_slide(results, kpi_set, period)
-
-    # Executive summary — the five findings, each already carrying its number.
-    top = findings[:5]
-    deck.bullets_slide(
-        "What the numbers say",
-        [f"{SEVERITY_WORD.get(f.severity, '')} · {f.title}\n{f.statement}" for f in top],
-        kicker="Executive summary",
-    )
-
-    # Scorecard
-    l1 = [r for r in computed if int(r.kpi.tier) <= 1]
+    top = [r for r in computed if int(r.kpi.tier) <= 1]
     n_red = len([r for r in computed if r.status == "red"])
     n_amber = len([r for r in computed if r.status == "amber"])
     deck.table_slide(
@@ -217,49 +253,42 @@ def render_deck(path: Path, profile: CompanyProfile, kpi_set: KPISet,
           fmt_value(r.current, r.kpi.unit, cur),
           fmt_value(r.prior_year, r.kpi.unit, cur),
           fmt_value(r.target, r.kpi.unit, cur),
-          STATUS_WORD.get(r.status, "—")] for r in l1],
+          STATUS_WORD.get(r.status, "—")] for r in top],
         kicker="Scorecard",
         col_widths=[0.36, 0.16, 0.16, 0.16, 0.16],
     )
 
-    # Exhibits — headline comes from the finding attached to the chart.
-    finding_for = {}
+
+def _exhibit_slides(deck: Deck, kpi_set: KPISet, results: List[MetricResult],
+                    findings: List[Finding], specs: List,
+                    images: Dict[str, bytes], enabled: set, cur: str) -> None:
+    """One slide per chart, headlined by the finding attached to it."""
+    finding_for: Dict[str, Finding] = {}
     for f in findings:
         for kid in f.kpi_ids:
             finding_for.setdefault(kid, f)
 
-    exhibit_plan = [
-        ("arr_trend", "arr", "Trajectory"),
-        ("arr_bridge", "net_new_arr", "Diagnostic"),
-        ("retention", "nrr", "Retention"),
-        ("segment_churn", "logo_churn_rate", "Retention"),
-        ("cohort_heatmap", "grr", "Retention"),
-        ("cac_payback", "cac_payback_months", "Efficiency"),
-        ("channel_cost", "blended_cac", "Efficiency"),
-        ("indexed_growth", "arr_per_fte", "Leverage"),
-        ("benchmark_position", None, "Benchmarks"),
-    ]
     # Where no finding is attached, compute a headline rather than falling back
     # to the chart's topic. "Annual Recurring Revenue" tells a board nothing.
-    by_id = {r.kpi.id: r for r in computed}
+    computed = {r.kpi.id: r for r in results if r.computed}
     fallbacks: Dict[str, str] = {}
-    north = by_id.get(kpi_set.north_star)
-    growth = by_id.get("arr_growth_yoy")
+    north, growth = computed.get(kpi_set.north_star), computed.get("arr_growth_yoy")
     if north and north.current is not None:
         headline = f"{north.kpi.name} reached {fmt_value(north.current, north.kpi.unit, cur)}"
         if growth and growth.current is not None:
             headline += f", up {growth.current:.0%} year on year"
         fallbacks["arr_trend"] = headline
-    benched = [r for r in computed if r.benchmark_position]
+    benched = [r for r in computed.values() if r.benchmark_position]
     behind = [r for r in benched
               if r.benchmark_position in ("below_median", "bottom_quartile")]
     if benched:
         fallbacks["benchmark_position"] = (
-            f"{len(behind)} of {len(benched)} benchmarked KPIs trail the cohort median"
-        )
+            f"{len(behind)} of {len(benched)} benchmarked KPIs trail the cohort median")
 
     specs_by_id = {s.id: s for s in specs}
-    for spec_id, kpi_id, kicker in exhibit_plan:
+    for spec_id, kpi_id, kicker, owner in EXHIBIT_PLAN:
+        if owner not in enabled:
+            continue
         spec = specs_by_id.get(spec_id)
         if spec is None or spec_id not in images:
             continue
@@ -268,48 +297,89 @@ def render_deck(path: Path, profile: CompanyProfile, kpi_set: KPISet,
         deck.exhibit_slide(headline, images[spec_id], kicker=kicker,
                            caption=spec.note or spec.subtitle)
 
-    # Risks
-    risks = [f for f in findings if f.severity in ("critical", "high")]
-    if risks:
+
+def render_deck(path: Path, profile: CompanyProfile, kpi_set: KPISet,
+                results: List[MetricResult], findings: List[Finding],
+                images: Dict[str, bytes], specs: List, period: str = "",
+                tokens: Optional[Dict[str, str]] = None,
+                section_order: Optional[List[str]] = None,
+                logo=None,
+                narrative: Optional[Dict[str, List[str]]] = None) -> Path:
+    deck = Deck(profile, tokens)
+    deck.logo = logo
+    cur = profile.identity.currency
+
+    ctx = SectionContext(
+        profile=profile, kpi_set=kpi_set, results=results, findings=findings,
+        images=images, specs=specs, period=period,
+        narrated=sorted(narrative or {}))
+    contents = build_sections(ctx, section_order, limits=DECK_LIMITS,
+                              narrative=narrative)
+    enabled = {c.id for c in contents}
+    by_id = {c.id: c for c in contents}
+    exhibits_done = False
+
+    for content in contents:
+        if content.id == "cover":
+            deck.title_slide(results, kpi_set, period)
+
+        elif content.id == "exec_summary":
+            deck.bullets_slide(
+                "What the numbers say",
+                [f"{b.lead}\n{b.text}" for b in content.bullets],
+                kicker="Executive summary")
+
+        elif content.id == "scorecard":
+            _scorecard_slide(deck, results, cur)
+
+        elif content.id in EXHIBIT_SECTIONS:
+            # The plan spans three sections, so it runs once, at the first of
+            # them that survived the spec.
+            if not exhibits_done:
+                exhibits_done = True
+                _exhibit_slides(deck, kpi_set, results, findings, specs, images,
+                                enabled, cur)
+
+        elif content.id == "risks":
+            if content.bullets:
+                deck.bullets_slide(
+                    f"{content.total} issues need a decision this quarter",
+                    # No severity prefix: the headline already says these are
+                    # the risks, and the slide has less room to spend on it.
+                    [f"{b.title}\n{b.text}" for b in content.bullets],
+                    kicker="Risks and watch-list")
+
+        elif content.id == "actions":
+            for table in content.tables:
+                deck.table_slide(
+                    "Where to act first",
+                    ["Action", "Owner", "Impact", "Effort"],
+                    # The deck drops the "Moves" column the page has room for.
+                    [[row[0][:110], row[2], row[3], row[4]] for row in table.rows],
+                    kicker="Recommended actions",
+                    col_widths=[0.58, 0.14, 0.14, 0.14])
+
+        # Attached to whichever slide this section finished on, which is the
+        # one a presenter will be looking at when they need the sentence.
+        deck.speaker_note(content.narrative)
+
+    appendix = by_id.get("appendix")
+    if appendix is not None:
         deck.bullets_slide(
-            f"{len(risks)} issues need a decision this quarter",
-            [f"{f.title}\n{f.statement}" for f in risks[:5]],
-            kicker="Risks and watch-list",
-        )
-
-    # Actions
-    order = {"high": 0, "medium": 1, "low": 2, None: 3}
-    owner_by_kpi = {r.kpi.id: r.kpi.owner_role for r in results}
-    actionable = sorted([f for f in findings if f.recommendation],
-                        key=lambda f: (order.get(f.impact, 3), order.get(f.effort, 3)))
-    if actionable:
-        deck.table_slide(
-            "Where to act first",
-            ["Action", "Owner", "Impact", "Effort"],
-            [[f.recommendation[:110],
-              next((owner_by_kpi.get(k) for k in f.kpi_ids if owner_by_kpi.get(k)), "—"),
-              (f.impact or "—").title(), (f.effort or "—").title()]
-             for f in actionable[:8]],
-            kicker="Recommended actions",
-            col_widths=[0.58, 0.14, 0.14, 0.14],
-        )
-
-    deck.bullets_slide(
-        "How to read this deck",
-        [
-            "Every figure is computed by deterministic code from the underlying "
-            "fact tables. No number in this deck was produced by a language model.",
-            f"{len(kpi_set.kpis)} KPIs were selected from the "
-            f"{profile.business_model.type.value} library by scoring applicability, "
-            f"objective alignment, Balanced Scorecard coverage and audience fit.",
-            "Benchmarks are illustrative placeholders assembled from public "
-            "commentary — not a licensed dataset. They are suitable for "
-            "calibration, not for external reporting.",
-            f"Profile confidence {profile.confidence:.0%}. Fields filled from "
-            f"sector defaults rather than your data are listed in the appendix "
-            f"of the full report.",
-        ],
-        kicker="Appendix",
-    )
+            "How to read this deck",
+            [
+                "Every figure is computed by deterministic code from the underlying "
+                "fact tables. No number in this deck was produced by a language model.",
+                f"{len(kpi_set.kpis)} KPIs were selected from the "
+                f"{profile.business_model.type.value} library by scoring applicability, "
+                f"objective alignment, Balanced Scorecard coverage and audience fit.",
+                "Benchmarks are illustrative placeholders assembled from public "
+                "commentary — not a licensed dataset. They are suitable for "
+                "calibration, not for external reporting.",
+                f"Profile confidence {profile.confidence:.0%}. Fields filled from "
+                f"sector defaults rather than your data are listed in the appendix "
+                f"of the full report.",
+            ],
+            kicker="Appendix")
 
     return deck.save(path)

@@ -12,22 +12,24 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from docx import Document
-from docx.enum.section import WD_SECTION
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt, RGBColor
 
-from ..fmt import fmt_value
+from ..design.palette import heading_accent
 from ..insight.detectors import Finding
-from ..kpi.schema import KPISet, Perspective
+from ..kpi.schema import KPISet
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
 from ..viz.theme import TOKENS
+from .sections import SectionContent, SectionContext, build as build_sections
 
-PRINT = TOKENS["light"]
-STATUS_WORD = {"green": "On track", "amber": "Watch", "red": "Off track",
-               "unscored": "No target", "unknown": "No data"}
-SEVERITY_WORD = {"critical": "Critical", "high": "High", "medium": "Medium",
-                 "low": "Low", "positive": "Strength"}
+# Where the reader should turn a page. A property of this format: the deck has
+# no pages, and the PDF decides from its own y cursor.
+PAGE_BREAK_BEFORE = {"diagnostic", "deep_dives", "benchmarks", "appendix"}
+
+# Inches, against Word's default page width at these margins.
+TABLE_WIDTHS = {"scorecard": [2.0, 0.9, 0.9, 0.9, 1.0, 0.8],
+                "actions": [0.3, 2.6, 1.1, 0.7, 0.7, 0.6]}
 
 
 def _rgb(hex_color: str) -> RGBColor:
@@ -50,7 +52,7 @@ def _style(doc: Document) -> None:
         st.font.name = "Segoe UI"
         st.font.size = Pt(size)
         st.font.bold = True
-        st.font.color.rgb = _rgb(PRINT[color])
+        st.font.color.rgb = _rgb(doc.t[color])
 
 
 def _muted(doc: Document, text: str, size: int = 9, italic: bool = False):
@@ -58,7 +60,7 @@ def _muted(doc: Document, text: str, size: int = 9, italic: bool = False):
     run = p.add_run(text)
     run.font.size = Pt(size)
     run.italic = italic
-    run.font.color.rgb = _rgb(PRINT["muted"])
+    run.font.color.rgb = _rgb(doc.t["muted"])
     return p
 
 
@@ -95,203 +97,122 @@ def _exhibit(doc: Document, png: Optional[bytes], title: str, caption: str = "")
         _muted(doc, caption, size=8, italic=True)
 
 
+def _draw_cover(doc: Document, c: SectionContent) -> None:
+    if getattr(doc, "logo", None) is not None:
+        doc.add_picture(io.BytesIO(doc.logo.data), height=Inches(0.5))
+    _muted(doc, "PERFORMANCE REVIEW", size=10)
+    doc.add_heading(c.title, level=0)
+    _muted(doc, c.intro, size=11)
+    for block in c.blocks:
+        _muted(doc, block.title, size=9)
+        # Styled text, not a heading. This document's whole reason for using
+        # real Word styles is a working navigation pane, and "$12.0M" is not a
+        # section anyone wants to navigate to.
+        run = doc.add_paragraph().add_run(block.lines[0])
+        run.bold = True
+        run.font.size = Pt(28)
+        run.font.color.rgb = _rgb(heading_accent(doc.t))
+    for note in c.notes:
+        _muted(doc, note)
+    doc.add_paragraph()
+
+
+def _draw_section(doc: Document, c: SectionContent,
+                  images: Dict[str, bytes]) -> None:
+    """One drawer for all eight.
+
+    Word has no page geometry to fight, so every section is the same shape:
+    heading, intro, then whichever of the parts the section filled in. The PDF
+    needs a function per section; this does not, and pretending otherwise would
+    be eight copies of the same six lines.
+    """
+    doc.add_heading(c.title, level=1)
+    if c.intro:
+        doc.add_paragraph(c.intro)
+    for paragraph in c.narrative:
+        doc.add_paragraph(paragraph)
+
+    for b in c.bullets:
+        p = doc.add_paragraph(style="List Bullet")
+        p.add_run(f"{b.lead}. ").bold = True
+        p.add_run(b.text)
+
+    for e in c.exhibits:
+        _exhibit(doc, images.get(e.id), e.title, e.caption)
+        if e.note:
+            _muted(doc, e.note, size=8, italic=True)
+        for label, text in (("Observation", e.observation),
+                            ("Implication", e.implication)):
+            if not text:
+                continue
+            p = doc.add_paragraph()
+            p.add_run(f"{label}. ").bold = True
+            p.add_run(text)
+
+    for table in c.tables:
+        if table.group:
+            doc.add_heading(table.group, level=3)
+        headers, rows = table.headers, table.rows
+        if c.id == "actions":
+            # The editable report numbers its actions; the PDF renders them as
+            # numbered blocks instead. Same rows, same order.
+            headers = ["#"] + headers
+            rows = [[str(i)] + row for i, row in enumerate(rows, 1)]
+        _table(doc, headers, rows, widths=TABLE_WIDTHS.get(c.id))
+        if table.group:
+            doc.add_paragraph()
+
+    for block in c.blocks:
+        doc.add_heading(block.title, level=min(block.level, 3))
+        if block.intro:
+            doc.add_paragraph(block.intro)
+        for line in block.lines:
+            doc.add_paragraph(line, style="List Bullet" if block.level <= 2
+                              else None)
+        if block.detail:
+            doc.add_paragraph(block.detail)
+        for line, tint in block.tinted:
+            p = doc.add_paragraph()
+            p.add_run(line).font.color.rgb = _rgb(doc.t[tint])
+
+    for note in c.notes:
+        _muted(doc, note, italic=True)
+
+    if c.is_empty and c.empty:
+        doc.add_paragraph(c.empty)
+
+
 def render_doc(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                results: List[MetricResult], findings: List[Finding],
                images: Dict[str, bytes], specs: List, checks: List[str],
-               anomaly_notes: List[str], period: str = "") -> Path:
+               anomaly_notes: List[str], period: str = "",
+               tokens: Optional[Dict[str, str]] = None,
+               section_order: Optional[List[str]] = None,
+               logo=None, origins: Optional[Dict[str, str]] = None,
+               narrative: Optional[Dict[str, List[str]]] = None,
+               ai_notes: Optional[List[str]] = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     doc = Document()
+    doc.logo = logo
+    # The token set rides on the document, matching `pdf.t` and `self.t` in the
+    # other two renderers. Threading it through `_muted`'s call sites would say
+    # the same thing many more times.
+    doc.t = dict(tokens or TOKENS["light"])
     _style(doc)
-    cur = profile.identity.currency
-    computed = [r for r in results if r.computed]
 
-    # -- cover -----------------------------------------------------------
-    _muted(doc, "PERFORMANCE REVIEW", size=10)
-    doc.add_heading(profile.identity.name, level=0)
-    _muted(doc, f"{profile.business_model.type.value.upper()} · "
-                f"{profile.business_model.customer_type.value} · "
-                f"{profile.identity.country} · {period}", size=11)
-    _muted(doc, f"Prepared for the {profile.intent.audience.value} · primary "
-                f"objective: {profile.intent.primary_objective.value.replace('_', ' ')} "
-                f"· profile confidence {profile.confidence:.0%}")
-    doc.add_paragraph()
+    ctx = SectionContext(
+        profile=profile, kpi_set=kpi_set, results=results, findings=findings,
+        images=images, specs=specs, checks=checks,
+        anomaly_notes=anomaly_notes, period=period, origins=origins or {},
+        narrated=sorted(narrative or {}), ai_notes=list(ai_notes or []))
 
-    # -- 1 exec summary --------------------------------------------------
-    doc.add_heading("1. Executive summary", level=1)
-    doc.add_paragraph(
-        "Every statement below is computed directly from the underlying data and "
-        "reconciles to the scorecard that follows."
-    )
-    for f in findings[:5]:
-        p = doc.add_paragraph(style="List Bullet")
-        run = p.add_run(f"{SEVERITY_WORD.get(f.severity, '')} · {f.title}. ")
-        run.bold = True
-        p.add_run(f.statement)
-
-    # -- 2 scorecard -----------------------------------------------------
-    doc.add_heading("2. Scorecard", level=1)
-    doc.add_paragraph(
-        f"Grouped by Balanced Scorecard perspective; between two and seven KPIs "
-        f"per perspective. Leading indicators are {kpi_set.leading_share:.0%} of the set."
-    )
-    for perspective in Perspective:
-        group = [r for r in computed if r.kpi.perspective == perspective]
-        if not group:
+    for content in build_sections(ctx, section_order, narrative=narrative):
+        if content.id == "cover":
+            _draw_cover(doc, content)
             continue
-        doc.add_heading(perspective.value.replace("_", " ").title(), level=3)
-        _table(doc,
-               ["KPI", "Current", "12mo ago", "Target", "Cohort median", "Status"],
-               [[r.kpi.short_name or r.kpi.name,
-                 fmt_value(r.current, r.kpi.unit, cur),
-                 fmt_value(r.prior_year, r.kpi.unit, cur),
-                 fmt_value(r.target, r.kpi.unit, cur),
-                 fmt_value(r.kpi.benchmark.p50, r.kpi.unit, cur) if r.kpi.benchmark else "—",
-                 STATUS_WORD.get(r.status, "—")]
-                for r in sorted(group, key=lambda x: int(x.kpi.tier))],
-               widths=[2.0, 0.9, 0.9, 0.9, 1.0, 0.8])
-        doc.add_paragraph()
-
-    # -- 3 diagnostic ----------------------------------------------------
-    doc.add_page_break()
-    doc.add_heading("3. Diagnostic", level=1)
-    bridge = next((f for f in findings if f.id == "arr_bridge"), None)
-    if bridge:
-        doc.add_paragraph(bridge.statement)
-    _exhibit(doc, images.get("arr_bridge"), "ARR bridge, last 12 months",
-             "Blue adds, red subtracts.")
-    _exhibit(doc, images.get("cohort_heatmap"),
-             "Revenue retention by acquisition cohort",
-             "Rows below 100% at month 12 are cohorts where churn outran expansion.")
-
-    # -- 4 deep dives ----------------------------------------------------
-    doc.add_page_break()
-    doc.add_heading("4. Deep dives", level=1)
-    shown = {"arr_bridge", "cohort_heatmap"}
-    finding_for = {}
-    for f in findings:
-        for kid in f.kpi_ids:
-            finding_for.setdefault(kid, f)
-    for spec in specs:
-        if spec.id in shown or spec.id not in images:
-            continue
-        _exhibit(doc, images[spec.id], spec.title, spec.subtitle)
-        related = next((f for f in findings if spec.id in f.id), None)
-        if related is None:
-            for kid, f in finding_for.items():
-                if kid in spec.id or spec.id in kid:
-                    related = f
-                    break
-        if related:
-            p = doc.add_paragraph()
-            p.add_run("Observation. ").bold = True
-            p.add_run(related.statement)
-            if related.recommendation:
-                p2 = doc.add_paragraph()
-                p2.add_run("Implication. ").bold = True
-                p2.add_run(related.recommendation)
-
-    # -- 5 benchmarks ----------------------------------------------------
-    doc.add_page_break()
-    doc.add_heading("5. Benchmarks", level=1)
-    _exhibit(doc, images.get("benchmark_position"),
-             "Position against the peer cohort median",
-             "Direction normalised so positive always means better.")
-    rows = [[r.kpi.short_name or r.kpi.name,
-             fmt_value(r.current, r.kpi.unit, cur),
-             fmt_value(r.kpi.benchmark.p25, r.kpi.unit, cur),
-             fmt_value(r.kpi.benchmark.p50, r.kpi.unit, cur),
-             fmt_value(r.kpi.benchmark.p75, r.kpi.unit, cur),
-             (r.benchmark_position or "—").replace("_", " ")]
-            for r in computed if r.kpi.benchmark]
-    if rows:
-        _table(doc, ["KPI", "You", "P25", "P50", "P75", "Position"], rows)
-    _muted(doc, "Peer figures are illustrative placeholders assembled from public "
-                "commentary, not a licensed benchmark dataset. Suitable for "
-                "calibration, not for external reporting.", italic=True)
-
-    # -- 6 risks ---------------------------------------------------------
-    doc.add_heading("6. Risks and watch-list", level=1)
-    risks = [f for f in findings if f.severity in ("critical", "high")]
-    if not risks:
-        doc.add_paragraph("No critical or high-severity issues were detected this period.")
-    for f in risks:
-        p = doc.add_paragraph(style="List Bullet")
-        p.add_run(f"{SEVERITY_WORD[f.severity]} · {f.title}. ").bold = True
-        p.add_run(f.statement)
-
-    # -- 7 actions -------------------------------------------------------
-    doc.add_heading("7. Recommended actions", level=1)
-    order = {"high": 0, "medium": 1, "low": 2, None: 3}
-    owner_by_kpi = {r.kpi.id: r.kpi.owner_role for r in results}
-    actionable = sorted([f for f in findings if f.recommendation],
-                        key=lambda f: (order.get(f.impact, 3), order.get(f.effort, 3)))
-    if actionable:
-        _table(doc, ["#", "Action", "Moves", "Owner", "Impact", "Effort"],
-               [[str(i), f.recommendation, ", ".join(f.kpi_ids[:2]) or "—",
-                 next((owner_by_kpi.get(k) for k in f.kpi_ids if owner_by_kpi.get(k)), "—"),
-                 (f.impact or "—").title(), (f.effort or "—").title()]
-                for i, f in enumerate(actionable[:12], 1)],
-               widths=[0.3, 2.6, 1.1, 0.7, 0.7, 0.6])
-    else:
-        doc.add_paragraph("No finding crossed an action threshold this period.")
-
-    # -- 8 appendix ------------------------------------------------------
-    doc.add_page_break()
-    doc.add_heading("8. Appendix", level=1)
-
-    doc.add_heading("Methodology", level=2)
-    doc.add_paragraph(
-        "KPIs were selected by evaluating each metric's applicability expression "
-        "against this company profile, then scoring on objective alignment, "
-        "Balanced Scorecard coverage, leading/lagging balance and audience fit. "
-        "Every figure in this report is computed by deterministic code from the "
-        "underlying fact tables; no number here was produced by a language model."
-    )
-
-    doc.add_heading("Assumptions and provenance", level=2)
-    defaulted = [(p, s) for p, s in sorted(profile.provenance.items())
-                 if s.startswith("benchmark_default")]
-    if defaulted:
-        for field, src in defaulted:
-            doc.add_paragraph(f"{field} — {src}", style="List Bullet")
-    else:
-        doc.add_paragraph("No profile fields were filled from benchmark defaults.")
-
-    doc.add_heading("Data quality", level=2)
-    doc.add_paragraph(
-        f"{len(checks)} reconciliation assertions passed before this report was "
-        f"produced. The pipeline refuses to render on data that fails them."
-    )
-    for c in checks:
-        doc.add_paragraph(c, style="List Bullet")
-
-    if anomaly_notes:
-        doc.add_heading("Known events in this dataset", level=2)
-        for n in anomaly_notes:
-            doc.add_paragraph(n, style="List Bullet")
-
-    doc.add_heading("KPI definitions", level=2)
-    for r in sorted(computed, key=lambda x: (x.kpi.perspective.value, int(x.kpi.tier))):
-        k = r.kpi
-        doc.add_heading(f"{k.name} ({k.perspective.value}, {k.timing.value})", level=3)
-        doc.add_paragraph(f"Formula: {k.formula}")
-        doc.add_paragraph(
-            f"Owner: {k.owner_role} · Sources: {', '.join(k.source_systems) or 'n/a'} "
-            f"· Frequency: {k.frequency}"
-        )
-        if k.interpretation:
-            doc.add_paragraph(k.interpretation)
-        if k.pitfalls:
-            p = doc.add_paragraph()
-            run = p.add_run(f"Pitfall: {k.pitfalls}")
-            run.font.color.rgb = _rgb(PRINT["serious"])
-        if k.benchmark:
-            _muted(doc, f"Benchmark source: {k.benchmark.source}", size=8)
-
-    if kpi_set.dropped:
-        doc.add_heading("KPIs considered but not selected", level=2)
-        for kid, reason in sorted(kpi_set.dropped.items()):
-            doc.add_paragraph(f"{kid} — {reason}", style="List Bullet")
+        if content.id in PAGE_BREAK_BEFORE:
+            doc.add_page_break()
+        _draw_section(doc, content, images)
 
     doc.save(str(path))
     return path

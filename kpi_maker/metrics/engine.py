@@ -9,7 +9,7 @@ field is documentation for humans; this is the implementation.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
 import numpy as np
@@ -32,10 +32,58 @@ def metric(kpi_id: str):
     return wrap
 
 
+MEASURED = "measured"
+MODELLED = "modelled"
+MIXED = "mixed"
+
+
+class TrackedTables(dict):
+    """A table dict that remembers which tables were read.
+
+    This is how a metric's `basis` is determined without asking every KPI to
+    declare its inputs. Every read goes through `ctx.fin`, `ctx.mov`,
+    `ctx.tables.get(...)` and friends, so recording here catches all of them —
+    and catches a new metric automatically instead of relying on whoever wrote
+    it to remember.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.accessed: set = set()
+
+    def __getitem__(self, key):
+        self.accessed.add(key)
+        return super().__getitem__(key)
+
+    def get(self, key, default=None):
+        self.accessed.add(key)
+        return super().get(key, default)
+
+    def reset(self) -> None:
+        self.accessed = set()
+
+
 @dataclass
 class MetricContext:
     profile: CompanyProfile
     tables: Dict[str, pd.DataFrame]
+    # {table: "measured" | "modelled"}. Absent means measured — synthetic runs
+    # have no notion of a gap to fill, and every table is as real as any other.
+    origins: Dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.tables, TrackedTables):
+            self.tables = TrackedTables(self.tables)
+
+    def basis_for(self, tables_read) -> str:
+        """measured | modelled | mixed, from what a metric actually touched."""
+        kinds = {self.origins.get(t, MEASURED) for t in tables_read
+                 if t in self.tables}
+        if not kinds or kinds == {MEASURED}:
+            return MEASURED
+        if kinds == {MODELLED}:
+            return MODELLED
+        return MIXED
 
     @property
     def fin(self) -> pd.DataFrame:
@@ -95,6 +143,12 @@ class MetricResult:
     benchmark_position: Optional[str]
     computed: bool
     reason: str = ""
+    # Whether the number was measured from the user's own data or produced by
+    # the generator filling a gap. A modelled number shown as a measured one is
+    # the worst thing this product can do, so it travels with the result rather
+    # than being reconstructed by whoever renders it.
+    basis: str = MEASURED
+    tables_used: tuple = ()
 
     @property
     def yoy_change(self) -> Optional[float]:
@@ -500,6 +554,10 @@ def _enps(ctx):
 
 def _resolve_target(kpi: KPI, current: Optional[float]) -> Optional[float]:
     """Evaluate the KPI's target_rule. Falls back to the benchmark median."""
+    # A target the user typed is not a suggestion to be improved on.
+    if kpi.target_override is not None:
+        return float(kpi.target_override)
+
     bench = kpi.benchmark
     p50 = bench.p50 if bench else None
     rule = kpi.target_rule
@@ -534,28 +592,144 @@ def _last_valid(series: pd.Series, offset: int = 0) -> Optional[float]:
     return None if pd.isna(value) else float(value)
 
 
+class _Evaluator:
+    """Computes a KPI's series, resolving formula references on demand.
+
+    Two things make this more than a loop:
+
+    **Formulas can reference other KPIs.** `SAFE_DIV(arr, customer_count)` is
+    the natural way to write ARPA, and it is only natural because 35 builtins
+    already exist to compose. So a name in a formula is resolved by computing
+    that KPI, recursively, and memoising the result.
+
+    **A referenced KPI need not be selected.** If the user's formula needs
+    `customer_count` and the selection engine did not pick it, that is a detail
+    of their arithmetic, not a request to put it on the dashboard. So references
+    resolve against the whole known universe of KPIs and the dependency is
+    computed quietly rather than erroring.
+    """
+
+    def __init__(self, ctx: "MetricContext", universe: Dict[str, KPI]) -> None:
+        self.ctx = ctx
+        self.universe = universe
+        self._cache: Dict[str, Optional[pd.Series]] = {}
+        self._in_progress: List[str] = []
+        self._tables_used: Dict[str, set] = {}
+
+    def series_for(self, kpi_id: str) -> Optional[pd.Series]:
+        if kpi_id in self._cache:
+            # Replay the cached KPI's reads into whoever is asking: it will not
+            # touch a table again, and without this a caller that only uses
+            # memoised dependencies reports having read nothing.
+            self.ctx.tables.accessed |= self._tables_used.get(kpi_id, set())
+            return self._cache[kpi_id]
+
+        if kpi_id in self._in_progress:
+            cycle = " -> ".join(self._in_progress + [kpi_id])
+            raise ValueError(f"circular reference between KPIs: {cycle}")
+
+        kpi = self.universe.get(kpi_id)
+        if kpi is None:
+            raise ValueError(f"unknown KPI {kpi_id!r}")
+
+        self._in_progress.append(kpi_id)
+        # Swap in a fresh access set rather than diffing against the previous
+        # one. `accessed` accumulates, so a difference silently subtracts every
+        # table an EARLIER KPI happened to touch: arr_per_fte reads financials
+        # and headcount, but if `arr` ran first it reported headcount alone and
+        # came out "modelled" instead of "mixed". Save, isolate, restore.
+        outer = self.ctx.tables.accessed
+        self.ctx.tables.accessed = set()
+        try:
+            series = self._compute_one(kpi)
+        finally:
+            mine = self.ctx.tables.accessed
+            # Nested reads from a referenced KPI belong to this one too, which
+            # is exactly what makes the basis transitive.
+            self.ctx.tables.accessed = outer | mine
+            self._in_progress.pop()
+        self._tables_used[kpi_id] = mine
+
+        self._cache[kpi_id] = series
+        return series
+
+    def _compute_one(self, kpi: KPI) -> Optional[pd.Series]:
+        if not kpi.is_formula:
+            fn = _REGISTRY.get(kpi.compute_ref)
+            if fn is None:
+                raise ValueError("no implementation registered for this KPI id")
+            return fn(self.ctx)
+
+        from ..formula import FormulaError, evaluate
+        from ..formula.evaluate import SeriesResolver
+
+        resolver = SeriesResolver(
+            tables=self.ctx.tables,
+            month_index=self.ctx.fin.index,
+            kpi_lookup=self._lookup,
+            profile=self.ctx.profile,
+        )
+        try:
+            return evaluate(kpi.compute.expression or "", resolver)
+        except FormulaError as exc:
+            raise ValueError(f"formula error: {exc}") from exc
+
+    def tables_used(self, kpi_id: str) -> tuple:
+        return tuple(sorted(self._tables_used.get(kpi_id, ())))
+
+    def _lookup(self, name: str) -> Optional[pd.Series]:
+        """Name resolution hook for the formula engine.
+
+        Returns None for anything that is not a KPI id, which tells the resolver
+        to carry on and try a table column — a formula referencing a nonexistent
+        name should be reported by the resolver, which knows what the
+        alternatives were, rather than here.
+        """
+        if name not in self.universe:
+            return None
+        return self.series_for(name)
+
+
+def _universe(kpi_set: KPISet) -> Dict[str, KPI]:
+    """Every KPI a formula may reference: the selected set plus the library.
+
+    The selected set alone is not enough — see `_Evaluator`. Selected entries
+    win on an id clash, because a per-run override of a library KPI should be
+    what other formulas in that run see too.
+    """
+    from ..kpi.selection import load_all_known
+    known = {k.id: k for k in load_all_known()}
+    known.update({k.id: k for k in kpi_set.kpis})
+    return known
+
+
 def compute(kpi_set: KPISet, tables: Dict[str, pd.DataFrame],
-            profile: CompanyProfile) -> List[MetricResult]:
-    ctx = MetricContext(profile=profile, tables=tables)
+            profile: CompanyProfile,
+            origins: Optional[Dict[str, str]] = None) -> List[MetricResult]:
+    ctx = MetricContext(profile=profile, tables=tables, origins=origins or {})
+    evaluator = _Evaluator(ctx, _universe(kpi_set))
     results: List[MetricResult] = []
 
     for kpi in kpi_set.kpis:
-        fn = _REGISTRY.get(kpi.id)
-        if fn is None:
+        try:
+            series = evaluator.series_for(kpi.id)
+        except KeyError as exc:
+            # A partial upload has fewer tables than the generator makes. Say
+            # which one is missing: a bare KeyError repr tells the user nothing
+            # about what to supply, and "why isn't X on my dashboard" must
+            # always have an answer.
             results.append(MetricResult(
                 kpi=kpi, series=None, current=None, prior_year=None, prior_month=None,
                 target=None, status="unknown", benchmark_position=None,
-                computed=False, reason="no implementation registered for this KPI id",
+                computed=False,
+                reason=f"needs the {exc} table, which this run does not have",
             ))
             continue
-
-        try:
-            series = fn(ctx)
         except Exception as exc:                      # noqa: BLE001 - reported, not swallowed
             results.append(MetricResult(
                 kpi=kpi, series=None, current=None, prior_year=None, prior_month=None,
                 target=None, status="unknown", benchmark_position=None,
-                computed=False, reason=f"computation error: {exc}",
+                computed=False, reason=str(exc),
             ))
             continue
 
@@ -572,6 +746,7 @@ def compute(kpi_set: KPISet, tables: Dict[str, pd.DataFrame],
         prior_month = _last_valid(series, offset=1)
         prior_year = float(series.iloc[-13]) if len(series) >= 13 and not pd.isna(series.iloc[-13]) else None
 
+        used = evaluator.tables_used(kpi.id)
         results.append(MetricResult(
             kpi=kpi,
             series=series,
@@ -582,6 +757,8 @@ def compute(kpi_set: KPISet, tables: Dict[str, pd.DataFrame],
             status=kpi.status(current),
             benchmark_position=kpi.vs_benchmark(current),
             computed=True,
+            basis=ctx.basis_for(used),
+            tables_used=used,
         ))
 
     return results
@@ -614,6 +791,7 @@ def facts_table(results: List[MetricResult]) -> pd.DataFrame:
             "benchmark_position": r.benchmark_position,
             "owner": r.kpi.owner_role,
             "computed": r.computed,
+            "basis": r.basis,
             "reason": r.reason,
         })
     return pd.DataFrame(rows)

@@ -13,6 +13,12 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 | Stage | Module | State |
 |---|---|---|
 | Profile schema + cross-block validation | `kpi_maker/profile/` | done |
+| RunSpec contract + staged, cacheable pipeline | `kpi_maker/spec/`, `kpi_maker/pipeline/` | done |
+| Formula engine (KPIs + calculated columns) | `kpi_maker/formula/`, `kpi_maker/prep/` | done |
+| Studio — adjust any stage, re-run what changed | `ui/` | done |
+| Two-tier reconciliation gate + pandera contract | `kpi_maker/contract/` | done |
+| Cleaning ops + lineage log | `kpi_maker/prep/` | done — 19 ops |
+| Real-data ingestion (5 shapes) | `kpi_maker/ingest/` | done |
 | KPI library + sandboxed selection engine | `kpi_maker/kpi/` | done — SaaS pack (44 KPIs, 39% leading) |
 | Synthetic data + reconciliation gate | `kpi_maker/datagen/` | done — SaaS |
 | Metrics engine + facts table | `kpi_maker/metrics/` | done — 24 implemented |
@@ -25,7 +31,6 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 | HTTP API | `kpi_maker/api/` | done |
 | Web UI | `ui/` | done — M8 (vanilla JS, no build step) |
 | More sectors (M2) | — | not started |
-| Ingestion (M6) | `api/upload` | profiling only; no mapping |
 | AI Builder (M7) | — | not started |
 
 ## Run it
@@ -60,7 +65,7 @@ Three modes on the home screen:
 |---|---|---|
 | **1 · Try a sample** | Working — 3 curated companies | Free |
 | **2 · Build your own** | Working — 14-question survey | Free |
-| **3 · Bring your data** | Column profiling only; mapping + AI not connected | Free |
+| **3 · Bring your data** | Working — read, profile, clean, map, run | Free |
 | **Surprise me** | Working — random self-consistent company | Free |
 
 Results open in a workspace with five tabs: Overview (findings), Dashboard
@@ -123,6 +128,94 @@ The equivalent command by hand, on any host:
 uvicorn kpi_maker.api.server:app --host 0.0.0.0 --port $PORT
 ```
 
+## Adjusting a run
+
+`CompanyProfile` says who the company is. **`RunSpec`** says what the pipeline
+should do about it — source, cleaning, model, metrics, analysis, design,
+outputs. Every field is optional, and every default means "derive it the way
+the pipeline always did", so an empty spec reproduces the original behaviour
+exactly.
+
+```jsonc
+{
+  "profile": { /* … the usual profile … */ },
+  "source":  { "generator": { "seed": 7, "history_months": 48 } },
+  "metrics": {
+    "excluded":  ["cac_payback_months"],
+    "pinned":    ["quick_ratio"],
+    "overrides": { "gross_margin_pct": { "target": 0.85 } }
+  },
+  "analysis": { "disabled": ["channel_efficiency"], "max_findings": 12 },
+  "outputs":  { "artifacts": ["dashboard", "facts_csv"] }
+}
+```
+
+```bash
+python -m kpi_maker run  --spec my_spec.json --out ./out
+python -m kpi_maker run  --profile samples/northwind_saas.json --only dashboard
+python -m kpi_maker plan --spec my_spec.json --out ./out   # what would rebuild?
+```
+
+Stages declare which upstream stages they need and which spec sections they
+read, and those two things form the cache key. Change the theme and two stages
+rebuild; exclude a KPI and the data generation is skipped entirely.
+
+Picking your outputs is the same mechanism, and it is the biggest speedup
+available: rendering is ~80% of a run and the static PNG export alone is ~37%,
+so `--only dashboard,facts_csv` takes **1.3s against 7.5s** for everything.
+
+Over HTTP, the same controls:
+
+| Endpoint | |
+|---|---|
+| `GET /api/runs/{id}/spec` | what this run actually did |
+| `PATCH /api/runs/{id}/spec` | deep-merge one field |
+| `GET /api/runs/{id}/plan` | which stages a re-run would rebuild, and roughly how long |
+| `POST /api/runs/{id}/rerun` | rebuild only what changed |
+| `GET /api/catalog/options` | artifacts, detectors and themes the engine supports |
+
+`POST /api/runs` also accepts a `spec`, so a sample can be launched already
+customised rather than only inspected afterwards.
+
+## Your own KPIs and calculated fields
+
+Any run opens in the **Studio** — a panel per pipeline stage, with a bar that
+says what your change costs before you commit to it ("9 stages to rebuild,
+about 1s"). Every entry point lands there, presets included.
+
+KPIs are defined by formula, in a spreadsheet-like language:
+
+```
+SAFE_DIV(SUM(marketing.spend), SUM(marketing.leads))    a cost per lead
+YOY(monthly_financials.arr) + TTM(fcf_margin)           compose existing KPIs
+SUM(mrr_movements.delta_mrr, movement_type='churn')     aggregate with a filter
+```
+
+Four fields make a KPI: **name, formula, unit, direction**. Unit drives
+formatting and direction drives the RAG colour; the rest default and sit behind
+an "advanced" accordion. User KPIs are marked as such in the appendix rather
+than presented as reviewed library metrics, and one sharing an id with a
+library KPI replaces it — recorded, not silent.
+
+The same language writes **calculated columns** on a fact table
+(`final_acv - initial_acv` on `customers`), which KPIs can then aggregate over.
+Time functions are refused there, because a row has no time axis.
+
+Three table grains, three behaviours — this is the rule worth knowing:
+
+| | |
+|---|---|
+| `monthly_financials`, `pipeline`, `product_usage`, `sales_capacity` | already monthly; reference a column directly |
+| `marketing`, `headcount`, `mrr_movements` | several rows per month; must go through an aggregate, which groups by month |
+| `customers` | one row per entity, no month at all; usable in a calculated column, never as a KPI |
+
+Referencing `marketing.spend` bare therefore fails with *"several rows per
+month, wrap it in SUM()"* rather than quietly picking an aggregation for you.
+
+Nothing reaches `eval()`. Expressions are parsed with `ast`, checked whole
+against an explicit node whitelist before anything runs, and evaluated by a
+resolver that looks names up in a mapping it built itself.
+
 ## Run from the CLI
 
 ```bash
@@ -164,7 +257,28 @@ out/
 ```bash
 ./.venv/Scripts/python.exe -m tests.stress          # 23-case matrix
 ./.venv/Scripts/python.exe -m tests.stress --quick  # scale extremes only
+./.venv/Scripts/python.exe -m tests.spine           # RunSpec + stage graph
+./.venv/Scripts/python.exe -m tests.formula         # the formula language
+./.venv/Scripts/python.exe -m tests.ingest          # ingestion, cleaning, the gate
+./.venv/Scripts/python.exe -m tests.design          # colour, sections, exhibits
+./.venv/Scripts/python.exe -m tests.sector          # archetypes and the vacuity guard
+./.venv/Scripts/python.exe -m tests.ai              # the AI layer, entirely offline
 ```
+
+`tests/ai.py` needs no API key and makes no network call — the client is
+swapped for a transcript player at one module seam. A gate nobody can run is
+not a gate. Its central assertions are that with AI off no client is ever
+*constructed*, and that a single invented figure in the prose is caught, fed
+back once, and then costs that section its paragraph while the rest of the
+report stands.
+
+`tests/spine.py` asks a different question from `stress.py`: not "does the
+product lie?" but "does adjusting the pipeline do exactly what it says, and
+nothing else?" It asserts that an empty spec is neutral, that editing one
+section rebuilds exactly the stages that read it (too few and the edit
+silently does nothing; too many and the studio is slow for no reason), that a
+warm partial re-run and a cold full run produce identical artifacts, and that
+bad input is refused rather than ignored.
 
 `tests/stress.py` is not a unit-test suite — it is a "does the product lie?"
 suite. It runs the pipeline across scale extremes (a 4-person / $220k startup, a
@@ -181,14 +295,23 @@ for any company:
 
 ## The two rules the codebase enforces
 
-**1. The LLM never produces numbers or charts.** It fills the profile, plans, and
-writes prose from a pre-computed facts table. Everything numeric is deterministic
-Python. Modes 1 and 2 therefore cost zero tokens.
+**1. The LLM never produces numbers or charts.** It does two things: propose a
+patch to the run's configuration, which you review change by change and which
+cannot touch the company profile, and write the connective prose in a report
+section from a pre-computed facts table. Every figure in that prose is checked
+against the facts table by `ai/verify.py` before it is printed, and prose that
+fails is discarded rather than shown. Everything numeric is deterministic
+Python. `spec.ai.enabled` is **off by default**, so a preset, a survey run or a
+CLI invocation costs **zero tokens** unless you turn it on.
 
-**2. Nothing renders on data that fails reconciliation.** `datagen/saas.py`
-asserts twelve accounting identities — the P&L ties, ARR ties to the MRR book,
-the customer count and blended ACV match the profile — before any artifact is
-written. `ReconciliationError` is a hard stop, not a warning.
+**2. Nothing renders on data that fails reconciliation.** `kpi_maker/contract/`
+holds the identities as a registry, tagged by tier and by archetype. Tier 1 is
+definitional arithmetic — the P&L ties, ARR ties to the MRR book, checkouts
+never exceed sessions — and is a hard stop whatever the source. Tier 2 compares
+the data against what you said about yourself, and is fatal only for generated
+data, where hitting the profile is the generator's job. A *generated* archetype
+that contributes no structural checks is refused outright, so a new sector
+cannot pass the gate on an empty set.
 
 ## Environment traps worth knowing
 

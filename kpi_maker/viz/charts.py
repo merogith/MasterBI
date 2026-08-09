@@ -19,7 +19,7 @@ theme toggle can restyle without re-rendering.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -38,11 +38,18 @@ _CURRENCY = "USD"
 LIGHT = dict(TOKENS["light"])
 
 
-def set_mode(mode: str) -> None:
-    if mode not in TOKENS:
-        raise ValueError(f"unknown theme mode {mode!r}")
+def set_mode(mode: str, tokens: Optional[Dict[str, str]] = None) -> None:
+    """Point the chart layer at a token set.
+
+    `tokens` overrides the shipped palette for this mode, which is how a brand
+    colour reaches the charts. Omitted, the behaviour is exactly as before.
+    """
+    if tokens is None:
+        if mode not in TOKENS:
+            raise ValueError(f"unknown theme mode {mode!r}")
+        tokens = TOKENS[mode]
     LIGHT.clear()
-    LIGHT.update(TOKENS[mode])
+    LIGHT.update(tokens)
 
 
 @dataclass
@@ -57,6 +64,69 @@ class ChartSpec:
     # trace index -> token role, so the theme toggle knows what to recolour
     trace_tokens: Dict[int, str] = field(default_factory=dict)
     colorscale_tokens: List[str] = field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
+# The exhibit registry
+# --------------------------------------------------------------------------
+#
+# This was a literal list of nine lambdas inside `build_all`, which made the
+# set of exhibits a fact about one function body rather than something the
+# spec could select from. Each builder now declares itself and says which
+# inputs it wants, so `design.exhibits` can choose and order them.
+#
+# `tab` and `width` still come from the ChartSpec each builder returns — the
+# builder knows whether its chart needs the full width. The spec can override
+# the width; it cannot invent an exhibit.
+
+@dataclass
+class ChartEntry:
+    id: str
+    fn: Callable[..., Optional[ChartSpec]]
+    takes: Tuple[str, ...]
+    # Explicit, because the running order is an editorial decision — it is the
+    # order a reader meets the charts in. Definition order in this file is
+    # grouped by topic and would silently reshuffle the dashboard.
+    order: int = 100
+
+
+CHARTS: Dict[str, ChartEntry] = {}
+
+
+def chart(id: str, order: int, takes: Tuple[str, ...] = ("results",)):
+    def wrap(fn):
+        CHARTS[id] = ChartEntry(id=id, fn=fn, takes=takes, order=order)
+        return fn
+    return wrap
+
+
+class UnknownExhibit(ValueError):
+    """An exhibit id that is not registered."""
+
+
+def default_exhibits() -> List[str]:
+    return [e.id for e in sorted(CHARTS.values(), key=lambda e: e.order)]
+
+
+def resolve_exhibits(requested: Optional[Sequence[str]]) -> List[str]:
+    """The exhibit ids to build, in order. `None` means all of them.
+
+    Refused rather than skipped on an unknown id, for the same reason sections
+    are: a typo should not quietly remove a chart from a board pack.
+    """
+    if requested is None:
+        return default_exhibits()
+    unknown = [e for e in requested if e not in CHARTS]
+    if unknown:
+        raise UnknownExhibit(
+            f"unknown exhibit(s): {', '.join(unknown)}. "
+            f"Available: {', '.join(default_exhibits())}")
+    seen, out = set(), []
+    for eid in requested:
+        if eid not in seen:
+            seen.add(eid)
+            out.append(eid)
+    return out
 
 
 def _base_layout(fig: go.Figure, height: int = 320) -> go.Figure:
@@ -101,6 +171,7 @@ def _money(v: float) -> str:
 
 # --------------------------------------------------------------------------
 
+@chart("arr_trend", order=1, takes=("results",))
 def arr_trend(results: List[MetricResult]) -> Optional[ChartSpec]:
     r = next((x for x in results if x.kpi.id == "arr" and x.computed), None)
     if r is None:
@@ -136,6 +207,7 @@ def arr_trend(results: List[MetricResult]) -> Optional[ChartSpec]:
     )
 
 
+@chart("arr_bridge", order=2, takes=("tables",))
 def arr_bridge(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     """The single most useful diagnostic in a subscription business."""
     mov = tables["mrr_movements"]
@@ -179,6 +251,7 @@ def arr_bridge(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     )
 
 
+@chart("retention", order=4, takes=("results",))
 def retention_lines(results: List[MetricResult]) -> Optional[ChartSpec]:
     nrr = next((x for x in results if x.kpi.id == "nrr" and x.computed), None)
     grr = next((x for x in results if x.kpi.id == "grr" and x.computed), None)
@@ -219,6 +292,7 @@ def retention_lines(results: List[MetricResult]) -> Optional[ChartSpec]:
     )
 
 
+@chart("segment_churn", order=5, takes=("tables",))
 def segment_churn(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     """Emphasis form: the worst segment is the story, the rest are context."""
     mov, cust = tables["mrr_movements"], tables["customers"]
@@ -252,6 +326,7 @@ def segment_churn(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     )
 
 
+@chart("indexed_growth", order=9, takes=("results", "tables"))
 def indexed_growth(results: List[MetricResult],
                    tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     """ARR vs headcount, both indexed to 100.
@@ -293,6 +368,7 @@ def indexed_growth(results: List[MetricResult],
     )
 
 
+@chart("cac_payback", order=7, takes=("results",))
 def cac_payback(results: List[MetricResult]) -> Optional[ChartSpec]:
     r = next((x for x in results if x.kpi.id == "cac_payback_months" and x.computed), None)
     if r is None:
@@ -323,6 +399,7 @@ def cac_payback(results: List[MetricResult]) -> Optional[ChartSpec]:
     )
 
 
+@chart("cohort_heatmap", order=6, takes=("tables",))
 def cohort_heatmap(tables: Dict[str, pd.DataFrame], quarters: int = 8,
                    horizon: int = 12) -> Optional[ChartSpec]:
     """Revenue retention by acquisition cohort. Sequential single hue."""
@@ -380,6 +457,7 @@ def cohort_heatmap(tables: Dict[str, pd.DataFrame], quarters: int = 8,
     )
 
 
+@chart("channel_cost", order=8, takes=("tables",))
 def channel_dumbbell(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     """Before -> after per channel. One hue, two shades."""
     mkt = tables["marketing"]
@@ -429,6 +507,7 @@ def channel_dumbbell(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     )
 
 
+@chart("benchmark_position", order=3, takes=("results",))
 def benchmark_position(results: List[MetricResult]) -> Optional[ChartSpec]:
     """Diverging bar: distance from the cohort median, signed by good/bad."""
     rows = []
@@ -471,23 +550,199 @@ def benchmark_position(results: List[MetricResult]) -> Optional[ChartSpec]:
 def build_all(results: List[MetricResult],
               tables: Dict[str, pd.DataFrame],
               mode: str = "light",
-              currency: str = "USD") -> List[ChartSpec]:
-    set_mode(mode)
+              currency: str = "USD",
+              tokens: Optional[Dict[str, str]] = None,
+              exhibits: Optional[Sequence[str]] = None,
+              widths: Optional[Dict[str, str]] = None) -> List[ChartSpec]:
+    set_mode(mode, tokens)
     set_currency(currency)
-    builders = [
-        lambda: arr_trend(results),
-        lambda: arr_bridge(tables),
-        lambda: benchmark_position(results),
-        lambda: retention_lines(results),
-        lambda: segment_churn(tables),
-        lambda: cohort_heatmap(tables),
-        lambda: cac_payback(results),
-        lambda: channel_dumbbell(tables),
-        lambda: indexed_growth(results, tables),
-    ]
+    widths = widths or {}
+    inputs = {"results": results, "tables": tables}
+
     specs = []
-    for build in builders:
-        spec = build()
-        if spec is not None:
-            specs.append(spec)
+    for eid in resolve_exhibits(exhibits):
+        entry = CHARTS[eid]
+        try:
+            spec = entry.fn(*(inputs[name] for name in entry.takes))
+        except KeyError:
+            # An exhibit whose fact table was not uploaded simply does not
+            # appear. Builders already return None when they have nothing to
+            # draw; a missing table is the same situation arriving by a
+            # different route, and a partial upload must narrow the dashboard
+            # rather than fail to produce one.
+            continue
+        if spec is None:
+            continue
+        if eid in widths:
+            spec.width = widths[eid]
+        specs.append(spec)
     return specs
+
+
+# --------------------------------------------------------------------------
+# E-commerce exhibits
+# --------------------------------------------------------------------------
+#
+# Registered here rather than in a sector module because the registry is the
+# thing that decides what a run can draw, and a chart that silently omits
+# itself when its table is absent is already the mechanism that keeps a
+# subscription run from showing these. Ordered after the subscription set for
+# the same reason: `default_exhibits` is the order a reader meets them in, and
+# a run only ever produces one sector's worth.
+
+@chart("revenue_orders", order=20, takes=("tables",))
+def revenue_and_orders(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """Two lines that answer "is growth price or volume?" in one look."""
+    orders = tables.get("orders")
+    if orders is None or orders.empty:
+        return None
+    net = orders["gross_revenue"] - orders["discounts"] - orders["returns"]
+    by_month = orders.assign(net=net).groupby("month").agg(
+        net=("net", "sum"), orders=("orders", "sum")).sort_index()
+    x = _months(by_month.index)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=x, y=by_month["net"].values, mode="lines", name="Net revenue",
+        line=dict(color=LIGHT["series_1"], width=2),
+        fill="tozeroy", fillcolor=_rgba(LIGHT["series_1"], 0.10),
+        hovertemplate="%{x}<br><b>%{customdata}</b><extra>Net revenue</extra>",
+        customdata=[_money(v) for v in by_month["net"].values],
+    ))
+    # Orders on their own axis, indexed to the same start, so the two are
+    # comparable in shape without implying they are comparable in level.
+    scale = (by_month["net"].iloc[0] / by_month["orders"].iloc[0]
+             if by_month["orders"].iloc[0] else 1.0)
+    fig.add_trace(go.Scatter(
+        x=x, y=(by_month["orders"] * scale).values, mode="lines", name="Orders",
+        line=dict(color=LIGHT["series_2"], width=2, dash="dot"),
+        hovertemplate="%{x}<br><b>%{customdata:,.0f} orders</b><extra></extra>",
+        customdata=by_month["orders"].values,
+    ))
+    _base_layout(fig, height=360)
+    fig.update_layout(hovermode="x unified")
+    return ChartSpec(
+        id="revenue_orders", title="Net revenue and order volume",
+        subtitle="Orders rescaled to the revenue axis at the first month — "
+                 "shape is comparable, level is not",
+        figure=fig, tab="overview", width="full",
+        note="Revenue rising faster than orders is price or basket size; the "
+             "other way round is discounting.",
+        trace_tokens={0: "series_1", 1: "series_2"},
+    )
+
+
+@chart("aov_conversion", order=21, takes=("tables",))
+def aov_and_conversion(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """The two levers that do not need more traffic."""
+    orders, traffic = tables.get("orders"), tables.get("traffic")
+    if orders is None or traffic is None or orders.empty or traffic.empty:
+        return None
+    net = orders["gross_revenue"] - orders["discounts"] - orders["returns"]
+    by_month = orders.assign(net=net).groupby("month").agg(
+        net=("net", "sum"), orders=("orders", "sum")).sort_index()
+    aov = (by_month["net"] / by_month["orders"].replace(0, np.nan))
+    funnel = traffic.groupby("month").agg(
+        sessions=("sessions", "sum"), orders=("orders", "sum")).sort_index()
+    conversion = (funnel["orders"] / funnel["sessions"].replace(0, np.nan))
+
+    x = _months(aov.index)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=x, y=aov.values, mode="lines", name="AOV",
+        line=dict(color=LIGHT["series_1"], width=2),
+        hovertemplate="%{x}<br><b>%{customdata}</b><extra>AOV</extra>",
+        customdata=[_money(v) for v in aov.values],
+    ))
+    fig.add_trace(go.Scatter(
+        x=_months(conversion.index), y=conversion.values, mode="lines",
+        name="Conversion", yaxis="y2",
+        line=dict(color=LIGHT["series_2"], width=2),
+        hovertemplate="%{x}<br><b>%{y:.2%}</b><extra>Conversion</extra>",
+    ))
+    _base_layout(fig)
+    # The one place a second axis is justified: the two series share a story
+    # and cannot share a scale. Both are direct-labelled in the legend.
+    fig.update_layout(
+        hovermode="x unified",
+        yaxis2=dict(overlaying="y", side="right", tickformat=".1%",
+                    showgrid=False, tickfont=dict(color=LIGHT["muted"], size=11)),
+    )
+    return ChartSpec(
+        id="aov_conversion", title="Average order value and conversion rate",
+        subtitle="Basket size on the left, conversion on the right",
+        figure=fig, tab="growth", width="full",
+        note="Both respond faster than acquisition does, and neither needs "
+             "more traffic to move.",
+        trace_tokens={0: "series_1", 1: "series_2"},
+    )
+
+
+@chart("category_returns", order=22, takes=("tables",))
+def category_returns(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """Return rate by category — the thing a blended rate hides."""
+    orders = tables.get("orders")
+    if orders is None or orders.empty or "category" not in orders.columns:
+        return None
+    grouped = orders.groupby("category").agg(
+        gross=("gross_revenue", "sum"), discounts=("discounts", "sum"),
+        returns=("returns", "sum"))
+    rate = (grouped["returns"] / (grouped["gross"] - grouped["discounts"])
+            .replace(0, np.nan)).sort_values()
+    if rate.dropna().empty:
+        return None
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=rate.values, y=[c.replace("_", " ").title() for c in rate.index],
+        orientation="h", marker=dict(color=LIGHT["series_1"]),
+        text=[f"{v:.1%}" for v in rate.values], textposition="outside",
+        textfont=dict(color=LIGHT["text_secondary"], size=11),
+        hovertemplate="%{y}<br><b>%{x:.1%} returned</b><extra></extra>",
+    ))
+    _base_layout(fig)
+    fig.update_layout(xaxis=dict(tickformat=".0%", showgrid=True,
+                                 gridcolor=LIGHT["grid"]))
+    blended = grouped["returns"].sum() / max(
+        (grouped["gross"] - grouped["discounts"]).sum(), 1e-9)
+    return ChartSpec(
+        id="category_returns", title="Return rate by category",
+        subtitle=f"Blended rate {blended:.1%} — the number a dashboard usually shows",
+        figure=fig, tab="retention", width="half",
+        note="A blended return rate that rises may only mean the worst "
+             "category grew. This is why the dimension is carried.",
+        trace_tokens={0: "series_1"},
+    )
+
+
+@chart("buyer_mix", order=23, takes=("tables",))
+def buyer_mix(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """New against repeat buyers — retail's retention picture."""
+    buyers = tables.get("buyers")
+    if buyers is None or buyers.empty:
+        return None
+    frame = buyers.sort_values("month")
+    x = _months(frame["month"])
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=x, y=frame["repeat_buyers"].values, name="Repeat",
+        marker=dict(color=LIGHT["series_1"]),
+        hovertemplate="%{x}<br><b>%{y:,.0f} repeat</b><extra></extra>",
+    ))
+    fig.add_trace(go.Bar(
+        x=x, y=frame["new_buyers"].values, name="New",
+        marker=dict(color=LIGHT["series_2"]),
+        hovertemplate="%{x}<br><b>%{y:,.0f} new</b><extra></extra>",
+    ))
+    _base_layout(fig, height=360)
+    fig.update_layout(barmode="stack", hovermode="x unified")
+    share = frame["repeat_buyers"].sum() / max(frame["active_buyers"].sum(), 1e-9)
+    return ChartSpec(
+        id="buyer_mix", title="Who bought: new against repeat",
+        subtitle=f"{share:.0%} of purchases came from buyers who had bought before",
+        figure=fig, tab="retention", width="full",
+        note="A business growing on new buyers alone is renting its revenue. "
+             "The repeat band is the part that does not have to be bought twice.",
+        trace_tokens={0: "series_1", 1: "series_2"},
+    )

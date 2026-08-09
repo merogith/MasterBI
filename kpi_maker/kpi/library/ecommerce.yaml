@@ -1,0 +1,548 @@
+# E-commerce / D2C pack.
+#
+# Every KPI here is a FORMULA, not a registered Python function. That is
+# possible because P1's engine resolves `table.column` against whatever tables
+# a run produced rather than against a fixed eight, and it has two consequences
+# worth stating:
+#
+#   * a new sector needs a YAML file and a generator, not thirty new functions
+#     in metrics/engine.py;
+#   * every KPI below arrives editable in the Studio, so a retailer who
+#     defines contribution margin differently can change it without a release.
+#
+# Benchmarks are illustrative placeholders assembled from public commentary,
+# not a licensed dataset — the same health warning the SaaS packs carry. They
+# are deliberately NOT the SaaS numbers: a retailer's gross margin sits near
+# 40% where a software vendor's is 75%, and reusing one for the other is how a
+# scorecard tells a healthy business it is failing.
+
+- id: net_revenue
+  name: Net Revenue
+  short_name: Revenue
+  perspective: financial
+  tier: 0
+  timing: lagging
+  direction: higher_is_better
+  formula: "gross revenue - discounts - returns, trailing twelve months"
+  compute:
+    kind: formula
+    expression: "TTM(SUM(orders.gross_revenue) - SUM(orders.discounts) - SUM(orders.returns))"
+  unit: currency
+  owner_role: CEO
+  source_systems: [ecommerce_platform]
+  interpretation: >
+    What the business actually kept, after promotions and after goods came
+    back. The top line most retail dashboards show is gross, which flatters a
+    heavily discounted or heavily returned book.
+  pitfalls: >
+    Gross revenue is the number platforms report by default. If this figure
+    looks low against your Shopify dashboard, that gap is the discounts and
+    returns — it is the point of the metric, not an error.
+  serves_objectives: [growth, margin_expansion]
+  core: true
+
+- id: orders_count
+  name: Orders
+  perspective: customer
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  formula: "count of orders, trailing twelve months"
+  compute:
+    kind: formula
+    expression: "TTM(SUM(orders.orders))"
+  unit: count
+  owner_role: COO
+  source_systems: [ecommerce_platform]
+  interpretation: >
+    Volume, independent of price. Read beside AOV: revenue growth driven by
+    orders is a different business from revenue growth driven by price.
+  pitfalls: >
+    An order is not a customer. A repeat buyer inflates this without widening
+    the base — check it against active buyers before reading it as reach.
+  serves_objectives: [growth]
+  core: true
+
+- id: aov
+  name: Average Order Value
+  short_name: AOV
+  perspective: financial
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: net_revenue
+  formula: "net revenue / orders"
+  compute:
+    kind: formula
+    expression: "SAFE_DIV(net_revenue, orders_count)"
+  unit: currency
+  owner_role: CMO
+  source_systems: [ecommerce_platform]
+  benchmark:
+    p25: 45
+    p50: 72
+    p75: 120
+    source: "Illustrative D2C composite, mixed categories"
+  interpretation: >
+    The lever that does not need more traffic. Basket size responds to
+    bundling, thresholds and merchandising far faster than acquisition does.
+  pitfalls: >
+    Rises automatically when a discount campaign ends, which is not the same
+    as customers choosing to spend more. Read it with discount rate beside it.
+  serves_objectives: [growth, margin_expansion]
+  core: true
+
+- id: conversion_rate
+  name: Conversion Rate
+  perspective: internal_process
+  tier: 1
+  timing: leading
+  direction: higher_is_better
+  formula: "orders / sessions"
+  compute:
+    kind: formula
+    expression: "SAFE_DIV(SUM(traffic.orders), SUM(traffic.sessions))"
+  unit: pct
+  owner_role: CMO
+  source_systems: [analytics]
+  benchmark:
+    p25: 0.014
+    p50: 0.024
+    p75: 0.038
+    source: "Illustrative D2C composite, all channels blended"
+  alert_bands: {green: 0.025, red: 0.012}
+  interpretation: >
+    The cheapest growth available: a tenth of a point here is worth more than
+    the same spend on acquisition, because it compounds across every channel.
+  pitfalls: >
+    Blended conversion hides everything. Marketplace traffic converts several
+    times better than paid social, so a shift in channel mix moves this number
+    without anything on the site changing.
+  serves_objectives: [growth, margin_expansion]
+  core: true
+
+- id: cart_abandonment_rate
+  name: Cart Abandonment Rate
+  perspective: internal_process
+  tier: 2
+  timing: leading
+  direction: lower_is_better
+  formula: "1 - orders / add-to-carts"
+  compute:
+    kind: formula
+    expression: "1 - SAFE_DIV(SUM(traffic.orders), SUM(traffic.add_to_carts))"
+  unit: pct
+  owner_role: CPO
+  source_systems: [analytics]
+  benchmark:
+    p25: 0.82
+    p50: 0.70
+    p75: 0.58
+    source: "Illustrative D2C composite"
+  interpretation: >
+    Intent that did not convert — the most recoverable demand a retailer has,
+    because these people already chose the product.
+  pitfalls: >
+    Always high, and comparing it across businesses is nearly meaningless.
+    Its own trend is the signal; a jump usually means checkout broke.
+  serves_objectives: [growth]
+
+- id: return_rate
+  name: Return Rate
+  perspective: internal_process
+  tier: 1
+  timing: lagging
+  direction: lower_is_better
+  formula: "returns / (gross revenue - discounts)"
+  compute:
+    kind: formula
+    expression: "SAFE_DIV(SUM(orders.returns), SUM(orders.gross_revenue) - SUM(orders.discounts))"
+  unit: pct
+  owner_role: COO
+  source_systems: [ecommerce_platform, wms]
+  benchmark:
+    p25: 0.22
+    p50: 0.14
+    p75: 0.07
+    source: "Illustrative composite; apparel runs far higher than home"
+  alert_bands: {green: 0.12, red: 0.25}
+  interpretation: >
+    Revenue that was booked and then left. It costs twice — the sale reverses
+    and the handling is real — so a point here is worth more than a point of
+    discount.
+  pitfalls: >
+    Category mix drives most of the variance. A blended rate that rises may
+    only mean apparel grew, which is why the return-by-category exhibit exists.
+  serves_objectives: [margin_expansion, quality]
+  core: true
+
+- id: discount_rate
+  name: Discount Rate
+  perspective: financial
+  tier: 2
+  timing: lagging
+  direction: lower_is_better
+  formula: "discounts / gross revenue"
+  compute:
+    kind: formula
+    expression: "SAFE_DIV(SUM(orders.discounts), SUM(orders.gross_revenue))"
+  unit: pct
+  owner_role: CMO
+  source_systems: [ecommerce_platform]
+  benchmark:
+    p25: 0.18
+    p50: 0.11
+    p75: 0.05
+    source: "Illustrative D2C composite"
+  interpretation: >
+    How much of the list price is being given away to move stock. Rising
+    discount with flat volume is a pricing problem wearing a promotion costume.
+  pitfalls: >
+    Seasonal by design — a fourth-quarter spike is the plan, not a finding.
+    Compare like months.
+  serves_objectives: [margin_expansion]
+
+- id: contribution_margin
+  name: Contribution Margin
+  perspective: financial
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: net_revenue
+  formula: "(net revenue - cogs - marketing) / net revenue"
+  compute:
+    kind: formula
+    expression: >
+      SAFE_DIV(monthly_financials.revenue - monthly_financials.cogs
+               - monthly_financials.marketing_cost, monthly_financials.revenue)
+  unit: pct
+  owner_role: CFO
+  source_systems: [gl]
+  benchmark:
+    p25: 0.08
+    p50: 0.18
+    p75: 0.30
+    source: "Illustrative D2C composite, after variable marketing"
+  alert_bands: {green: 0.15, red: 0.05}
+  interpretation: >
+    What each pound of revenue leaves behind once the goods and the marketing
+    to sell them are paid for. The number that decides whether growth is worth
+    having.
+  pitfalls: >
+    Treating all marketing as variable overstates the cost of an incremental
+    sale; treating none of it as variable understates it. Both readings are
+    defensible and they are not the same metric.
+  serves_objectives: [margin_expansion, cash_liquidity]
+  core: true
+
+- id: gross_margin_pct
+  name: Gross Margin
+  perspective: financial
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  formula: "gross profit / net revenue"
+  compute:
+    kind: formula
+    expression: "SAFE_DIV(monthly_financials.gross_profit, monthly_financials.revenue)"
+  unit: pct
+  owner_role: CFO
+  source_systems: [gl]
+  benchmark:
+    p25: 0.32
+    p50: 0.42
+    p75: 0.55
+    source: "Illustrative retail composite — deliberately not the SaaS band"
+  alert_bands: {green: 0.40, red: 0.28}
+  interpretation: >
+    Product economics before any of the cost of selling. In retail this moves
+    with landed cost and with discounting, so it is a supply-chain metric as
+    much as a pricing one.
+  pitfalls: >
+    Whether returns handling and inbound freight sit in cost of goods varies
+    by business, and the choice moves this by several points. State it.
+  serves_objectives: [margin_expansion]
+  core: true
+
+- id: repeat_purchase_rate
+  name: Repeat Purchase Rate
+  perspective: customer
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  formula: "repeat buyers / all buyers in the month"
+  compute:
+    kind: formula
+    expression: "SAFE_DIV(SUM(buyers.repeat_buyers), SUM(buyers.active_buyers))"
+  unit: pct
+  owner_role: CCO
+  source_systems: [ecommerce_platform]
+  benchmark:
+    p25: 0.22
+    p50: 0.35
+    p75: 0.52
+    source: "Illustrative D2C composite"
+  alert_bands: {green: 0.35, red: 0.20}
+  interpretation: >
+    Retail's version of retention: what share of the people who bought this
+    month had bought before. A business at 15% is buying every sale twice; one
+    at 50% has a base that comes back without being paid for again.
+  pitfalls: >
+    Measured per month, so a long purchase cycle depresses it without the
+    business being any worse at retaining people. Trend it against itself.
+  serves_objectives: [retention, growth]
+  core: true
+
+- id: active_buyers
+  name: Active Buyers
+  perspective: customer
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  formula: "distinct buyers who ordered in the month"
+  compute:
+    kind: formula
+    expression: "SUM(buyers.active_buyers)"
+  unit: count
+  owner_role: CCO
+  source_systems: [ecommerce_platform]
+  interpretation: >
+    The size of the base actually transacting, as against everyone who ever
+    bought once. Revenue growth on a shrinking active base is borrowed.
+  pitfalls: >
+    Not the same as the customer list, which only ever grows, nor the same as
+    the trailing-year base. The gap between them is the lapsed file.
+  serves_objectives: [growth, retention]
+  core: true
+
+- id: inventory_turns
+  name: Inventory Turns
+  perspective: internal_process
+  tier: 2
+  timing: lagging
+  direction: higher_is_better
+  formula: "annualised units sold / units on hand"
+  compute:
+    kind: formula
+    expression: "SAFE_DIV(TTM(SUM(inventory.units_sold)), AVG(inventory.units_on_hand))"
+  unit: ratio
+  owner_role: COO
+  source_systems: [wms]
+  benchmark:
+    p25: 2.5
+    p50: 4.5
+    p75: 8.0
+    source: "Illustrative retail composite; varies enormously by category"
+  alert_bands: {green: 4.0, red: 2.0}
+  interpretation: >
+    How hard the working capital is working. Stock is cash sitting in a
+    warehouse, and a retailer can be profitable and insolvent at the same time.
+  pitfalls: >
+    Averaging on-hand across a seasonal year hides a fourth-quarter build.
+    A high figure can also mean chronic stockouts rather than good discipline.
+  serves_objectives: [cash_liquidity, margin_expansion]
+
+- id: stockout_days
+  name: Stockout Days
+  perspective: internal_process
+  tier: 3
+  timing: leading
+  direction: lower_is_better
+  formula: "average days out of stock per category per month"
+  compute:
+    kind: formula
+    expression: "AVG(inventory.stockout_days)"
+  unit: days
+  owner_role: COO
+  source_systems: [wms]
+  alert_bands: {green: 2.0, red: 6.0}
+  interpretation: >
+    Demand that arrived and found nothing. It never appears in the revenue
+    line, which is exactly why it needs its own.
+  pitfalls: >
+    Counts days, not lost value. A day out of stock on the best seller is not
+    a day out of stock on the long tail.
+  serves_objectives: [growth, quality]
+
+- id: marketing_pct_revenue
+  name: Marketing as % of Revenue
+  perspective: financial
+  tier: 2
+  timing: lagging
+  direction: lower_is_better
+  formula: "marketing spend / net revenue"
+  compute:
+    kind: formula
+    expression: "SAFE_DIV(monthly_financials.marketing_cost, monthly_financials.revenue)"
+  unit: pct
+  owner_role: CMO
+  source_systems: [gl]
+  benchmark:
+    p25: 0.24
+    p50: 0.16
+    p75: 0.09
+    source: "Illustrative D2C composite"
+  alert_bands: {green: 0.14, red: 0.26}
+  interpretation: >
+    What it costs to keep the demand coming. In retail this is the single
+    largest controllable line after cost of goods.
+  pitfalls: >
+    Falls when a brand coasts on past investment, which reads as efficiency
+    for two quarters and then as decline. Read with new-buyer share.
+  serves_objectives: [margin_expansion, growth]
+
+- id: cost_per_order
+  name: Cost per Order
+  perspective: financial
+  tier: 2
+  timing: lagging
+  direction: lower_is_better
+  driver_parent: marketing_pct_revenue
+  formula: "marketing spend / orders"
+  compute:
+    kind: formula
+    expression: "SAFE_DIV(SUM(marketing.spend), SUM(orders.orders))"
+  unit: currency
+  owner_role: CMO
+  source_systems: [gl, ads]
+  benchmark:
+    p25: 22
+    p50: 13
+    p75: 7
+    source: "Illustrative D2C composite"
+  interpretation: >
+    Acquisition cost expressed in the unit a retailer actually manages. Read
+    against AOV: cost per order above contribution per order is a business
+    paying to lose money.
+  pitfalls: >
+    Charges all marketing to new orders, including spend aimed at repeat
+    buyers, so it overstates true acquisition cost for a brand with a strong
+    base.
+  serves_objectives: [margin_expansion]
+
+- id: sessions
+  name: Sessions
+  perspective: internal_process
+  tier: 3
+  timing: leading
+  direction: higher_is_better
+  formula: "total sessions across channels"
+  compute:
+    kind: formula
+    expression: "SUM(traffic.sessions)"
+  unit: count
+  owner_role: CMO
+  source_systems: [analytics]
+  interpretation: >
+    The top of the funnel. On its own it says nothing — it is here so that
+    conversion and cost per order have a denominator the reader can see.
+  pitfalls: >
+    Bot traffic and app sessions are counted differently by every platform.
+    Trend it against your own history, never against someone else's number.
+  serves_objectives: [growth]
+
+- id: ebitda_margin
+  name: EBITDA Margin
+  perspective: financial
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  formula: "EBITDA / net revenue"
+  compute:
+    kind: formula
+    expression: "SAFE_DIV(monthly_financials.ebitda, monthly_financials.revenue)"
+  unit: pct
+  owner_role: CFO
+  source_systems: [gl]
+  benchmark:
+    p25: -0.02
+    p50: 0.06
+    p75: 0.14
+    source: "Illustrative D2C composite — thinner than software, by nature"
+  alert_bands: {green: 0.08, red: -0.05}
+  interpretation: >
+    Operating profitability before capital structure. Retail runs thin here,
+    so the absolute level matters less than whether it is moving the right way.
+  pitfalls: >
+    Excludes the working capital that retail actually consumes. A business can
+    hold EBITDA margin flat while running out of cash — read free cash flow too.
+  serves_objectives: [margin_expansion]
+  core: true
+
+- id: free_cash_flow_margin
+  name: Free Cash Flow Margin
+  perspective: financial
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: ebitda_margin
+  formula: "free cash flow / net revenue"
+  compute:
+    kind: formula
+    expression: "SAFE_DIV(monthly_financials.free_cash_flow, monthly_financials.revenue)"
+  unit: pct
+  owner_role: CFO
+  source_systems: [gl]
+  benchmark:
+    p25: -0.06
+    p50: 0.03
+    p75: 0.10
+    source: "Illustrative D2C composite"
+  interpretation: >
+    The one that catches the stock build. A growing retailer buys inventory
+    before it sells it, so cash and profit diverge exactly when trading looks
+    best.
+  pitfalls: >
+    Lumpy month to month as buying cycles land. Read the trailing twelve
+    months, not a single month.
+  serves_objectives: [cash_liquidity, margin_expansion]
+  core: true
+
+- id: revenue_per_fte
+  name: Revenue per FTE
+  perspective: learning_growth
+  tier: 2
+  timing: lagging
+  direction: higher_is_better
+  formula: "trailing twelve month net revenue / headcount"
+  compute:
+    kind: formula
+    expression: "SAFE_DIV(net_revenue, SUM(headcount.fte))"
+  unit: currency
+  owner_role: COO
+  source_systems: [gl, hris]
+  benchmark:
+    p25: 180000
+    p50: 300000
+    p75: 480000
+    source: "Illustrative retail composite"
+  interpretation: >
+    Whether the operation scales or just grows. Retail adds people with volume
+    unless the fulfilment and service model is doing some of the work.
+  pitfalls: >
+    Outsourced fulfilment moves people off the payroll without making the
+    business more productive. Compare only against your own history.
+  serves_objectives: [margin_expansion]
+
+- id: headcount_growth
+  name: Headcount Growth (YoY)
+  perspective: learning_growth
+  tier: 3
+  timing: lagging
+  # Not "neutral": growing headcount is neither good nor bad in itself, but the
+  # schema has no such direction and target_band is the honest fit — the SaaS
+  # pack's own headcount_growth makes the same call.
+  direction: target_band
+  formula: "year-on-year change in total FTE"
+  compute:
+    kind: formula
+    expression: "YOY(SUM(headcount.fte))"
+  unit: pct
+  owner_role: CPO
+  source_systems: [hris]
+  interpretation: >
+    Read against revenue growth. Headcount growing faster than revenue is the
+    operating-leverage question in its simplest form.
+  pitfalls: >
+    Seasonal retail hires distort the fourth quarter. Compare like months.
+  serves_objectives: [margin_expansion]

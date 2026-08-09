@@ -440,3 +440,308 @@ tbody tr:hover { background: var(--accent-soft); }
   .result-head { flex-direction: column; align-items: flex-start; }
   #res-frame { height: 64vh; }
 }
+
+/* ==========================================================================
+   Studio — the pipeline as an editable surface.
+
+   The rail mirrors the stage graph in kpi_maker/pipeline/stages.py, in
+   dependency order, so the mental model of "what happens to my data" and the
+   mental model of "what a change re-runs" are the same picture.
+   ========================================================================== */
+
+.studio {
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+  padding-bottom: 88px;          /* clear the sticky action bar */
+}
+
+.studio-rail { display: flex; flex-direction: column; gap: 4px; position: sticky; top: 78px; }
+.studio-rail .rail-btn { text-align: left; }
+
+.studio-main { min-width: 0; }
+/* Clear the sticky topbar when a control is scrolled into view; without
+   this the header sits on top of it and eats the click. */
+.studio-panel, .studio-section, .toggle, .rail-btn, .kpi-table tr { scroll-margin-top: 96px; }
+.studio-panel { display: none; }
+.studio-panel.active { display: block; }
+
+.studio-section { margin-bottom: 26px; }
+.studio-section h2 {
+  font-size: 15px; font-weight: 620; letter-spacing: -0.01em; margin: 0 0 4px;
+}
+.studio-section .hint { color: var(--muted); font-size: 12.5px; margin: 0 0 14px; max-width: 62ch; }
+
+.field-row { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 16px; }
+.field {
+  display: flex; flex-direction: column; gap: 5px;
+  font-size: 12px; color: var(--text-secondary);
+}
+.field > span { font-weight: 560; }
+.field input, .field select, .fx-field input, .fx-field select, .fx-field textarea {
+  background: var(--raised); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 10px; min-width: 150px;
+}
+.field input:focus, .field select:focus,
+.fx-field input:focus, .fx-field select:focus, .fx-field textarea:focus {
+  outline: 2px solid var(--accent-soft); border-color: var(--accent);
+}
+
+.toggle-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; }
+.toggle {
+  display: flex; align-items: center; gap: 9px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 9px 11px; background: var(--raised); font-size: 13px;
+}
+.toggle:hover { border-color: var(--border-strong); }
+.toggle input { accent-color: var(--accent); }
+.toggle .toggle-sub { color: var(--muted); font-size: 11.5px; }
+
+/* KPI catalog ------------------------------------------------------------ */
+
+.kpi-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.kpi-table th {
+  text-align: left; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--muted); font-weight: 600;
+  padding: 8px 10px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 62px; background: var(--page);
+}
+.kpi-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.kpi-table tr.excluded td { opacity: .45; }
+.kpi-table tr.excluded .k-name { text-decoration: line-through; }
+.kpi-table .k-name { font-weight: 560; }
+.kpi-table .k-id { color: var(--muted); font-size: 11px; font-family: ui-monospace, monospace; }
+.kpi-table input[type="number"] {
+  width: 96px; background: var(--raised); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 7px; padding: 4px 7px; font-size: 12px;
+}
+.k-state { display: flex; gap: 5px; }
+.k-state button {
+  border: 1px solid var(--border); background: var(--raised); color: var(--muted);
+  border-radius: 7px; padding: 3px 9px; font-size: 11.5px; cursor: pointer;
+}
+.k-state button:hover { border-color: var(--border-strong); color: var(--text-primary); }
+.k-state button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.k-state button.off { background: var(--critical); border-color: var(--critical); color: #fff; }
+
+.tag-user {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
+  background: var(--accent-soft); color: var(--accent);
+  border-radius: 5px; padding: 1px 5px; margin-left: 6px; font-weight: 650;
+}
+
+/* Sticky action bar ------------------------------------------------------ */
+
+.studio-bar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 12px 24px; background: var(--raised);
+  border-top: 1px solid var(--border); box-shadow: var(--shadow);
+}
+.studio-bar-text { font-size: 13px; color: var(--text-secondary); }
+.studio-bar-text strong { color: var(--text-primary); }
+.studio-bar-actions { display: flex; gap: 10px; align-items: center; }
+
+/* Formula editor --------------------------------------------------------- */
+
+/* `hidden` must win over a display rule. `.modal` sets display:flex, which
+   beats the user-agent's `[hidden] { display: none }` on specificity — so a
+   hidden modal stayed laid out, invisible but still swallowing clicks meant for
+   the page underneath. The drawer above only escapes this by not setting
+   display at all; making the rule global stops the next component rediscovering
+   it the hard way. */
+[hidden] { display: none !important; }
+
+.modal-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.42); z-index: 60; }
+.modal {
+  position: fixed; z-index: 61; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: min(720px, calc(100vw - 32px)); max-height: min(86vh, 900px);
+  display: flex; flex-direction: column;
+  background: var(--raised); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.modal-head, .modal-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px;
+}
+.modal-head { border-bottom: 1px solid var(--border); }
+.modal-head h2 { margin: 0; font-size: 15px; }
+.modal-foot { border-top: 1px solid var(--border); }
+.modal-foot-actions { display: flex; gap: 10px; }
+.modal-body { padding: 16px 18px; overflow-y: auto; }
+
+.fx-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.fx-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-secondary); }
+.fx-field > span { font-weight: 560; }
+.fx-formula { margin-top: 14px; }
+.fx-formula textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px; line-height: 1.5; resize: vertical; width: 100%;
+}
+
+.fx-status { margin-top: 10px; font-size: 12.5px; min-height: 20px; }
+.fx-status.ok  { color: var(--good); }
+.fx-status.err { color: var(--critical); }
+.fx-status code {
+  font-family: ui-monospace, monospace; background: var(--accent-soft);
+  border-radius: 4px; padding: 1px 5px;
+}
+
+.fx-preview { margin-top: 10px; }
+.fx-preview table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.fx-preview th, .fx-preview td {
+  padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: right;
+}
+.fx-preview th:first-child, .fx-preview td:first-child { text-align: left; }
+.fx-spark { display: flex; align-items: flex-end; gap: 2px; height: 42px; margin-top: 8px; }
+.fx-spark i { flex: 1; background: var(--accent); border-radius: 2px 2px 0 0; min-height: 2px; }
+
+.fx-advanced, .fx-help { margin-top: 16px; font-size: 12.5px; }
+.fx-advanced summary, .fx-help summary { cursor: pointer; color: var(--muted); }
+.fx-advanced[open] summary, .fx-help[open] summary { margin-bottom: 10px; }
+.fx-fn { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.fx-fn code { font-family: ui-monospace, monospace; color: var(--accent); }
+.fx-fn span { display: block; color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+.fx-save-lib { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-secondary); }
+
+@media (max-width: 820px) {
+  .studio { grid-template-columns: 1fr; }
+  .studio-rail { position: static; flex-direction: row; overflow-x: auto; }
+}
+
+/* ---------------- Studio: cleaning recipe and ingestion ---------------- */
+
+.op-list { display: flex; flex-direction: column; gap: 8px; }
+.op-card {
+  display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 12px;
+  align-items: start; padding: 11px 13px; background: var(--raised);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.op-card.off { opacity: .5; }
+.op-num {
+  width: 22px; height: 22px; border-radius: 50%; background: var(--accent-soft);
+  color: var(--accent); font-size: 11px; font-weight: 700;
+  display: grid; place-items: center;
+}
+.op-title { font-size: 13px; font-weight: 600; }
+.op-target {
+  font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 7px;
+  font-family: ui-monospace, monospace;
+}
+.op-line { font-size: 12.5px; color: var(--text-secondary); margin-top: 2px; }
+.op-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.op-actions { display: flex; gap: 4px; }
+.op-actions button {
+  border: 1px solid var(--border); background: transparent; color: var(--muted);
+  border-radius: 6px; padding: 2px 8px; font-size: 11.5px; cursor: pointer;
+}
+.op-actions button:hover:not([disabled]) { color: var(--text-primary); border-color: var(--border-strong); }
+.op-actions button[disabled] { opacity: .35; cursor: default; }
+
+.suggest-box {
+  border: 1px solid var(--accent); border-radius: var(--radius-sm);
+  background: var(--accent-soft); padding: 12px 14px; margin-bottom: 16px;
+}
+.suggest-head { font-size: 12px; font-weight: 620; color: var(--accent); margin-bottom: 8px; }
+.suggest-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  font-size: 12.5px; padding: 4px 0;
+}
+
+.upload-row { margin-bottom: 16px; }
+.dropzone.compact { padding: 18px; gap: 3px; }
+.upload-report {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 13px 15px; margin-bottom: 18px; background: var(--raised);
+}
+.upload-head { font-size: 13px; margin-bottom: 8px; }
+.upload-shape { font-size: 12.5px; color: var(--text-secondary); margin: 10px 0; }
+.upload-shape code { font-family: ui-monospace, monospace; color: var(--accent); }
+
+/* A confidence bar, so an unsure mapping looks unsure at a glance rather than
+   requiring the reader to compare two-decimal numbers. */
+.conf {
+  display: inline-block; width: 74px; height: 5px; border-radius: 3px;
+  background: var(--grid); overflow: hidden; margin-right: 7px; vertical-align: middle;
+}
+.conf i { display: block; height: 100%; background: var(--muted); }
+.conf-confident i { background: var(--good); }
+.conf-uncertain i { background: var(--warning); }
+.conf-unmapped  i { background: var(--critical); }
+
+.coverage { margin-top: 6px; }
+.coverage-head { font-size: 13px; margin-bottom: 12px; color: var(--text-secondary); }
+.plain.small { font-size: 12px; color: var(--muted); padding-left: 18px; margin: 6px 0; }
+
+
+/* ---------------------------------------------------- Studio: design panel */
+.studio-sub { font-size: 13px; font-weight: 600; margin: 22px 0 6px; }
+
+/* ---- AI panel and plan review ---- */
+.ai-setup { background: var(--raised); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px; font-size: 12.5px; margin: 0;
+  white-space: pre-wrap; color: var(--text-secondary); }
+.ai-master { margin-bottom: 4px; }
+.plan-summary { margin: 0 0 18px; color: var(--text-secondary); font-size: 14px;
+  line-height: 1.6; }
+.plan-change { border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; margin-bottom: 10px; }
+/* A refused change is shown, not hidden: a suggestion that silently vanishes
+   is indistinguishable from one that was never made. */
+.plan-refused { opacity: 0.62; }
+.plan-pick { display: flex; align-items: center; gap: 9px; cursor: pointer; }
+.plan-pick code { font-size: 12.5px; }
+.plan-diff { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  margin: 8px 0 0 25px; font-size: 12.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* A section order is one unbroken JSON token and runs past the modal edge
+   with wrapping alone; the reviewer has to be able to read the whole value
+   they are accepting. */
+.plan-diff > span { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.plan-before { color: var(--text-secondary); text-decoration: line-through; }
+/* Nothing to strike through when there was no previous value. */
+.plan-before.plan-unset { text-decoration: none; color: var(--muted); }
+.plan-arrow { color: var(--muted); }
+.plan-after { color: var(--text-primary); font-weight: 600; }
+.plan-why { margin: 7px 0 0 25px; font-size: 13px; color: var(--text-secondary);
+  line-height: 1.55; }
+.plan-reject { margin: 6px 0 0 25px; font-size: 12.5px; color: var(--serious); }
+
+.brand-preview { margin: 12px 0 4px; }
+.swatch-row { display: flex; flex-wrap: wrap; gap: 18px; margin-bottom: 10px; }
+.swatch { display: inline-flex; align-items: center; gap: 8px; font-size: 12px;
+  color: var(--text-secondary); }
+.swatch i { width: 30px; height: 30px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); display: block; flex: none; }
+.swatch code { font-family: ui-monospace, monospace; font-size: 11px; }
+
+.adjust-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 12px; margin-top: 8px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--accent-soft); }
+.adjust-row .arrow { color: var(--muted); }
+.adjust-why { font-size: 12px; color: var(--text-secondary); flex: 1 1 240px; }
+.logo-preview { max-height: 44px; max-width: 240px; }
+
+.order-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.order-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  margin-bottom: 6px; }
+.order-num { width: 20px; color: var(--muted); font-size: 12px;
+  font-variant-numeric: tabular-nums; }
+.order-name { flex: 1; font-size: 13px; }
+.order-actions { display: flex; gap: 4px; }
+.order-actions button { border: 1px solid var(--border); background: none;
+  color: var(--text-secondary); border-radius: var(--radius-sm);
+  width: 26px; height: 24px; cursor: pointer; font-size: 12px; }
+.order-actions button:hover:not(:disabled) { border-color: var(--accent);
+  color: var(--accent); }
+.order-actions button:disabled { opacity: .3; cursor: default; }
+
+.toggle select { margin-left: auto; font: inherit; font-size: 11px;
+  background: none; color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1px 4px; }
+
+.field input[type="range"] { width: 100%; accent-color: var(--accent); }
+.range-value { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }

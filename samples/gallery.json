@@ -4,8 +4,12 @@
     "file": "northwind_saas.json",
     "title": "Northwind Analytics",
     "tagline": "Growing fast, leaking customers",
-    "story": "A $12M B2B analytics company growing 51% a year. Growth looks healthy at the top line, but a third of everything won is given straight back — and the churn is concentrated in one segment the blended number completely hides.",
-    "tags": ["Growth", "SMB churn", "Board pack"],
+    "story": "A $12M B2B analytics company growing 51% a year. Growth looks healthy at the top line, but a third of everything won is given straight back \u2014 and the churn is concentrated in one segment the blended number completely hides.",
+    "tags": [
+      "Growth",
+      "SMB churn",
+      "Board pack"
+    ],
     "watch_for": "Segment-level churn versus the blended rate"
   },
   {
@@ -13,8 +17,12 @@
     "file": "meridian_early.json",
     "title": "Meridian Cloud",
     "tagline": "Early stage, running out of road",
-    "story": "A £2.4M developer-tools business at 38% SMB churn, burning cash to grow. The unit economics have not closed yet and the runway is short enough that the financing calendar is starting to drive operating decisions.",
-    "tags": ["Cash & runway", "Self-serve", "Investor update"],
+    "story": "A \u00a32.4M developer-tools business at 38% SMB churn, burning cash to grow. The unit economics have not closed yet and the runway is short enough that the financing calendar is starting to drive operating decisions.",
+    "tags": [
+      "Cash & runway",
+      "Self-serve",
+      "Investor update"
+    ],
     "watch_for": "Cash runway and burn multiple against growth"
   },
   {
@@ -22,8 +30,25 @@
     "file": "atlas_enterprise.json",
     "title": "Atlas Enterprise Software",
     "tagline": "Profitable, efficient, concentrated",
-    "story": "A €45M enterprise ERP vendor with 79% gross margins and best-in-class retention. The risk is not performance — it is that nearly half of revenue sits with ten customers, which caps valuation regardless of how good the margins look.",
-    "tags": ["Margin", "Enterprise", "Concentration risk"],
+    "story": "A \u20ac45M enterprise ERP vendor with 79% gross margins and best-in-class retention. The risk is not performance \u2014 it is that nearly half of revenue sits with ten customers, which caps valuation regardless of how good the margins look.",
+    "tags": [
+      "Margin",
+      "Enterprise",
+      "Concentration risk"
+    ],
     "watch_for": "Top-10 customer concentration"
+  },
+  {
+    "id": "kestrel_retail",
+    "file": "kestrel_retail.json",
+    "title": "Kestrel & Co",
+    "tagline": "Growing on volume it has to buy",
+    "story": "A \u00a321.5M D2C apparel brand growing 28% a year into a fourth quarter that carries the whole year. Almost nine in ten purchases come from people who bought before, which sounds like loyalty until you notice returns are running near a quarter of apparel revenue and marketing is nineteen pence in every pound.",
+    "tags": [
+      "Returns",
+      "Seasonality",
+      "Contribution margin"
+    ],
+    "watch_for": "Return rate by category against the blended number"
   }
 ]

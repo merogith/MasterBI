@@ -126,6 +126,11 @@ class ContractTerms(str, Enum):
     annual = "annual"
     multi_year = "multi_year"
     mixed = "mixed"
+    # A retailer sells a thing and the transaction is over. Without this the
+    # only honest options were to call a single purchase a "monthly contract"
+    # or to leave the field lying — and the deferred-revenue maths below reads
+    # directly off it, so a lie here would invent a balance that does not exist.
+    none = "none"
 
 
 class BusinessModelBlock(BaseModel):
@@ -140,7 +145,8 @@ class BusinessModelBlock(BaseModel):
     # deferred revenue, an annual-prepay business has a year of it.
     contract_terms: ContractTerms = ContractTerms.mixed
     annual_prepay_share: float = Field(default=0.55, ge=0.0, le=1.0)
-    avg_contract_months: float = Field(default=12.0, ge=1.0, le=60.0)
+    # 0 is legal and means "no contract" — a single transaction has no term.
+    avg_contract_months: float = Field(default=12.0, ge=0.0, le=60.0)
 
 
 class Ownership(str, Enum):

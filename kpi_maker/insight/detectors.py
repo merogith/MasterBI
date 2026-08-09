@@ -48,29 +48,83 @@ class Finding:
 _CURRENCY = "USD"
 
 
+def _stable(value: float) -> float:
+    """Drop the bits a threaded BLAS reduction does not reproduce."""
+    return float(f"{float(value):.9g}")
+
+
 def _fmt(value: Optional[float], unit: str) -> str:
     return fmt_value(value, unit, _CURRENCY)
 
 
 def detect_all(results: List[MetricResult], tables: Dict[str, pd.DataFrame],
-               profile: CompanyProfile) -> List[Finding]:
+               profile: CompanyProfile, spec=None) -> List[Finding]:
+    """Run the deterministic detectors.
+
+    `spec` is a `spec.AnalysisSpec` (or None for all of them, unfiltered).
+    Selecting detectors is a real control rather than cosmetics: a bank cares
+    about the runway and concentration findings and not much else, and a
+    twenty-item findings list buries the two that matter.
+    """
     global _CURRENCY
     _CURRENCY = profile.identity.currency
     by_id = {r.kpi.id: r for r in results if r.computed}
-    findings: List[Finding] = []
 
-    findings += _status_breaches(results)
-    findings += _benchmark_gaps(results)
-    findings += _trend_breaks(results)
-    findings += _segment_outliers(tables, profile)
-    findings += _operating_leverage(by_id)
-    findings += _arr_bridge(tables, profile)
-    findings += _channel_efficiency(tables)
-    findings += _runway(by_id)
+    registry = {
+        "status_breaches": lambda: _status_breaches(results),
+        "benchmark_gaps": lambda: _benchmark_gaps(results),
+        "trend_breaks": lambda: _trend_breaks(results),
+        "segment_outliers": lambda: _segment_outliers(tables, profile),
+        "operating_leverage": lambda: _operating_leverage(by_id),
+        "arr_bridge": lambda: _arr_bridge(tables, profile),
+        "channel_efficiency": lambda: _channel_efficiency(tables),
+        "runway": lambda: _runway(by_id),
+    }
+
+    wanted = list(registry) if spec is None or spec.detectors is None else [
+        name for name in spec.detectors if name in registry]
+    disabled = set(spec.disabled) if spec is not None else set()
+    skipped: List[str] = []
+
+    findings: List[Finding] = []
+    for name in wanted:
+        if name in disabled:
+            continue
+        try:
+            findings += registry[name]()
+        except KeyError as exc:
+            # A partial upload has fewer fact tables than the generator makes,
+            # and a detector that needs one of the absent ones simply has
+            # nothing to say. The metrics engine already treats missing data as
+            # "not computable" rather than an error; a detector crashing the
+            # whole run would make an honest partial upload impossible.
+            skipped.append(f"{name}: needs the {exc} table")
+        except Exception as exc:                        # noqa: BLE001
+            skipped.append(f"{name}: {type(exc).__name__}: {exc}")
 
     findings = _merge_same_kpi(findings)
     findings.sort(key=lambda f: (f.rank, f.id))
+
+    if spec is not None and spec.min_severity:
+        # "positive" ranks last in SEVERITY_ORDER, so a floor of "medium" keeps
+        # strengths as well as issues — dropping them would turn every report
+        # into a list of problems.
+        floor = SEVERITY_ORDER.get(spec.min_severity, 9)
+        findings = [f for f in findings
+                    if f.rank <= floor or f.severity == "positive"]
+    if spec is not None and spec.max_findings is not None:
+        findings = findings[:spec.max_findings]
+
+    # Exposed rather than swallowed: "why is there no channel finding?" must
+    # have an answer, the same way every dropped KPI does.
+    detect_all.skipped = skipped
     return findings
+
+
+DETECTOR_NAMES = [
+    "status_breaches", "benchmark_gaps", "trend_breaks", "segment_outliers",
+    "operating_leverage", "arr_bridge", "channel_efficiency", "runway",
+]
 
 
 def _merge_same_kpi(findings: List[Finding]) -> List[Finding]:
@@ -198,8 +252,16 @@ def _trend_breaks(results: List[MetricResult], window: int = 6) -> List[Finding]
             continue
         recent = s.iloc[-window:]
         prior = s.iloc[-window * 2:-window]
-        recent_slope = np.polyfit(range(len(recent)), recent.values, 1)[0]
-        prior_slope = np.polyfit(range(len(prior)), prior.values, 1)[0]
+        # Rounded to nine significant figures because `polyfit` goes through
+        # LAPACK's least-squares path, whose reduction order depends on how
+        # many BLAS threads happen to be available. That moves the last two or
+        # three bits between processes on identical input — enough to make
+        # findings.json differ run to run, which costs the no-regression gate
+        # its ability to tell a real change from noise. Nine figures is far
+        # beyond any precision a twelve-point regression slope carries, and the
+        # comparisons below are unaffected at any plausible magnitude.
+        recent_slope = _stable(np.polyfit(range(len(recent)), recent.values, 1)[0])
+        prior_slope = _stable(np.polyfit(range(len(prior)), prior.values, 1)[0])
 
         scale = abs(s.mean()) or 1.0
         if abs(recent_slope - prior_slope) / scale < 0.02:

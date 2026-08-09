@@ -94,7 +94,7 @@ QUESTIONS: List[Dict[str, Any]] = [
        "Selects the KPI library and the data model.",
        [
            {"value": "saas", "label": "Software / subscription"},
-           {"value": "ecommerce", "label": "E-commerce or D2C", "disabled": True},
+           {"value": "ecommerce", "label": "E-commerce or D2C"},
            {"value": "services", "label": "Professional services", "disabled": True},
            {"value": "manufacturing", "label": "Manufacturing", "disabled": True},
        ],

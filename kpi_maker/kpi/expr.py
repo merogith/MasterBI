@@ -18,13 +18,11 @@ from typing import Any
 
 from pydantic import BaseModel
 
-_ALLOWED_NODES = (
-    ast.Expression, ast.BoolOp, ast.UnaryOp, ast.Compare, ast.Name,
-    ast.Attribute, ast.Constant, ast.Tuple, ast.List,
-    ast.And, ast.Or, ast.Not,
-    ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.In, ast.NotIn,
-    ast.Load,
-)
+from ..formula.sandbox import BASE_NODES as _ALLOWED_NODES
+
+# The node whitelist lives in `formula/sandbox.py` because the formula engine
+# needs the same judgement about which AST nodes are safe. Two copies would
+# drift, and the one that drifted would be the one nobody was reading.
 
 
 class ExpressionError(ValueError):

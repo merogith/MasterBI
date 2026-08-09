@@ -1,0 +1,131 @@
+{
+  "identity": {
+    "name": "Kestrel & Co",
+    "country": "GB",
+    "currency": "GBP",
+    "fiscal_year_start": "01-01",
+    "language": "en"
+  },
+  "industry": {
+    "taxonomy": "NAICS",
+    "code": "454110",
+    "internal_sector": "retail.apparel_d2c",
+    "vertical_tags": [
+      "b2c",
+      "apparel",
+      "direct_to_consumer"
+    ]
+  },
+  "business_model": {
+    "type": "ecommerce",
+    "customer_type": "B2C",
+    "revenue_model": [
+      "transactional"
+    ],
+    "sales_motion": "self_serve",
+    "contract_terms": "none",
+    "annual_prepay_share": 0.0,
+    "avg_contract_months": 0
+  },
+  "size": {
+    "headcount_total": 96,
+    "headcount_by_function": {
+      "operations": 33,
+      "marketing": 17,
+      "merchandising": 16,
+      "technology": 13,
+      "customer_service": 11,
+      "ga": 6
+    },
+    "revenue_band": "10-50M",
+    "stage": "growth",
+    "age_years": 9
+  },
+  "market": {
+    "geographies": {
+      "GB": 0.68,
+      "IE": 0.12,
+      "DE": 0.11,
+      "FR": 0.09
+    },
+    "segments": [
+      {
+        "name": "one-off",
+        "share": 0.58,
+        "avg_acv": 142,
+        "logo_churn_annual": 0.78,
+        "expansion_annual": 0.0
+      },
+      {
+        "name": "returning",
+        "share": 0.33,
+        "avg_acv": 430,
+        "logo_churn_annual": 0.41,
+        "expansion_annual": 0.05
+      },
+      {
+        "name": "loyal",
+        "share": 0.09,
+        "avg_acv": 1180,
+        "logo_churn_annual": 0.16,
+        "expansion_annual": 0.1
+      }
+    ],
+    "customer_count": 65000,
+    "concentration_top10_pct": 0.01,
+    "seasonality": "high"
+  },
+  "financials": {
+    "revenue": 21500000,
+    "gross_margin_pct": 0.41,
+    "opex_split": {
+      "sales": 0.07,
+      "marketing": 0.19,
+      "rnd": 0.03,
+      "ga": 0.1
+    },
+    "cash": 2600000,
+    "net_debt": 1400000,
+    "growth_rate_yoy": 0.28
+  },
+  "org_culture": {
+    "data_maturity": "bi_tool",
+    "decision_cadence": "weekly",
+    "planning_horizon": "annual",
+    "risk_appetite": "balanced",
+    "kpi_experience": "medium"
+  },
+  "intent": {
+    "primary_objective": "margin_expansion",
+    "secondary": [
+      "retention",
+      "cash_liquidity"
+    ],
+    "horizon_months": 12,
+    "audience": "board"
+  },
+  "data_availability": {
+    "has": [
+      "ecommerce_platform",
+      "analytics",
+      "gl",
+      "hris",
+      "ads",
+      "wms"
+    ],
+    "missing": [
+      "survey",
+      "support_desk",
+      "crm"
+    ]
+  },
+  "provenance": {
+    "financials.gross_margin_pct": "sample",
+    "financials.revenue": "sample",
+    "market.segments": "sample",
+    "size.headcount_by_function": "sample",
+    "market.concentration_top10_pct": "benchmark_default:saas_b2b_p50"
+  },
+  "seed": 20250806,
+  "history_months": 36
+}
