@@ -28,7 +28,8 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 from kpi_maker.store import reset_cache, store  # noqa: E402
 from kpi_maker.store.runs import _MIGRATIONS, Store  # noqa: E402
@@ -253,6 +254,105 @@ def test_progress_events_do_not_write_to_the_index(api):
 
 
 # --------------------------------------------------------------------------
+# What each set of artifacts was built from
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def spec_run(api, monkeypatch):
+    """A run directory with a real spec on disk and no pipeline behind it."""
+    from kpi_maker.cli import load_profile
+    from kpi_maker.spec.schema import RunSpec
+
+    monkeypatch.setattr(api._POOL, "submit", lambda *a, **k: None)
+    spec = RunSpec.for_profile(
+        load_profile(ROOT / "samples" / "northwind_saas.json"))
+    run_dir = api.RUNS_DIR / "ppp"
+    run_dir.mkdir(parents=True)
+    (run_dir / "spec.json").write_text(
+        spec.model_dump_json(indent=2), encoding="utf-8")
+    return "ppp"
+
+
+def test_a_rerun_keeps_the_spec_it_is_about_to_replace(api, spec_run):
+    """A re-run overwrites the artifacts; the edit already overwrote `spec.json`.
+
+    Between the two there was no way left to say what the previous dashboard
+    was built from — which is the foundation compare and undo need, and what
+    "this month vs last month" rests on.
+    """
+    api.rerun(spec_run)
+
+    edited = json.loads((api.RUNS_DIR / spec_run / "spec.json").read_text())
+    edited["design"]["theme"] = "dark"
+    api.put_spec(spec_run, edited)
+    api.rerun(spec_run)
+
+    versions = api._store().versions(spec_run, with_spec=True)
+    assert [v["seq"] for v in versions] == [1, 2]
+    assert versions[0]["spec"]["design"]["theme"] == "light"
+    assert versions[1]["spec"]["design"]["theme"] == "dark"
+    assert all(v["author"] == "user" for v in versions)
+
+
+def test_a_rerun_that_rebuilds_nothing_is_not_a_version(api, spec_run, monkeypatch):
+    """Found by pressing the button twice: "re-run, rebuilding 0 stages".
+
+    A re-run with a clean cache produces the same artifacts it started with, so
+    it replaced no spec and there is nothing to attribute. Recording it anyway
+    fills the history with rows that differ only in their timestamp.
+    """
+    monkeypatch.setattr(api, "plan_rerun",
+                        lambda *a, **k: {"dirty": [], "reused": ["resolve"]})
+    api.rerun(spec_run)
+
+    assert api._store().versions(spec_run) == []
+
+
+def test_studio_edits_are_not_versions(api, spec_run):
+    """Every spec write funnels through `put_spec`, including the studio's
+    debounced per-keystroke PATCH. Versioning those would bury the handful of
+    rows that mean something under hundreds that do not, and 7.1 would then
+    have to add drafts just to make the history readable again.
+    """
+    current = json.loads((api.RUNS_DIR / spec_run / "spec.json").read_text())
+    for theme in ("dark", "light", "dark"):
+        current["design"]["theme"] = theme
+        api.put_spec(spec_run, current)
+
+    assert api._store().versions(spec_run) == []
+
+
+def test_an_accepted_plan_is_recorded_as_the_planners(api, spec_run):
+    """Once `spec.json` is overwritten, the paths are the only record of what
+    the model changed — and of the fact that a model, not the user, changed it.
+    """
+    api.ai_apply(spec_run, api.ApplyRequest(changes=[
+        {"path": "design.theme", "value": "dark"}]))
+
+    versions = api._store().versions(spec_run, with_spec=True)
+    assert len(versions) == 1
+    assert versions[0]["author"] == "planner"
+    assert versions[0]["message"] == "design.theme"
+    assert versions[0]["spec"]["design"]["theme"] == "dark"
+
+
+def test_versions_are_reachable_over_the_api(api, spec_run):
+    """A table nothing can read is the pattern this phase exists to stop."""
+    api.rerun(spec_run)
+
+    listed = api.list_spec_versions(spec_run)
+    assert [v["seq"] for v in listed] == [1]
+    assert "spec" not in listed[0], "the list is metadata; specs are large"
+    assert api.get_spec_version(spec_run, 1)["spec"]["design"]["theme"] == "light"
+
+
+def test_deleting_a_run_deletes_its_versions(api, spec_run):
+    api.rerun(spec_run)
+    api.delete_run(spec_run)
+    assert api._store().versions(spec_run) == []
+
+
+# --------------------------------------------------------------------------
 # The database itself
 # --------------------------------------------------------------------------
 
@@ -286,11 +386,11 @@ def test_migrations_run_once_and_keep_their_rows(tmp_path):
     """
     first = Store(tmp_path / "runs.db")
     first.upsert("lll", status="done", company="Acme")
-    assert first.version == len(_MIGRATIONS)
+    assert first.schema_version == len(_MIGRATIONS)
     first.close()
 
     second = Store(tmp_path / "runs.db")
-    assert second.version == len(_MIGRATIONS)
+    assert second.schema_version == len(_MIGRATIONS)
     assert second.get("lll")["company"] == "Acme"
     second.close()
 
@@ -303,7 +403,7 @@ def test_a_database_at_version_zero_upgrades(tmp_path):
     raw.close()
 
     opened = Store(path)
-    assert opened.version == len(_MIGRATIONS)
+    assert opened.schema_version == len(_MIGRATIONS)
     opened.upsert("mmm", status="done")
     assert opened.get("mmm")["status"] == "done"
     opened.close()

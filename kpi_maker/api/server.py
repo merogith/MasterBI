@@ -410,6 +410,8 @@ def create_run(req: RunRequest) -> Dict[str, Any]:
     # collides with it.
     _set(run_id, status="queued", mode=req.mode,
          company=profile.identity.name, started_at=_now(), progress=None)
+    _store().add_version(run_id, json.loads(spec.model_dump_json()),
+                         author="user", message=f"created from {req.mode}")
     _submit(run_id, spec)
     return {"run_id": run_id, "status": "queued", "company": profile.identity.name}
 
@@ -447,6 +449,24 @@ def put_spec(run_id: str, spec: Dict[str, Any]) -> Dict[str, Any]:
     return plan_rerun(validated, run_dir)
 
 
+@app.get("/api/runs/{run_id}/spec/versions")
+def list_spec_versions(run_id: str) -> List[Dict[str, Any]]:
+    """Every spec this run has actually built from, oldest first.
+
+    Metadata only. The specs themselves are large and the caller usually wants
+    the list — one version is `?seq=` below.
+    """
+    return _store().versions(run_id)
+
+
+@app.get("/api/runs/{run_id}/spec/versions/{seq}")
+def get_spec_version(run_id: str, seq: int) -> Dict[str, Any]:
+    version = _store().version(run_id, seq)
+    if version is None:
+        raise HTTPException(404, f"No version {seq} for run {run_id}")
+    return version
+
+
 @app.patch("/api/runs/{run_id}/spec")
 def patch_spec(run_id: str, body: SpecPatch) -> Dict[str, Any]:
     """Deep-merge a partial spec. The studio's per-field edits land here."""
@@ -472,6 +492,16 @@ def rerun(run_id: str) -> Dict[str, Any]:
     report = plan_rerun(spec, RUNS_DIR / run_id)
     _set(run_id, status="queued", mode="rerun",
          company=spec.profile.identity.name, started_at=_now(), progress=None)
+    # The re-run is about to overwrite the artifacts the previous spec produced,
+    # and `spec.json` was overwritten by whatever edit prompted it. Without this
+    # row nothing can say what the outgoing dashboard was built from. A re-run
+    # with nothing dirty rebuilds nothing, so it replaces nothing and is not a
+    # version — otherwise leaning on the button fills the history with rows that
+    # each produced the same artifacts as the one before.
+    if report["dirty"]:
+        _store().add_version(
+            run_id, json.loads(spec.model_dump_json()), author="user",
+            message=f"re-run, rebuilding {len(report['dirty'])} stages")
     _submit(run_id, spec)
     return {"run_id": run_id, "status": "queued", **report}
 
@@ -937,7 +967,15 @@ def ai_apply(run_id: str, body: ApplyRequest) -> Dict[str, Any]:
         merged = apply_changes(current, changes)
     except Exception as exc:                             # noqa: BLE001
         raise HTTPException(422, str(exc))
-    return put_spec(run_id, json.loads(merged.model_dump_json()))
+    payload = json.loads(merged.model_dump_json())
+    result = put_spec(run_id, payload)
+    # Recorded here rather than in `put_spec`, which the studio also calls on
+    # every debounced keystroke. What makes this one worth keeping is that the
+    # author was the planner: the paths are the only record of what the model
+    # changed once `spec.json` has been overwritten.
+    _store().add_version(run_id, payload, author="planner",
+                         message=", ".join(c.path for c in changes))
+    return result
 
 
 @app.get("/api/ai/usage/{run_id}")

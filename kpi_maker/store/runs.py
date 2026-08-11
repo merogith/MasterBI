@@ -55,11 +55,26 @@ def _create_runs(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX runs_started_at ON runs (started_at DESC)")
 
 
+def _create_spec_versions(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE spec_versions (
+            run_id     TEXT NOT NULL,
+            seq        INTEGER NOT NULL,
+            spec_json  TEXT NOT NULL,
+            author     TEXT,
+            message    TEXT,
+            created_at TEXT,
+            PRIMARY KEY (run_id, seq)
+        )
+    """)
+
+
 # Append-only. The desktop build ships to machines that already have a
 # `runs.db`, so a schema change without an upgrade path is a broken install,
 # not an inconvenience. `PRAGMA user_version` records how many have run.
 _MIGRATIONS: List[Callable[[sqlite3.Connection], None]] = [
     _create_runs,
+    _create_spec_versions,
 ]
 
 
@@ -113,7 +128,9 @@ class Store:
         self._conn.commit()
 
     @property
-    def version(self) -> int:
+    def schema_version(self) -> int:
+        """How many migrations have run. Named apart from `version`, which is a
+        run's spec version — two different countings of two different things."""
         with self._lock:
             return self._conn.execute("PRAGMA user_version").fetchone()[0]
 
@@ -164,7 +181,64 @@ class Store:
     def delete(self, run_id: str) -> None:
         with self._lock:
             self._conn.execute("DELETE FROM runs WHERE run_id = ?", [run_id])
+            self._conn.execute(
+                "DELETE FROM spec_versions WHERE run_id = ?", [run_id])
             self._conn.commit()
+
+    # -- spec history ------------------------------------------------------
+
+    def add_version(self, run_id: str, spec: Any, *, author: str,
+                    message: str = "") -> int:
+        """Record the spec that is about to produce something. Returns its seq.
+
+        Recorded at the points where a spec *produced* artifacts — run creation,
+        each re-run, and an accepted AI plan — not on every write. The studio's
+        per-keystroke `PATCH` funnels through the same `put_spec`, and versioning
+        that would bury the three interesting rows under hundreds of
+        indistinguishable ones. Drafts and per-field undo are a different
+        feature, and they build on this rather than around it.
+        """
+        payload = spec if isinstance(spec, str) else json.dumps(spec, default=str)
+        created = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with self._lock:
+            seq = self._conn.execute(
+                "SELECT COALESCE(MAX(seq), 0) + 1 FROM spec_versions "
+                "WHERE run_id = ?", [run_id]).fetchone()[0]
+            self._conn.execute(
+                "INSERT INTO spec_versions "
+                "(run_id, seq, spec_json, author, message, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                [run_id, seq, payload, author, message, created])
+            self._conn.commit()
+        return seq
+
+    def versions(self, run_id: str, *, with_spec: bool = False) -> List[Dict[str, Any]]:
+        """Every recorded spec for a run, oldest first."""
+        columns = "run_id, seq, author, message, created_at"
+        if with_spec:
+            columns += ", spec_json"
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT {columns} FROM spec_versions WHERE run_id = ? "
+                "ORDER BY seq", [run_id]).fetchall()
+        out = []
+        for row in rows:
+            item = dict(row)
+            if with_spec:
+                item["spec"] = json.loads(item.pop("spec_json"))
+            out.append(item)
+        return out
+
+    def version(self, run_id: str, seq: int) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM spec_versions WHERE run_id = ? AND seq = ?",
+                [run_id, seq]).fetchone()
+        if row is None:
+            return None
+        item = dict(row)
+        item["spec"] = json.loads(item.pop("spec_json"))
+        return item
 
     def close(self) -> None:
         with self._lock:
