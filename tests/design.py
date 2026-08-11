@@ -41,18 +41,35 @@ from typing import List
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from kpi_maker.cli import load_profile
-from kpi_maker.design.contrast import (AA_TEXT, GRAPHICAL, MIN_DELTA_E,
-                                       ColourError, delta_e, distinguishable,
-                                       ensure_readable, parse_hex, ratio,
-                                       simulate_cvd)
+from kpi_maker.design.contrast import (
+    AA_TEXT,
+    GRAPHICAL,
+    MIN_DELTA_E,
+    ColourError,
+    delta_e,
+    distinguishable,
+    ensure_readable,
+    parse_hex,
+    ratio,
+    simulate_cvd,
+)
 from kpi_maker.design.logo import MAX_BYTES, LogoError, load_logo
-from kpi_maker.design.palette import (SERIES_SLOTS, derive_tokens,
-                                      heading_accent, resolve_palette)
+from kpi_maker.design.palette import (
+    SERIES_SLOTS,
+    derive_tokens,
+    heading_accent,
+    resolve_palette,
+)
 from kpi_maker.pipeline.runner import execute
 from kpi_maker.render import sections as S
 from kpi_maker.spec.schema import BrandSpec, DesignSpec, RunSpec
-from kpi_maker.viz.charts import (CHARTS, UnknownExhibit, build_all,
-                                  default_exhibits, resolve_exhibits)
+from kpi_maker.viz.charts import (
+    CHARTS,
+    UnknownExhibit,
+    build_all,
+    default_exhibits,
+    resolve_exhibits,
+)
 from kpi_maker.viz.theme import MAX_CATEGORICAL_SERIES, TOKENS
 
 SAMPLE = Path(__file__).resolve().parents[1] / "samples" / "northwind_saas.json"
@@ -540,6 +557,7 @@ def test_exhibits(ctx: S.SectionContext) -> None:
     # charts.py groups its builders by topic, so definition order differs from
     # the running order — which is the whole reason `order` is explicit.
     import inspect
+
     from kpi_maker.viz import charts as charts_module
     source = inspect.getsource(charts_module)
     defined = sorted(subscription, key=lambda e: source.index(f'@chart("{e}"'))

@@ -22,7 +22,7 @@ from ..profile.schema import CompanyProfile
 # LTV/CAC ratio becomes fiction. See the `pitfalls` note on ltv_cac_ratio.
 LTV_HORIZON_MONTHS = 36
 
-_REGISTRY: Dict[str, Callable[["MetricContext"], Optional[pd.Series]]] = {}
+_REGISTRY: Dict[str, Callable[[MetricContext], Optional[pd.Series]]] = {}
 
 
 def metric(kpi_id: str):
@@ -609,7 +609,7 @@ class _Evaluator:
     computed quietly rather than erroring.
     """
 
-    def __init__(self, ctx: "MetricContext", universe: Dict[str, KPI]) -> None:
+    def __init__(self, ctx: MetricContext, universe: Dict[str, KPI]) -> None:
         self.ctx = ctx
         self.universe = universe
         self._cache: Dict[str, Optional[pd.Series]] = {}

@@ -1,0 +1,135 @@
+# Run the tests.
+#
+# Until this file existed, nothing did. `tests/` holds ~3,600 lines of
+# deliberately adversarial checks — the sandbox-escape suite, the vacuity
+# guard, the two-tier gate split, the warm-re-run-equals-cold-run equivalence —
+# and every one of them ran only when a human typed `python -m tests.<name>`.
+# The Pages workflow built the static gallery and greped for output files,
+# which catches a crash and nothing else.
+#
+# The matrix is three operating systems on purpose. The two portability
+# failures this project has actually hit were both platform-specific: kaleido's
+# native subprocess mangling non-ASCII paths on Windows, and Debian shipping
+# DejaVu without an Oblique face, which made fpdf2 raise "Undefined font"
+# rather than substituting. Neither is visible on one OS.
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install ruff mypy
+      - name: ruff
+        run: ruff check .
+      # `ruff format --check` is deliberately not run. It would reformat 79 of
+      # 95 files and rewrite 12,305 lines — the existing hand-formatting is
+      # consistent and the aligned comment blocks carry meaning. Adopting a
+      # formatter is a decision worth taking on its own, not a side effect of
+      # turning on CI.
+      - name: mypy
+        # Scoped to the spec, the KPI schema and the formula sandbox — the
+        # three places a type error is a correctness bug. Advisory for now:
+        # the engine predates any annotation discipline, and a wall of red on
+        # the first run would train everyone to ignore the job.
+        run: mypy || true
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ['3.11', '3.13']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pypdf
+
+      - name: Test
+        run: python -m pytest -q
+
+  artifacts:
+    # The end-to-end check: does a run still produce all nine deliverables?
+    # Separate from `test` because it is the slowest job and because a failure
+    # here means something different — the suites pass on data the renderers
+    # then choke on.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Every sample produces every artifact
+        run: |
+          set -e
+          for profile in samples/*.json; do
+            name=$(basename "$profile" .json)
+            [ "$name" = "gallery" ] && continue
+            python -m kpi_maker run --profile "$profile" --out "out/$name" --quiet
+            for f in dashboard.html report.pdf deck.pptx report.docx \
+                     workbook.xlsx facts.csv findings.json profile.json kpi_set.json; do
+              test -s "out/$name/$f" || { echo "$name: missing or empty $f"; exit 1; }
+            done
+            # kaleido's static export is the fragile step and the one most
+            # likely to differ off Windows. Assert it actually ran.
+            count=$(ls "out/$name"/charts/*.png 2>/dev/null | wc -l)
+            test "$count" -gt 0 || { echo "$name: no chart PNGs — kaleido failed"; exit 1; }
+            echo "$name: 9 artifacts, $count charts"
+          done
+
+      - name: Every declared sector runs
+        # The check that would have caught eight of ten business models raising
+        # FileNotFoundError out of the selection engine.
+        run: |
+          python - <<'PY'
+          import json, sys
+          from pathlib import Path
+          from kpi_maker.profile.schema import BusinessModel, CompanyProfile
+          from kpi_maker.kpi.selection import select
+          from kpi_maker.spec.schema import RunSpec
+
+          base = json.loads(Path("samples/northwind_saas.json").read_text())
+          failed = []
+          for model in (m.value for m in BusinessModel):
+              raw = json.loads(json.dumps(base))
+              raw["business_model"]["type"] = model
+              try:
+                  profile = CompanyProfile(**raw)
+                  kpis = select(profile)
+                  assert len(kpis.kpis) >= 8, f"only {len(kpis.kpis)} KPIs"
+                  assert RunSpec.for_profile(profile).resolve_archetype()
+                  print(f"  {model:15s} ok — {len(kpis.kpis)} KPIs")
+              except Exception as exc:
+                  failed.append(f"{model}: {type(exc).__name__}: {exc}")
+                  print(f"  {model:15s} FAILED — {exc}")
+          sys.exit(1 if failed else 0)
+          PY

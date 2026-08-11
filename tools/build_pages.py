@@ -27,13 +27,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from kpi_maker.api import server as api          # noqa: E402
+from kpi_maker.api import server as api  # noqa: E402
 from kpi_maker.cli import load_profile, run_pipeline  # noqa: E402
 
 # The banner the static site shows under the hero. The live app never sees it.
 STATIC_NOTICE = """
     <div class="notice static-notice" style="margin:0 0 28px">
-      <strong>Demo mode.</strong> The three companies below are pre-rendered and
+      <strong>Demo mode.</strong> The four companies below are pre-rendered and
       fully explorable — dashboard, scorecard, every fact table, every download.
       Building your own, uploading a spreadsheet and <em>Surprise me</em> run a
       Python pipeline, which a static host cannot do. Start the app on your own

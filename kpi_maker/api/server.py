@@ -28,29 +28,30 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ..cli import load_profile, run_pipeline
-from ..insight.detectors import DETECTOR_NAMES
-from ..formula import FormulaError, describe_functions, evaluate, validate
-from ..formula.evaluate import RowResolver, SeriesResolver
-from ..kpi.schema import user_kpi
-from ..kpi.selection import load_library, unknown_kpi_ids
-from ..kpi.user_library import delete_user_kpi, save_user_kpi, user_kpi_ids
-from ..ingest import detect_shape, profile_table, read_any, shape_catalog
-from ..ingest.derive import derive_profile_fields
-from ..ingest.quality import build_report
-from ..prep import describe_ops
-from ..prep.model import preview_column
-from ..prep.recipe import preview_recipe
-from ..pipeline.runner import plan_rerun
-from ..profile.schema import CompanyProfile
 from ..contract.schemas import FACT_SCHEMAS
 from ..design.contrast import AA_TEXT, GRAPHICAL, MIN_DELTA_E, ColourError, ratio
 from ..design.logo import LogoError, load_logo
 from ..design.palette import derive_tokens
-from ..render.sections import REGISTRY as SECTION_REGISTRY, default_order
-from ..viz.charts import CHARTS, default_exhibits
+from ..formula import FormulaError, describe_functions, evaluate, validate
+from ..formula.evaluate import RowResolver, SeriesResolver
+from ..ingest import detect_shape, profile_table, read_any, shape_catalog
+from ..ingest.derive import derive_profile_fields
+from ..ingest.quality import build_report
+from ..insight.detectors import DETECTOR_NAMES
+from ..kpi.schema import user_kpi
+from ..kpi.selection import load_library, unknown_kpi_ids
+from ..kpi.user_library import delete_user_kpi, save_user_kpi, user_kpi_ids
+from ..pipeline.runner import plan_rerun
+from ..prep import describe_ops
+from ..prep.model import preview_column
+from ..prep.recipe import preview_recipe
+from ..profile.schema import CompanyProfile
+from ..render.sections import REGISTRY as SECTION_REGISTRY
+from ..render.sections import default_order
 from ..spec.schema import ALL_ARTIFACTS, PATCHABLE_SECTIONS, RunSpec
 from ..survey import as_json as survey_json
 from ..survey import build_profile, surprise_profile
+from ..viz.charts import default_exhibits
 
 ROOT = Path(__file__).resolve().parents[2]
 SAMPLES_DIR = ROOT / "samples"
@@ -579,9 +580,8 @@ def preview_formula(req: FormulaRequest) -> Dict[str, Any]:
 
         # Series scope: evaluate for real, which means computing any KPI the
         # formula references.
-        from ..datagen.saas import GeneratedData
-        from ..metrics.engine import MetricContext, _Evaluator
         from ..kpi.selection import load_all_known
+        from ..metrics.engine import MetricContext, _Evaluator
 
         ctx = MetricContext(profile=spec.profile, tables=tables)
         evaluator = _Evaluator(ctx, {k.id: k for k in load_all_known()})
@@ -695,7 +695,6 @@ def clean_preview(run_id: str, body: RecipeRequest) -> Dict[str, Any]:
 @app.get("/api/runs/{run_id}/lineage")
 def get_lineage(run_id: str) -> Dict[str, Any]:
     """What was done to this run's data. Reads the recipe from the stored spec."""
-    from ..spec.schema import CleaningRecipe
     spec = _load_spec(run_id)
     tables = _load_run_tables(run_id)
     if not spec.cleaning.active:
@@ -718,7 +717,7 @@ def get_quality(run_id: str) -> Dict[str, Any]:
     """
     spec = _load_spec(run_id)
     tables = _load_run_tables(run_id)
-    origins = {t: "modelled" for t in spec.source.fill_gaps}
+    origins = dict.fromkeys(spec.source.fill_gaps, "modelled")
     return build_report(tables, spec.profile, origins=origins).as_dict()
 
 
@@ -801,7 +800,8 @@ def ai_estimate(run_id: str) -> Dict[str, Any]:
     from ..ai.client import AIUnavailable, build_client
     from ..ai.meter import estimate
     from ..ai.narrator import build_request as narrator_request
-    from ..ai.planner import build_request as planner_request, catalog
+    from ..ai.planner import build_request as planner_request
+    from ..ai.planner import catalog
 
     spec = _load_spec(run_id)
     # Built first, deliberately. Assembling the prompts means re-running the
@@ -894,7 +894,8 @@ def _run_inputs(run_id: str, spec: RunSpec) -> Dict[str, Any]:
     the request that will actually be sent.
     """
     from ..pipeline.runner import execute
-    from ..render.sections import SectionContext, build as build_sections
+    from ..render.sections import SectionContext
+    from ..render.sections import build as build_sections
 
     run_dir = RUNS_DIR / run_id
     if not run_dir.exists():

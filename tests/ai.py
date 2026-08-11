@@ -49,7 +49,8 @@ from kpi_maker.ai.meter import Meter, cost_usd, estimate
 from kpi_maker.cli import load_profile
 from kpi_maker.pipeline.cache import STORE
 from kpi_maker.pipeline.runner import execute
-from kpi_maker.render.sections import SectionContext, build as build_sections
+from kpi_maker.render.sections import SectionContext
+from kpi_maker.render.sections import build as build_sections
 from kpi_maker.spec.schema import PATCHABLE_SECTIONS, RunSpec
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -319,7 +320,6 @@ def test_prompt_carries_no_rows(spine) -> None:
     print("\nwhat the narrator is shown")
 
     profile = spine["profile"]
-    spec = RunSpec.for_profile(profile).ai
     request = narrator.build_request(profile, spine["results"],
                                      spine["findings"], spine["contents"], "")
     user = request["user"]

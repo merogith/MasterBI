@@ -33,9 +33,19 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from ..viz.theme import MAX_CATEGORICAL_SERIES, TOKENS
-from .contrast import (AA_TEXT, GRAPHICAL, MIN_DELTA_E, ColourError, delta_e,
-                       distinguishable, ensure_readable, parse_hex, ratio,
-                       simulate_cvd, to_hex)
+from .contrast import (
+    AA_TEXT,
+    GRAPHICAL,
+    MIN_DELTA_E,
+    ColourError,
+    delta_e,
+    distinguishable,
+    ensure_readable,
+    parse_hex,
+    ratio,
+    simulate_cvd,
+    to_hex,
+)
 
 SERIES_SLOTS: Tuple[str, ...] = tuple(
     f"series_{i}" for i in range(1, MAX_CATEGORICAL_SERIES + 1))

@@ -21,7 +21,8 @@ from ..kpi.schema import KPISet
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
 from ..viz.theme import TOKENS
-from .sections import SectionContent, SectionContext, build as build_sections
+from .sections import SectionContent, SectionContext
+from .sections import build as build_sections
 
 # Where the reader should turn a page. A property of this format: the deck has
 # no pages, and the PDF decides from its own y cursor.

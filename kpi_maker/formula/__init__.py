@@ -10,10 +10,10 @@ Two scopes, one grammar:
 
 Nothing here ever reaches `eval()`. See `sandbox.py`.
 """
-from .errors import FormulaError                      # noqa: F401
-from .evaluate import Scope, evaluate, validate       # noqa: F401
+from .errors import FormulaError  # noqa: F401
+from .evaluate import Scope, evaluate, validate  # noqa: F401
 from .functions import FUNCTIONS, describe_functions  # noqa: F401
-from .introspect import references                    # noqa: F401
+from .introspect import references  # noqa: F401
 
 __all__ = [
     "FormulaError", "FUNCTIONS", "Scope", "describe_functions", "evaluate",

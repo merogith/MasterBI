@@ -56,7 +56,7 @@ def fill_missing_tables(tables: Dict[str, pd.DataFrame], profile,
     ones with nothing marking the difference, which is the failure mode this
     whole path is built to avoid.
     """
-    origins = {name: MEASURED for name in tables}
+    origins = dict.fromkeys(tables, MEASURED)
     if not fill:
         return tables, origins
 

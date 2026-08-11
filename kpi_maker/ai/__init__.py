@@ -21,8 +21,14 @@ Neither agent can move a number, and that is the property the whole design
 protects. `spec.ai.enabled` is `False` by default, so a run that does not ask
 for this never constructs a client and never spends a token.
 """
-from .client import (AIUnavailable, Call, Usage, availability, build_client,
-                     CLIENT_FACTORY)
+from .client import (
+                     CLIENT_FACTORY,
+                     AIUnavailable,
+                     Call,
+                     Usage,
+                     availability,
+                     build_client,
+)
 from .meter import Meter
 from .verify import Violation, allowed_numbers, check_prose, extract_numbers
 

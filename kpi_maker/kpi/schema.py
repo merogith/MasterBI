@@ -56,7 +56,7 @@ class Compute(BaseModel):
     expression: Optional[str] = None   # formula: the user's expression
 
     @model_validator(mode="after")
-    def _consistent(self) -> "Compute":
+    def _consistent(self) -> Compute:
         if self.kind == ComputeKind.formula and not (self.expression or "").strip():
             raise ValueError("a formula KPI needs a non-empty expression")
         if self.kind == ComputeKind.builtin and self.expression:
@@ -150,7 +150,7 @@ class KPI(BaseModel):
         return self.compute.kind == ComputeKind.formula
 
     @model_validator(mode="after")
-    def _bands_match_direction(self) -> "KPI":
+    def _bands_match_direction(self) -> KPI:
         b = self.alert_bands
         if b is None:
             return self

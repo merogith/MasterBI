@@ -299,6 +299,26 @@ def _feasible(kpi: KPI, profile: CompanyProfile) -> Tuple[bool, str]:
     blocked = needed & missing
     if blocked:
         return False, f"requires unavailable data: {', '.join(sorted(blocked))}"
+
+    # A record sheet can describe a metric this build cannot compute: `nps` and
+    # `support_first_response_hours` are declared `kind: builtin` and no
+    # `@metric` is registered for either. `requires_data` did not catch them,
+    # because it tests what the profile *claims* to have — Atlas lists
+    # `support_desk` in `has`, so the KPI passed the gate, was selected, and
+    # then reported "no implementation registered for this KPI id" on the
+    # scorecard.
+    #
+    # Whether an implementation exists is a fact about the library, not about
+    # the company, so it belongs here: the KPI drops with a reason the user can
+    # read in the "considered but not selected" list, rather than appearing as
+    # a broken row. Imported lazily — `metrics.engine` reaches back into this
+    # module for the formula resolution universe.
+    if not kpi.is_formula:
+        from ..metrics.engine import _REGISTRY
+
+        if kpi.compute_ref not in _REGISTRY:
+            return False, ("no implementation in this build — the record sheet "
+                           "defines it but nothing computes it yet")
     return True, ""
 
 

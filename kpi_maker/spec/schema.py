@@ -304,7 +304,7 @@ class RunSpec(SpecModel):
     # -- derivation: the one place a None default becomes a real value -----
 
     @classmethod
-    def for_profile(cls, profile: CompanyProfile) -> "RunSpec":
+    def for_profile(cls, profile: CompanyProfile) -> RunSpec:
         """The spec that reproduces the pre-RunSpec pipeline exactly."""
         return cls(profile=profile)
 

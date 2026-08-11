@@ -18,12 +18,13 @@ from typing import Any, Dict, List
 
 import pandas as pd
 
-from ..datagen import GENERATORS, available as _archetypes
+from ..datagen import GENERATORS
+from ..datagen import available as _archetypes
+from ..design.logo import load_logo
+from ..design.palette import derive_tokens
 from ..insight.detectors import detect_all
 from ..kpi.selection import select
 from ..metrics.engine import compute, facts_table
-from ..design.logo import load_logo
-from ..design.palette import derive_tokens
 from ..render.dashboard import render_dashboard
 from ..render.deck import render_deck
 from ..render.doc import render_doc
@@ -85,6 +86,7 @@ def _source(ctx) -> Any:
 def _source_from_uploads(ctx) -> Any:
     """Read the user's files instead of generating a company."""
     from pathlib import Path
+
     from ..ingest.pipeline import build_from_uploads
 
     uploads = ctx.spec.source.uploads
@@ -206,9 +208,10 @@ def _narrate(ctx) -> Dict[str, Any]:
     # Imported here, not at module scope. The AI package is the only part of
     # the pipeline with an optional third-party dependency behind it, and a run
     # that never enables it should never touch the import.
-    from ..render.sections import SectionContext, build as build_sections
     from ..ai.meter import Meter
     from ..ai.narrator import narrate
+    from ..render.sections import SectionContext
+    from ..render.sections import build as build_sections
 
     section_ctx = SectionContext(
         profile=ctx.get("resolve"), kpi_set=ctx.get("select"),

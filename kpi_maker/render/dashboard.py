@@ -70,7 +70,7 @@ def _sparkline(series: Optional[pd.Series], color: str, width: int = 104,
     )
 
 
-def _basis_badge(result: "MetricResult") -> str:
+def _basis_badge(result: MetricResult) -> str:
     """Mark a number the generator produced rather than the user's data.
 
     Only rendered when it is not `measured`. Labelling every measured number

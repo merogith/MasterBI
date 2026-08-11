@@ -42,11 +42,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import kpi_maker.datagen as datagen
 from kpi_maker.cli import load_profile
-from kpi_maker.contract import (ReconciliationError, UncheckedArchetype,
-                                run_gate, schemas_for, validate_schemas)
+from kpi_maker.contract import (
+    ReconciliationError,
+    UncheckedArchetype,
+    run_gate,
+    schemas_for,
+    validate_schemas,
+)
 from kpi_maker.contract.identities import CHECKS, Tier
-from kpi_maker.contract.schemas import (ECOMMERCE_SCHEMAS, FACT_SCHEMAS,
-                                        SCHEMAS_BY_ARCHETYPE, UNIVERSAL_SCHEMAS)
+from kpi_maker.contract.schemas import (
+    ECOMMERCE_SCHEMAS,
+    FACT_SCHEMAS,
+    SCHEMAS_BY_ARCHETYPE,
+    UNIVERSAL_SCHEMAS,
+)
 from kpi_maker.datagen.base import GENERATORS, apply_amplitude, volatile
 from kpi_maker.kpi.schema import KPISet
 from kpi_maker.kpi.selection import load_library, select

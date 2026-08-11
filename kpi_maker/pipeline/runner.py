@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from ..spec.schema import RunSpec
-from . import stages as _stages       # noqa: F401  (registers every stage)
+from . import stages as _stages  # noqa: F401  (registers every stage)
 from .cache import STORE, read_hashes, stage_hash, write_hashes
 from .graph import STAGES, required_stages
 

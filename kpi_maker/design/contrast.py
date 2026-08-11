@@ -123,7 +123,7 @@ def ensure_readable(colour: str, surface: str, target: float = AA_TEXT,
         "colour": best, "original": _normalise(colour), "adjusted": True,
         "ratio": round(ratio(best, surface), 2),
         "original_ratio": round(original_ratio, 2), "target": target,
-        "note": (f"Darkened" if darken else "Lightened")
+        "note": ("Darkened" if darken else "Lightened")
                 + f" to reach {target}:1 against the page — same hue, "
                   f"{original_ratio:.2f}:1 was not readable.",
     }

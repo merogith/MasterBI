@@ -60,7 +60,7 @@ class Usage:
     output_tokens: int = 0
     cache_read_tokens: int = 0
 
-    def __add__(self, other: "Usage") -> "Usage":
+    def __add__(self, other: Usage) -> Usage:
         return Usage(self.input_tokens + other.input_tokens,
                      self.output_tokens + other.output_tokens,
                      self.cache_read_tokens + other.cache_read_tokens)
@@ -149,6 +149,7 @@ class Client:
         than "please reply with JSON" plus a regex to fish it back out.
         """
         import time
+
         import anthropic
 
         started = time.perf_counter()

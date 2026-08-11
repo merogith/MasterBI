@@ -16,21 +16,21 @@ matters for a tool meant to run on a laptop rather than a build server.
 """
 from __future__ import annotations
 
-from pathlib import Path
 import io
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
+from ..design.palette import heading_accent
 from ..insight.detectors import Finding
 from ..kpi.schema import KPISet
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
-from .sections import (DIAGNOSTIC_EXHIBITS, SectionContent, SectionContext,  # noqa: F401
-                       build as build_sections)
-from ..design.palette import heading_accent
 from ..viz.theme import TOKENS
+from .sections import DIAGNOSTIC_EXHIBITS, SectionContent, SectionContext  # noqa: F401
+from .sections import build as build_sections
 
 FONT_CANDIDATES = [
     ("Segoe UI", "C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/segoeuib.ttf",

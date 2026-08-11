@@ -64,7 +64,7 @@ class ArtifactStore:
     """Bounded LRU of stage outputs, keyed by (stage, hash)."""
 
     def __init__(self, max_entries: int = MAX_ENTRIES) -> None:
-        self._items: "OrderedDict[str, Any]" = OrderedDict()
+        self._items: OrderedDict[str, Any] = OrderedDict()
         self._max = max_entries
 
     @staticmethod

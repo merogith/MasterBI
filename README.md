@@ -27,7 +27,7 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 | Dashboard / workbook / CSV | `kpi_maker/render/` | done |
 | PDF report / PPTX deck / DOCX | `kpi_maker/render/` | done — M1 |
 | Survey + benchmark priors | `kpi_maker/survey/` | done — M3/M4 (SaaS) |
-| Sample gallery (Mode 1) | `samples/` | done — M5, 3 companies |
+| Sample gallery (Mode 1) | `samples/` | done — M5, 4 companies |
 | HTTP API | `kpi_maker/api/` | done |
 | Web UI | `ui/` | done — M8 (vanilla JS, no build step) |
 | More sectors (M2) | — | not started |
@@ -63,8 +63,8 @@ Three modes on the home screen:
 
 | Mode | State | Cost |
 |---|---|---|
-| **1 · Try a sample** | Working — 3 curated companies | Free |
-| **2 · Build your own** | Working — 14-question survey | Free |
+| **1 · Try a sample** | Working — 4 curated companies | Free |
+| **2 · Build your own** | Working — 14 core questions, 5 optional | Free |
 | **3 · Bring your data** | Working — read, profile, clean, map, run | Free |
 | **Surprise me** | Working — random self-consistent company | Free |
 

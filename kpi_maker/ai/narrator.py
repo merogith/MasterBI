@@ -69,7 +69,12 @@ def facts_block(results: Sequence[Any], currency: str) -> str:
     for _, row in shown.head(MAX_FACT_ROWS).iterrows():
         unit = units.get(row["kpi_id"], "number")
 
-        def show(column: str) -> str:
+        # `row` and `unit` are bound as defaults rather than closed over. The
+        # closure is correct as written — `show` is only ever called inside this
+        # iteration — but a function defined in a loop that reads the loop
+        # variable is one edit away from being wrong, and binding at definition
+        # makes it wrong-proof rather than wrong-by-accident-later.
+        def show(column: str, row=row, unit=unit) -> str:
             return fmt_value(row.get(column), unit, currency)
 
         lines.append(" | ".join([

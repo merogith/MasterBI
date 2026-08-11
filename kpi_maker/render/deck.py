@@ -21,8 +21,9 @@ from ..insight.detectors import Finding
 from ..kpi.schema import KPISet
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
-from .sections import SectionContext, build as build_sections
 from ..viz.theme import TOKENS
+from .sections import SectionContext
+from .sections import build as build_sections
 
 FONT = "Segoe UI"
 
