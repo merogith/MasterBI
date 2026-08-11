@@ -108,6 +108,43 @@ def test_pages_workflow_verifies_every_sample() -> None:
             f"pages.yml never verifies sample {entry['id']!r}")
 
 
+def test_every_chart_tab_has_a_label() -> None:
+    """A chart declaring a tab the dashboard cannot name gets `t.title()`.
+
+    That is how the four e-commerce exhibits ended up under a heading reading
+    "Retention" — not chosen, just the fallback capitalising the key.
+    """
+    from kpi_maker.render.dashboard import TAB_LABELS
+
+    # The tab is set on the `ChartSpec` each builder returns, not on its
+    # registry entry, so there is nothing to introspect without data to build
+    # against. Read the literals out of the source instead: it is a static fact
+    # about the module and this keeps the check free.
+    source = (ROOT / "kpi_maker" / "viz" / "charts.py").read_text(encoding="utf-8")
+    declared = set(re.findall(r'\btab\s*=\s*"([a-z_]+)"', source))
+    assert declared, "found no tab= literals — has charts.py changed shape?"
+
+    missing = declared - set(TAB_LABELS)
+    assert not missing, f"chart tabs with no label in TAB_LABELS: {sorted(missing)}"
+
+
+def test_static_shim_only_uses_defined_css_variables() -> None:
+    """The hosted pill must not reference tokens the stylesheet never defines.
+
+    `--line`, `--card`, `--ink`, `--bg` and `--warn` were all undefined, so the
+    injected "Run locally" pill fell through to its hard-coded light fallbacks
+    and rendered white-on-white in dark mode. The shim is injected into the
+    same page as `styles.css`, so its variables have to come from there.
+    """
+    shim = (ROOT / "tools" / "static_shim.js").read_text(encoding="utf-8")
+    styles = (ROOT / "ui" / "styles.css").read_text(encoding="utf-8")
+
+    defined = set(re.findall(r"^\s+(--[a-z-]+):", styles, re.MULTILINE))
+    used = set(re.findall(r"var\((--[a-z-]+)", shim))
+    assert used <= defined, (
+        f"static_shim.js uses undefined CSS variables: {sorted(used - defined)}")
+
+
 def test_unimplemented_kpis_never_reach_a_scorecard() -> None:
     """A record sheet with no implementation must drop, not render broken.
 

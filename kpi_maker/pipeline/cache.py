@@ -29,10 +29,40 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
-# Bump when a stage's *semantics* change in a way that invalidates cached
-# output. Cheap insurance: a stale artifact surviving a code change is a bug
-# that presents as "my edit did nothing".
-CODE_VERSION = "1"
+
+def _code_version() -> str:
+    """A digest of the engine's own source, as half of every stage's cache key.
+
+    This used to be the literal string `"1"`, bumped by hand "when a stage's
+    semantics change". That is a rule nobody can follow reliably: change the
+    arithmetic in a metric, forget the bump, and a warm process serves the old
+    number — a bug that presents as "my edit did nothing", which is exactly the
+    failure the constant existed to prevent.
+
+    The KPI library counts as source. A record sheet's formula, benchmark or
+    alert bands change what `metrics` produces just as surely as Python does,
+    and a YAML edit that did not invalidate the cache would be the same bug
+    wearing a different hat.
+
+    Cost is one pass over ~100 small files at import, once per process. The
+    price of getting it wrong is a wrong number in a board pack, so this is not
+    a close call. If it ever does matter, cache it in a build artifact — do not
+    go back to a hand-maintained string.
+    """
+    root = Path(__file__).resolve().parents[1]
+    h = hashlib.sha256()
+    sources = sorted(root.rglob("*.py")) + sorted((root / "kpi" / "library").glob("*.yaml"))
+    for path in sources:
+        if "__pycache__" in path.parts:
+            continue
+        # The path is hashed as well as the bytes, so moving a file to a new
+        # name is a change even when its contents are identical.
+        h.update(str(path.relative_to(root)).encode())
+        h.update(path.read_bytes())
+    return h.hexdigest()[:16]
+
+
+CODE_VERSION = _code_version()
 
 HASH_FILE = ".stage_hashes.json"
 

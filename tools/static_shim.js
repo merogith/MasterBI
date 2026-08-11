@@ -209,30 +209,30 @@
   function injectStyles() {
     const css = document.createElement('style');
     css.textContent = `
-      .bridge-pill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line,#d8d8d2);
-        background:var(--card,#fff);color:var(--ink,#1a1a18);border-radius:999px;padding:6px 13px;
+      .bridge-pill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--border,#d8d8d2);
+        background:var(--surface,#fff);color:var(--text-primary,#1a1a18);border-radius:999px;padding:6px 13px;
         font:inherit;font-size:13px;cursor:pointer}
-      .bridge-pill:hover{border-color:var(--ink,#1a1a18)}
+      .bridge-pill:hover{border-color:var(--text-primary,#1a1a18)}
       .bridge-dot{width:8px;height:8px;border-radius:50%;background:var(--muted,#8a8a82);flex:none}
       .bridge-pill.on .bridge-dot{background:var(--good,#2e7d5b);box-shadow:0 0 0 3px rgba(46,125,91,.18)}
-      .bridge-pill.pending{border-color:var(--warn,#b8860b)}
-      .bridge-pill.pending .bridge-dot{background:var(--warn,#b8860b);animation:bridge-blink 1.4s ease-in-out infinite}
+      .bridge-pill.pending{border-color:var(--warning,#b8860b)}
+      .bridge-pill.pending .bridge-dot{background:var(--warning,#b8860b);animation:bridge-blink 1.4s ease-in-out infinite}
       @keyframes bridge-blink{50%{opacity:.35}}
       .bridge-sheet{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;
         justify-content:center;z-index:60;padding:20px}
-      .bridge-box{background:var(--card,#fff);color:var(--ink,#1a1a18);border:1px solid var(--line,#d8d8d2);
+      .bridge-box{background:var(--surface,#fff);color:var(--text-primary,#1a1a18);border:1px solid var(--border,#d8d8d2);
         border-radius:14px;max-width:620px;width:100%;padding:26px 28px;max-height:88vh;overflow:auto}
       .bridge-box h2{margin:0 0 6px;font-size:20px}
       .bridge-box p{margin:0 0 14px;color:var(--muted,#6b6b64);line-height:1.55;font-size:14px}
       .bridge-box ol{margin:0 0 16px;padding-left:20px}
       .bridge-box li{margin-bottom:9px;font-size:14px}
-      .bridge-box code{display:block;background:var(--bg,#f7f7f4);border:1px solid var(--line,#e4e4de);
+      .bridge-box code{display:block;background:var(--page,#f7f7f4);border:1px solid var(--border,#e4e4de);
         border-radius:7px;padding:9px 11px;font-size:12.5px;overflow-x:auto;white-space:pre;margin-top:5px}
       .bridge-easy li{margin-bottom:14px}
       .bridge-easy b{font-weight:600}
       .bridge-detail{color:var(--muted,#6b6b64);font-size:13.5px;line-height:1.5;margin-top:3px}
       .bridge-need{font-size:13px;margin-top:2px}
-      .bridge-alt{margin-top:4px;border-top:1px solid var(--line,#e4e4de);padding-top:12px}
+      .bridge-alt{margin-top:4px;border-top:1px solid var(--border,#e4e4de);padding-top:12px}
       .bridge-alt summary{cursor:pointer;font-size:13.5px;color:var(--muted,#6b6b64)}
       .bridge-alt ol{margin-top:12px}
       .bridge-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}`;

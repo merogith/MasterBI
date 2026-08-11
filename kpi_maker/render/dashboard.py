@@ -25,11 +25,16 @@ from ..profile.schema import CompanyProfile
 from ..viz.charts import ChartSpec, build_all
 from ..viz.theme import FONT_STACK, STATUS_GLYPH, STATUS_LABEL, TOKENS
 
+# Every `tab=` value any registered chart declares needs an entry. A missing
+# one falls through to `t.title()`, which is why the four e-commerce exhibits
+# sat under a tab labelled "Retention" by accident rather than by design.
+# `tests/test_packaging.py` asserts the two stay in step.
 TAB_LABELS = {
     "overview": "Overview",
     "growth": "Growth & efficiency",
     "customer": "Customers & retention",
     "people": "People & leverage",
+    "retention": "Repeat & returns",
 }
 
 SEVERITY_STYLE = {
