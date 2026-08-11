@@ -110,7 +110,8 @@ def extract_numbers(text: str) -> List[Tuple[str, int]]:
 # The allowed set
 # --------------------------------------------------------------------------
 
-def _render(value: Any, unit: str, currency: str) -> Iterable[Key]:
+def _render(value: Any, unit: str, currency: str,
+            locale: Optional[str] = None) -> Iterable[Key]:
     """Every honest way of writing one figure.
 
     Both the formatted rendering and the raw value, because a narrator that
@@ -128,7 +129,7 @@ def _render(value: Any, unit: str, currency: str) -> Iterable[Key]:
         return ()
 
     keys: Set[Key] = set()
-    for token, _ in extract_numbers(fmt_value(raw, unit, currency)):
+    for token, _ in extract_numbers(fmt_value(raw, unit, currency, locale=locale)):
         parsed = _parse(token)
         if parsed is not None:
             keys.add(parsed)
@@ -151,7 +152,8 @@ _RESULT_FIELDS = ("current", "prior_month", "prior_year", "yoy_change",
 
 def allowed_numbers(results: Sequence[Any], findings: Sequence[Any],
                     currency: str = "USD", period: str = "",
-                    extra_counts: Sequence[int] = ()) -> Set[Key]:
+                    extra_counts: Sequence[int] = (),
+                    locale: Optional[str] = None) -> Set[Key]:
     """Every number the narrator is entitled to write.
 
     Built from the same `MetricResult` objects `facts_table()` serialises, so
@@ -163,11 +165,13 @@ def allowed_numbers(results: Sequence[Any], findings: Sequence[Any],
     for result in results:
         unit = result.kpi.unit
         for field in _RESULT_FIELDS:
-            allowed |= set(_render(getattr(result, field, None), unit, currency))
+            allowed |= set(_render(getattr(result, field, None), unit, currency,
+                                   locale))
         benchmark = getattr(result.kpi, "benchmark", None)
         if benchmark is not None:
             for level in ("p25", "p50", "p75"):
-                allowed |= set(_render(getattr(benchmark, level, None), unit, currency))
+                allowed |= set(_render(getattr(benchmark, level, None), unit,
+                                       currency, locale))
         # `benchmark_position` is deliberately not here: it is a phrase ("top
         # quartile"), not a figure, so there is nothing to check.
 

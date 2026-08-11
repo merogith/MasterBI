@@ -172,7 +172,7 @@ def _metrics(ctx) -> List[Any]:
        label="Detecting findings")
 def _analyse(ctx) -> List[Any]:
     return detect_all(ctx.get("metrics"), ctx.get("model"), ctx.get("resolve"),
-                      spec=ctx.spec.analysis)
+                      spec=ctx.spec.analysis, locale=ctx.spec.resolve_locale())
 
 
 @stage("narrate", needs=("analyse", "select", "metrics"),
@@ -229,7 +229,8 @@ def _narrate(ctx) -> Dict[str, Any]:
     try:
         narrative, meter = narrate(
             ctx.get("resolve"), ctx.get("metrics"), ctx.get("analyse"),
-            contents, ctx.period, spec=ai, meter=meter)
+            contents, ctx.period, spec=ai, meter=meter,
+            locale=ctx.spec.resolve_locale())
     except Exception as exc:                     # noqa: BLE001
         # The pipeline must ALWAYS produce a deliverable (ARCHITECTURE §5).
         # An unexpected failure in the one non-deterministic stage is exactly
@@ -321,13 +322,14 @@ def _visualise(ctx) -> Dict[str, List[Any]]:
     results, tables = ctx.get("metrics"), ctx.get("model")
     currency = ctx.spec.resolve_currency()
     palette, design = _palettes(ctx), ctx.spec.design
+    locale = ctx.spec.resolve_locale()
     return {
         "light": build_all(results, tables, mode="light", currency=currency,
                            tokens=palette["light"], exhibits=design.exhibits,
-                           widths=design.exhibit_widths),
+                           widths=design.exhibit_widths, locale=locale),
         "dark": build_all(results, tables, mode="dark", currency=currency,
                           tokens=palette["dark"], exhibits=design.exhibits,
-                          widths=design.exhibit_widths),
+                          widths=design.exhibit_widths, locale=locale),
     }
 
 
@@ -358,6 +360,7 @@ def _dashboard(ctx):
             tokens_light=_palettes(ctx)["light"],
             tokens_dark=_palettes(ctx)["dark"], logo=_logo(ctx),
             narrative=_narration(ctx).get("sections"),
+            locale=ctx.spec.resolve_locale(),
         ),
         encoding="utf-8",
     )
@@ -390,7 +393,11 @@ def _report_pdf(ctx):
                   origins=ctx.origins,
                   narrative=_narration(ctx).get("sections"),
                   ai_notes=_narration(ctx).get("notes"),
-                  caveats=_caveats(ctx))
+                  caveats=_caveats(ctx),
+                  page_size=ctx.spec.resolve_page_size(),
+                  font_stack=ctx.spec.resolve_font_stack(),
+                  footer_text=ctx.spec.resolve_footer_text(),
+                  locale=ctx.spec.resolve_locale())
     return path
 
 
@@ -406,7 +413,10 @@ def _deck_pptx(ctx):
                 tokens=_palettes(ctx)["light"],
                 section_order=ctx.spec.design.sections, logo=_logo(ctx),
                 narrative=_narration(ctx).get("sections"),
-                caveats=_caveats(ctx))
+                caveats=_caveats(ctx),
+                font_stack=ctx.spec.resolve_font_stack(),
+                footer_text=ctx.spec.resolve_footer_text(),
+                locale=ctx.spec.resolve_locale())
     return path
 
 
@@ -425,7 +435,10 @@ def _doc_docx(ctx):
                origins=ctx.origins,
                narrative=_narration(ctx).get("sections"),
                ai_notes=_narration(ctx).get("notes"),
-               caveats=_caveats(ctx))
+               caveats=_caveats(ctx),
+               font_stack=ctx.spec.resolve_font_stack(),
+               footer_text=ctx.spec.resolve_footer_text(),
+               locale=ctx.spec.resolve_locale())
     return path
 
 

@@ -102,9 +102,9 @@ def _status_chip(status: str) -> str:
     )
 
 
-def _stat_tile(r: MetricResult, currency: str) -> str:
+def _stat_tile(r: MetricResult, currency: str, locale: Optional[str] = None) -> str:
     k = r.kpi
-    value = fmt_value(r.current, k.unit, currency)
+    value = fmt_value(r.current, k.unit, currency, locale=locale)
     delta_html = ""
     if not is_missing(r.current) and not is_missing(r.prior_year) and r.prior_year:
         change = r.current - r.prior_year
@@ -124,7 +124,7 @@ def _stat_tile(r: MetricResult, currency: str) -> str:
 
     target = ""
     if not is_missing(r.target):
-        target = f'<div class="tile-target">Target {fmt_value(r.target, k.unit, currency)}</div>'
+        target = f'<div class="tile-target">Target {fmt_value(r.target, k.unit, currency, locale=locale)}</div>'
 
     return f"""
       <article class="tile">
@@ -139,11 +139,12 @@ def _stat_tile(r: MetricResult, currency: str) -> str:
 
 
 def _hero(north_star: Optional[MetricResult], profile: CompanyProfile,
-          growth: Optional[MetricResult]) -> str:
+          growth: Optional[MetricResult], locale: Optional[str] = None) -> str:
     if north_star is None:
         return ""
     k = north_star.kpi
-    value = fmt_value(north_star.current, k.unit, profile.identity.currency)
+    value = fmt_value(north_star.current, k.unit, profile.identity.currency,
+                      locale=locale)
     sub = ""
     if growth is not None and not is_missing(growth.current):
         sub = f'growing {growth.current:.1%} year on year'
@@ -205,7 +206,7 @@ def _findings_section(findings: List[Finding],
 
 
 def _scorecard_table(results: List[MetricResult], kpi_set: KPISet,
-                     currency: str) -> str:
+                     currency: str, locale: Optional[str] = None) -> str:
     """The table view. Mandatory relief for the sub-3:1 palette slots."""
     rows = []
     for perspective in Perspective:
@@ -218,15 +219,16 @@ def _scorecard_table(results: List[MetricResult], kpi_set: KPISet,
         )
         for r in sorted(group, key=lambda x: int(x.kpi.tier)):
             k = r.kpi
-            bench = fmt_value(k.benchmark.p50, k.unit, currency) if k.benchmark else "—"
+            bench = (fmt_value(k.benchmark.p50, k.unit, currency, locale=locale)
+                     if k.benchmark else "—")
             pos = (r.benchmark_position or "—").replace("_", " ")
             rows.append(f"""
             <tr>
               <td class="kpi-name">{html.escape(k.name)}{_basis_badge(r)}
                 <span class="kpi-timing">{html.escape(k.timing.value)}</span></td>
-              <td class="num">{html.escape(fmt_value(r.current, k.unit, currency))}</td>
-              <td class="num">{html.escape(fmt_value(r.prior_year, k.unit, currency))}</td>
-              <td class="num">{html.escape(fmt_value(r.target, k.unit, currency))}</td>
+              <td class="num">{html.escape(fmt_value(r.current, k.unit, currency, locale=locale))}</td>
+              <td class="num">{html.escape(fmt_value(r.prior_year, k.unit, currency, locale=locale))}</td>
+              <td class="num">{html.escape(fmt_value(r.target, k.unit, currency, locale=locale))}</td>
               <td class="num">{html.escape(bench)}</td>
               <td>{_status_chip(r.status)}</td>
               <td class="muted-cell">{html.escape(pos)}</td>
@@ -373,7 +375,8 @@ def render_dashboard(profile: CompanyProfile, kpi_set: KPISet,
                      tokens_light: Optional[Dict[str, str]] = None,
                      tokens_dark: Optional[Dict[str, str]] = None,
                      logo=None,
-                     narrative: Optional[Dict[str, List[str]]] = None) -> str:
+                     narrative: Optional[Dict[str, List[str]]] = None,
+                     locale: Optional[str] = None) -> str:
     computed = [r for r in results if r.computed]
     north_star = next((r for r in computed if r.kpi.id == kpi_set.north_star), None)
     growth = next((r for r in computed if r.kpi.id == "arr_growth_yoy"), None)
@@ -581,8 +584,8 @@ code {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 
     </button>
   </header>
 
-  {_hero(north_star, profile, growth)}
-  <div class="tiles">{''.join(_stat_tile(r, profile.identity.currency) for r in l1)}</div>
+  {_hero(north_star, profile, growth, locale)}
+  <div class="tiles">{''.join(_stat_tile(r, profile.identity.currency, locale) for r in l1)}</div>
 
   {_findings_section(findings, (narrative or {}).get("exec_summary"))}
 
@@ -590,7 +593,7 @@ code {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 
   <div class="theme-set active" data-mode="light">{_chart_html(specs_light, "light")}</div>
   <div class="theme-set" data-mode="dark">{_chart_html(specs_dark, "dark")}</div>
 
-  {_scorecard_table(results, kpi_set, profile.identity.currency)}
+  {_scorecard_table(results, kpi_set, profile.identity.currency, locale)}
   {_appendix(results, kpi_set, profile, checks, anomaly_notes)}
 </div>
 

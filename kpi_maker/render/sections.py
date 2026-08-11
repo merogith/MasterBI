@@ -185,6 +185,9 @@ class SectionContext:
     # miss on uploaded data. These belong in the emailed PDF, not only in the
     # console — a reader who cannot see them cannot weigh the numbers.
     caveats: List[str] = field(default_factory=list)
+    # Separator convention for every number this report prints. `None` means
+    # English, which is what every call site did before the field existed.
+    locale: Optional[str] = None
 
     @property
     def currency(self) -> str:
@@ -195,7 +198,8 @@ class SectionContext:
         return [r for r in self.results if r.computed]
 
     def value(self, result: MetricResult, which: str = "current") -> str:
-        return fmt_value(getattr(result, which), result.kpi.unit, self.currency)
+        return fmt_value(getattr(result, which), result.kpi.unit, self.currency,
+                         locale=self.locale)
 
 
 # --------------------------------------------------------------------------
@@ -351,7 +355,7 @@ def _scorecard(ctx: SectionContext) -> SectionContent:
             rows.append([
                 k.short_name or k.name,
                 ctx.value(r), ctx.value(r, "prior_year"), ctx.value(r, "target"),
-                fmt_value(k.benchmark.p50, k.unit, ctx.currency) if k.benchmark else "—",
+                fmt_value(k.benchmark.p50, k.unit, ctx.currency, locale=ctx.locale) if k.benchmark else "—",
                 STATUS_WORD.get(r.status, "—"),
             ])
             tints.append(tint.get(r.status, "muted"))
@@ -440,9 +444,9 @@ def _benchmarks(ctx: SectionContext) -> SectionContent:
             continue
         rows.append([
             r.kpi.short_name or r.kpi.name, ctx.value(r),
-            fmt_value(b.p25, r.kpi.unit, ctx.currency),
-            fmt_value(b.p50, r.kpi.unit, ctx.currency),
-            fmt_value(b.p75, r.kpi.unit, ctx.currency),
+            fmt_value(b.p25, r.kpi.unit, ctx.currency, locale=ctx.locale),
+            fmt_value(b.p50, r.kpi.unit, ctx.currency, locale=ctx.locale),
+            fmt_value(b.p75, r.kpi.unit, ctx.currency, locale=ctx.locale),
             (r.benchmark_position or "—").replace("_", " "),
         ])
     if rows:

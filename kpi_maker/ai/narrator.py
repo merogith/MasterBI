@@ -49,7 +49,8 @@ def _prompt(name: str) -> str:
 # What the model is shown
 # --------------------------------------------------------------------------
 
-def facts_block(results: Sequence[Any], currency: str) -> str:
+def facts_block(results: Sequence[Any], currency: str,
+                locale: Optional[str] = None) -> str:
     """The facts table as the narrator reads it: raw value and rendering.
 
     Built through `facts_table()` rather than off the results directly, so the
@@ -75,7 +76,7 @@ def facts_block(results: Sequence[Any], currency: str) -> str:
         # variable is one edit away from being wrong, and binding at definition
         # makes it wrong-proof rather than wrong-by-accident-later.
         def show(column: str, row=row, unit=unit) -> str:
-            return fmt_value(row.get(column), unit, currency)
+            return fmt_value(row.get(column), unit, currency, locale=locale)
 
         lines.append(" | ".join([
             str(row["kpi_id"]), str(row["name"]), unit,
@@ -120,7 +121,8 @@ def _section_brief(content: Any) -> str:
 
 def build_request(profile: Any, results: Sequence[Any], findings: Sequence[Any],
                   contents: Sequence[Any], period: str,
-                  max_paragraphs: int = 1) -> Dict[str, str]:
+                  max_paragraphs: int = 1,
+                  locale: Optional[str] = None) -> Dict[str, str]:
     """The system and user text for one narration pass.
 
     Separated from the call so `POST /api/ai/estimate` can price exactly the
@@ -145,7 +147,7 @@ over {intent.horizon_months} months
 
 Copy figures from these cells exactly as written.
 
-{facts_block(results, identity.currency)}
+{facts_block(results, identity.currency, locale)}
 
 # Findings
 
@@ -237,7 +239,8 @@ def _retry_message(user: str, first: Dict[str, List[str]],
 def narrate(profile: Any, results: Sequence[Any], findings: Sequence[Any],
             contents: Sequence[Any], period: str, *, spec: Any,
             meter: Optional[Meter] = None,
-            client: Optional[Any] = None) -> Tuple[Dict[str, List[str]], Meter]:
+            client: Optional[Any] = None,
+            locale: Optional[str] = None) -> Tuple[Dict[str, List[str]], Meter]:
     """Prose per section, with every number checked before it is returned.
 
     The failure policy is ROADMAP M7's, unchanged: validate, retry once with
@@ -250,13 +253,18 @@ def narrate(profile: Any, results: Sequence[Any], findings: Sequence[Any],
     if not wanted:
         return {}, meter
 
+    # One `locale` for both halves, deliberately. The narrator is told to quote
+    # the formatted strings verbatim and `allowed_numbers` rebuilds the same
+    # set to check them against; if the two formatted differently, every figure
+    # would fail the gate and each section would silently lose its paragraph.
     request = build_request(profile, results, findings, contents, period,
-                            max_paragraphs=spec.max_paragraphs)
+                            max_paragraphs=spec.max_paragraphs, locale=locale)
     client = client or build_client(spec.model)
 
     allowed = allowed_numbers(
         results, findings, currency=profile.identity.currency, period=period,
-        extra_counts=(profile.history_months, profile.intent.horizon_months))
+        extra_counts=(profile.history_months, profile.intent.horizon_months),
+        locale=locale)
 
     accepted: Dict[str, List[str]] = {}
     user = request["user"]

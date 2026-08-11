@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .. import fmt
 from ..profile import sectors
 from ..profile.schema import CompanyProfile
 
@@ -191,11 +192,24 @@ class BrandSpec(SpecModel):
     footer_text: Optional[str] = None
 
 
+class PageSize(str, Enum):
+    """Print page sizes the PDF renderer supports.
+
+    An enum rather than a free string because `page_size` used to be one and
+    was read by nothing: any value round-tripped happily and none of them did
+    anything. Now a typo is refused at the boundary instead of silently
+    producing an A4 document.
+    """
+    a4 = "A4"
+    letter = "Letter"
+    legal = "Legal"
+
+
 class DesignSpec(SpecModel):
     theme: ThemeMode = ThemeMode.light
     brand: BrandSpec = Field(default_factory=BrandSpec)
     locale: Optional[str] = None                       # None -> identity.language
-    page_size: str = "A4"
+    page_size: PageSize = PageSize.a4
     sections: Optional[List[str]] = None               # None -> the fixed 8
     exhibits: Optional[List[str]] = None               # None -> every chart that builds
     # id -> "half" | "full". Selection and order live in `exhibits`; this only
@@ -349,6 +363,51 @@ class RunSpec(SpecModel):
 
     def resolve_currency(self) -> str:
         return self.profile.identity.currency
+
+    def resolve_locale(self) -> str:
+        """Which separator convention the numbers are written in.
+
+        Three sources in decreasing order of how deliberate they are: the
+        design spec, the profile's language, and finally the country — a
+        German company that never set a language still expects `1.234,50`.
+        Anything unrecognised reads as English, which is a safe default rather
+        than a guess.
+        """
+        if self.design.locale:
+            return self.design.locale
+        identity = self.profile.identity
+        if getattr(identity, "language", None):
+            return identity.language
+        return fmt.family_for_country(identity.country) or fmt.DEFAULT_LOCALE
+
+    def resolve_page_size(self) -> str:
+        return self.design.page_size.value
+
+    def resolve_font_stack(self) -> List[str]:
+        """Preferred font names, most preferred first.
+
+        A list rather than a name because the three print renderers need
+        different things from it: PPTX and DOCX write a font *name* into the
+        file and let the reader's machine resolve it, while the PDF has to find
+        an actual TTF on this machine and falls through the list until one
+        exists. One field, honoured as far as each format allows.
+        """
+        stack = (self.design.brand.font_stack or "").strip()
+        if not stack:
+            return []
+        return [name.strip().strip("'\"") for name in stack.split(",")
+                if name.strip().strip("'\"")]
+
+    def resolve_footer_text(self) -> Optional[str]:
+        """Replacement footer, or None to keep the default.
+
+        The default footer carries the illustrative-benchmark caveat. Replacing
+        it is allowed — it is the user's document — and the caveat survives
+        either way, because every benchmarked KPI prints its source in the
+        appendix and that is not overridable.
+        """
+        text = (self.design.brand.footer_text or "").strip()
+        return text or None
 
     def resolve_theme(self) -> str:
         # "auto" is a browser-side concept; anything rendered server-side has to

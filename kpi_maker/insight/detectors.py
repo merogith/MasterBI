@@ -9,13 +9,14 @@ cost nothing to operate.
 """
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
-from ..fmt import fmt_value
+from ..fmt import fmt_percent, fmt_value
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
 
@@ -42,10 +43,42 @@ class Finding:
         return SEVERITY_ORDER.get(self.severity, 9)
 
 
-# Currency for the run in progress, set by detect_all. Findings are prose, so a
-# number here must read exactly as it does in the dashboard and the workbook —
-# hence the single shared formatter rather than a local copy.
-_CURRENCY = "USD"
+# Formatting context for the run in progress, set by detect_all. Findings are
+# prose, so a number here must read exactly as it does in the dashboard and the
+# workbook — hence one shared formatter rather than a local copy.
+#
+# ContextVars, not module globals. These were plain globals, and the API runs
+# pipelines on a `ThreadPoolExecutor(max_workers=2)`: two concurrent runs in
+# different currencies meant whichever called `detect_all` second overwrote the
+# symbol the first was still formatting with, and a board pack came out with
+# the wrong one. A ContextVar is per-thread, so the fix costs three lines and
+# no signature changes across twenty-one call sites.
+_CURRENCY: ContextVar[str] = ContextVar("currency", default="USD")
+_LOCALE: ContextVar[Optional[str]] = ContextVar("locale", default=None)
+
+# Per-detector thresholds. `AnalysisSpec.params` overrides any of them by
+# detector name; before this they were inline literals, so tuning "how big a
+# jump counts as a channel problem" meant editing the engine.
+DEFAULT_PARAMS: Dict[str, Dict[str, float]] = {
+    "segment_outliers": {"worst_vs_median": 1.4},
+    "arr_bridge": {"critical_leak": 0.6, "high_leak": 0.4},
+    "channel_efficiency": {"min_increase": 0.25},
+    "operating_leverage": {"positive_gap": 0.05, "negative_gap": -0.03},
+    "runway": {"warn_months": 12, "critical_months": 9},
+}
+
+# `None`, not `{}`: a mutable ContextVar default is one object shared by every
+# context that never sets it, so a caller mutating it would leak across runs.
+_PARAMS: ContextVar[Optional[Dict[str, Dict[str, float]]]] = ContextVar(
+    "params", default=None)
+
+
+def _param(detector: str, name: str) -> float:
+    """One threshold, user override first, shipped default second."""
+    override = (_PARAMS.get() or {}).get(detector, {})
+    if name in override:
+        return float(override[name])
+    return float(DEFAULT_PARAMS[detector][name])
 
 
 def _stable(value: float) -> float:
@@ -54,11 +87,22 @@ def _stable(value: float) -> float:
 
 
 def _fmt(value: Optional[float], unit: str) -> str:
-    return fmt_value(value, unit, _CURRENCY)
+    return fmt_value(value, unit, _CURRENCY.get(), locale=_LOCALE.get())
+
+
+def _pct(value: float, decimals: int = 1) -> str:
+    """A percentage in the run's locale, at the precision the sentence wants.
+
+    These were raw `f"{_pct(x, 1)}"` literals, so a finding could read
+    "$767,0K of ARR ... a rate of 40.7%" — the currency localised and the
+    percentage not, in the same sentence.
+    """
+    return fmt_percent(value, decimals, _LOCALE.get())
 
 
 def detect_all(results: List[MetricResult], tables: Dict[str, pd.DataFrame],
-               profile: CompanyProfile, spec=None) -> List[Finding]:
+               profile: CompanyProfile, spec=None,
+               locale: Optional[str] = None) -> List[Finding]:
     """Run the deterministic detectors.
 
     `spec` is a `spec.AnalysisSpec` (or None for all of them, unfiltered).
@@ -66,8 +110,9 @@ def detect_all(results: List[MetricResult], tables: Dict[str, pd.DataFrame],
     about the runway and concentration findings and not much else, and a
     twenty-item findings list buries the two that matter.
     """
-    global _CURRENCY
-    _CURRENCY = profile.identity.currency
+    _CURRENCY.set(profile.identity.currency)
+    _LOCALE.set(locale)
+    _PARAMS.set(dict(spec.params) if spec is not None and spec.params else None)
     by_id = {r.kpi.id: r for r in results if r.computed}
 
     registry = {
@@ -306,7 +351,7 @@ def _segment_outliers(tables: Dict[str, pd.DataFrame], profile: CompanyProfile) 
         return []
 
     worst = rate.idxmax()
-    if rate[worst] < rate.median() * 1.4:
+    if rate[worst] < rate.median() * _param("segment_outliers", "worst_vs_median"):
         return []
 
     return [Finding(
@@ -315,7 +360,7 @@ def _segment_outliers(tables: Dict[str, pd.DataFrame], profile: CompanyProfile) 
         title=f"Churn is concentrated in the {worst} segment",
         statement=(
             f"The {worst} segment lost {_fmt(float(lost[worst]), 'currency')} of ARR over "
-            f"the period, a rate of {rate[worst]:.1%} against {rate.drop(worst).mean():.1%} "
+            f"the period, a rate of {_pct(rate[worst], 1)} against {_pct(rate.drop(worst).mean(), 1)} "
             f"across the other segments. Aggregate retention masks this entirely."
         ),
         evidence={"segment_rate": float(rate[worst]), "other_rate": float(rate.drop(worst).mean()),
@@ -335,26 +380,26 @@ def _operating_leverage(by_id: Dict[str, MetricResult]) -> List[Finding]:
     if not arr_g or not hc_g or arr_g.current is None or hc_g.current is None:
         return []
     gap = arr_g.current - hc_g.current
-    if gap >= 0.05:
+    if gap >= _param("operating_leverage", "positive_gap"):
         return [Finding(
             id="operating_leverage_positive",
             severity="positive",
             title="The business is gaining operating leverage",
             statement=(
-                f"ARR grew {arr_g.current:.1%} against headcount growth of "
-                f"{hc_g.current:.1%} — a {gap:.1%} gap. Revenue is scaling faster "
+                f"ARR grew {_pct(arr_g.current, 1)} against headcount growth of "
+                f"{_pct(hc_g.current, 1)} — a {_pct(gap, 1)} gap. Revenue is scaling faster "
                 f"than the cost base."
             ),
             evidence={"arr_growth": arr_g.current, "headcount_growth": hc_g.current, "gap": gap},
             kpi_ids=["arr_per_fte", "arr_growth_yoy"],
         )]
-    if gap <= -0.03:
+    if gap <= _param("operating_leverage", "negative_gap"):
         return [Finding(
             id="operating_leverage_negative",
             severity="high",
             title="Headcount is growing faster than revenue",
             statement=(
-                f"Headcount grew {hc_g.current:.1%} while ARR grew {arr_g.current:.1%}. "
+                f"Headcount grew {_pct(hc_g.current, 1)} while ARR grew {_pct(arr_g.current, 1)}. "
                 f"The business is buying growth with people rather than leverage, which "
                 f"compounds into the cost base."
             ),
@@ -383,17 +428,20 @@ def _arr_bridge(tables: Dict[str, pd.DataFrame], profile: CompanyProfile) -> Lis
         return []
 
     leak = (churn + contraction) / gross_add
-    severity = "critical" if leak > 0.6 else "high" if leak > 0.4 else "low"
+    critical_leak = _param("arr_bridge", "critical_leak")
+    high_leak = _param("arr_bridge", "high_leak")
+    severity = ("critical" if leak > critical_leak
+                else "high" if leak > high_leak else "low")
     return [Finding(
         id="arr_bridge",
         severity=severity,
-        title=f"{leak:.0%} of gross new ARR is lost to churn and contraction",
+        title=f"{_pct(leak, 0)} of gross new ARR is lost to churn and contraction",
         statement=(
             f"Over the last twelve months the business added "
             f"{_fmt(new, 'currency')} of new-logo ARR and {_fmt(expansion, 'currency')} "
             f"of expansion, against {_fmt(churn, 'currency')} lost to churn and "
             f"{_fmt(contraction, 'currency')} to contraction. Net new ARR was "
-            f"{_fmt(gross_add - churn - contraction, 'currency')}, meaning {leak:.0%} of "
+            f"{_fmt(gross_add - churn - contraction, 'currency')}, meaning {_pct(leak, 0)} of "
             f"everything won was given back."
         ),
         evidence={"new": new, "expansion": expansion, "churn": churn,
@@ -402,9 +450,9 @@ def _arr_bridge(tables: Dict[str, pd.DataFrame], profile: CompanyProfile) -> Lis
         recommendation=(
             "Retention work compounds faster than acquisition work at this leakage "
             "rate — a point of GRR is worth more than a point of win rate."
-            if leak > 0.4 else None
+            if leak > high_leak else None
         ),
-        impact="high" if leak > 0.4 else "medium",
+        impact="high" if leak > high_leak else "medium",
         effort="medium",
     )]
 
@@ -427,18 +475,18 @@ def _channel_efficiency(tables: Dict[str, pd.DataFrame]) -> List[Finding]:
         return []
     change = (now[shared] / before[shared] - 1).sort_values(ascending=False)
     worst = change.index[0]
-    if change[worst] < 0.25:
+    if change[worst] < _param("channel_efficiency", "min_increase"):
         return []
 
     return [Finding(
         id="channel_cost_inflation",
         severity="high",
-        title=f"Cost per qualified lead in {worst.replace('_', ' ')} is up {change[worst]:.0%}",
+        title=f"Cost per qualified lead in {worst.replace('_', ' ')} is up {_pct(change[worst], 0)}",
         statement=(
             f"{worst.replace('_', ' ').title()} now costs "
-            f"{_fmt(float(now[worst]), 'currency')} per SQL, up {change[worst]:.0%} from "
+            f"{_fmt(float(now[worst]), 'currency')} per SQL, up {_pct(change[worst], 0)} from "
             f"{_fmt(float(before[worst]), 'currency')} a year ago. Other channels moved "
-            f"{change.drop(worst).mean():.0%} on average, so this is channel-specific "
+            f"{_pct(change.drop(worst).mean(), 0)} on average, so this is channel-specific "
             f"rather than a market-wide shift."
         ),
         evidence={"current_cps": float(now[worst]), "prior_cps": float(before[worst]),
@@ -457,11 +505,12 @@ def _runway(by_id: Dict[str, MetricResult]) -> List[Finding]:
     r = by_id.get("cash_runway_months")
     if not r or r.current is None:
         return []
-    if r.current >= 12:
+    if r.current >= _param("runway", "warn_months"):
         return []
     return [Finding(
         id="runway_alert",
-        severity="critical" if r.current < 9 else "high",
+        severity=("critical" if r.current < _param("runway", "critical_months")
+                  else "high"),
         title=f"Cash runway is {r.current:.0f} months",
         statement=(
             f"At the trailing three-month burn rate the current cash balance funds "
