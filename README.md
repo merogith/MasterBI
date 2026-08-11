@@ -30,8 +30,9 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 | Sample gallery (Mode 1) | `samples/` | done — M5, 4 companies |
 | HTTP API | `kpi_maker/api/` | done |
 | Web UI | `ui/` | done — M8 (vanilla JS, no build step) |
-| More sectors (M2) | — | not started |
-| AI Builder (M7) | — | not started |
+| Cross-sector fallback pack | `kpi_maker/kpi/library/general.yaml` | done — 19 KPIs, every sector runs |
+| More sectors (M2) | `kpi_maker/datagen/`, `kpi_maker/kpi/library/` | partial — 2 of 10 have their own archetype and pack; the other 8 run on the nearest archetype and the cross-sector pack, and say so |
+| AI Builder (M7) | `kpi_maker/ai/` | partial — planner, narrator and the number check ship; the conversational front door does not |
 
 ## Run it
 

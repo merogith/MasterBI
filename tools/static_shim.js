@@ -92,8 +92,8 @@
     const run = path.match(/^\/api\/runs\/([^/]+)$/);
     if (run) return prebuilt(`data/runs/${run[1]}/summary.json`);
 
-    if (path === '/api/upload') {
-      return Promise.resolve(fail('Profiling a spreadsheet reads it with pandas. ' + OFFLINE_NOTE));
+    if (path === '/api/ingest/profile') {
+      return Promise.resolve(fail('Reading and profiling a spreadsheet needs pandas. ' + OFFLINE_NOTE));
     }
     return Promise.resolve(fail(`No static stand-in for ${path}`, 404));
   }

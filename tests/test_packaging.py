@@ -108,6 +108,72 @@ def test_pages_workflow_verifies_every_sample() -> None:
             f"pages.yml never verifies sample {entry['id']!r}")
 
 
+def test_ci_matrix_matches_the_declared_python_range() -> None:
+    """CI must test what `requires-python` claims, and nothing outside it.
+
+    The first CI matrix ran 3.11 and 3.13. `numpy<2` publishes no cp313 wheels
+    — support starts at numpy 2.1 — so pip built 1.26.4 from source, which took
+    seven minutes on Windows and produced a binary that crashed the interpreter
+    on `import`. Testing an unsupported version is not extra safety; it is a
+    red job everyone learns to ignore.
+    """
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    spec = pyproject["project"]["requires-python"]
+    floor = re.search(r">=\s*(\d+)\.(\d+)", spec)
+    ceiling = re.search(r"<\s*(\d+)\.(\d+)", spec)
+    assert floor and ceiling, f"expected a bounded range, got {spec!r}"
+    lo = (int(floor.group(1)), int(floor.group(2)))
+    hi = (int(ceiling.group(1)), int(ceiling.group(2)))
+
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    matrix = re.search(r"python:\s*\[([^\]]+)\]", workflow)
+    assert matrix, "no python matrix found in ci.yml"
+    tested = [tuple(int(p) for p in v.strip().strip("'\"").split("."))
+              for v in matrix.group(1).split(",")]
+
+    for version in tested:
+        assert lo <= version < hi, (
+            f"ci.yml tests Python {'.'.join(map(str, version))}, "
+            f"which is outside requires-python {spec!r}")
+    assert lo in tested, f"the floor {lo} is declared supported but never tested"
+
+
+def test_no_shipped_capability_is_described_as_missing() -> None:
+    """The UI must not tell users a feature is absent when it ships.
+
+    `ui/index.html` carried "the Claude agents that plan and narrate a run are
+    *not connected in this build*" for months after `ai/planner.py`,
+    `ai/narrator.py` and `ai/verify.py` landed and were covered by tests — so
+    the product was actively under-selling its best work while stranding the
+    user on a screen with no next step.
+    """
+    from kpi_maker.ai import narrator, planner, verify  # noqa: F401
+
+    for name in ("ui/index.html", "ui/app.js", "kpi_maker/api/server.py"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        assert "not connected in this build" not in text, (
+            f"{name} still claims a shipped capability is missing")
+
+
+def test_the_legacy_upload_route_is_gone() -> None:
+    """One upload route, and it is the one that reads files properly.
+
+    `POST /api/upload` parsed with a bare `pd.read_csv` — no encoding chain, no
+    delimiter sniff, no title-block handling, none of what `ingest/readers.py`
+    does — and returned a hard-coded note claiming the mapping layer did not
+    exist. `POST /api/ingest/profile` supersedes it entirely.
+    """
+    from kpi_maker.api.server import app
+
+    paths = {route.path for route in app.routes}
+    assert "/api/upload" not in paths, "the superseded upload route is still registered"
+    assert "/api/ingest/profile" in paths
+
+    for name in ("ui/app.js", "tools/static_shim.js"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        assert "/api/upload" not in text, f"{name} still calls the deleted route"
+
+
 def test_every_chart_tab_has_a_label() -> None:
     """A chart declaring a tab the dashboard cannot name gets `t.title()`.
 

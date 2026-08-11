@@ -7,10 +7,19 @@ name = "kpi-maker"
 version = "0.1.0"
 description = "Profile-driven KPI selection, synthetic data, dashboards and reports."
 readme = "README.md"
-# 3.11, not 3.9. The code contorted for 3.9 — `typing.Optional` over PEP 604
+# Floor 3.11: the code contorted for 3.9 — `typing.Optional` over PEP 604
 # unions, noted in spec/schema.py — and 3.9 is EOL-adjacent. The desktop build
 # bundles its own interpreter, so the floor costs nothing.
-requires-python = ">=3.11"
+#
+# Ceiling 3.13: `numpy<2` publishes no cp313 wheels at all (support starts at
+# numpy 2.1), so pip builds 1.26.4 from source there. CI caught what that
+# produces — a seven-minute install on Windows followed by a hard interpreter
+# crash on `import`, not a Python exception. Raising this ceiling means
+# migrating off `numpy<2`, which is a real compatibility exercise: the pin sits
+# with `pandas<2.3`, `plotly<6` and `kaleido==0.2.1`, which were chosen
+# together. Until then 3.13 is not a supported target and the matrix must not
+# claim otherwise.
+requires-python = ">=3.11,<3.13"
 
 # Kept in sync with requirements.txt by `test_requirements_match_pyproject`
 # in tests/test_packaging.py. Two files exist because the double-click

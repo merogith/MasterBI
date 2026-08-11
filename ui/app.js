@@ -369,32 +369,84 @@ async function uploadFile(file) {
   const body = new FormData();
   body.append('file', file);
   try {
-    const res = await fetch(API + '/api/upload', { method: 'POST', body });
+    const res = await fetch(API + '/api/ingest/profile', { method: 'POST', body });
     if (!res.ok) {
       let detail = res.statusText;
       try { detail = (await res.json()).detail || detail; } catch (_) {}
       throw new Error(detail);
     }
     const data = await res.json();
+    // `/api/ingest/profile` returns strictly more than the route this used to
+    // call: a semantic type per column rather than a four-way dtype guess,
+    // the inferences the reader had to make (encoding, delimiter, a title
+    // block above the real header), the problems it found, and which fact
+    // table the file could become. Showing all of it is the difference
+    // between a column dump and an answer.
+    const prof = data.profile || {};
+    const cols = prof.columns || [];
+    const notes = (data.read && data.read.notes) || [];
+    // Ordered by how many fields matched *confidently*, not by the server's
+    // order. `detect_shape` ranks by ratio, so a five-field shape with one
+    // match outranks an eight-field shape with two — which puts `crm_deals`
+    // above `pnl_export` for a literal P&L export. Fixing that ranking is part
+    // of the mapping work; showing the strongest candidate first costs nothing
+    // and is true either way.
+    const confidentCount = (sh) =>
+      (sh.matches || []).filter((m) => m.status === 'confident').length;
+    const shapes = (data.shapes || []).slice()
+      .sort((a, b) => confidentCount(b) - confidentCount(a));
+    const problems = prof.problems || [];
+
     box.innerHTML = `
       <h2 class="section-title" style="margin-top:28px">${esc(data.filename)}</h2>
-      <p class="section-sub">${data.rows.toLocaleString()} rows · ${data.columns.length} columns</p>
+      <p class="section-sub">${(prof.rows || 0).toLocaleString()} rows · ${cols.length} columns</p>
+
+      ${notes.length ? `<div class="notice"><strong>How this file was read.</strong>
+        <ul>${notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></div>` : ''}
+
+      ${shapes.length ? `<div class="notice"><strong>What this could become.</strong>
+        <ul>${shapes.map((sh) => {
+          const m = sh.matches || [];
+          const sure = m.filter((x) => x.status === 'confident').length;
+          const missing = (sh.missing_required || []).length;
+          return `<li><strong>${esc(sh.shape || '')}</strong> → <code>${esc(sh.target_table || '')}</code>
+            — ${sure} of ${m.length} field${m.length === 1 ? '' : 's'} matched confidently${
+              missing ? `, ${missing} required field${missing === 1 ? '' : 's'} missing` : ''}
+            ${sh.usable ? '' : ' <em>(not usable as-is)</em>'}</li>`;
+        }).join('')}</ul>
+        <p class="watch-for">A low match count means the column names did not
+           resemble that shape — not that your data is wrong. Correcting a
+           mapping by hand is part of the flow being built next.</p></div>` : ''}
+
+      ${problems.length ? `<div class="notice"><strong>Worth a look.</strong>
+        <ul>${problems.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+
       <div class="table-wrap"><table>
         <thead><tr>
-          <th>Column</th><th>Inferred type</th><th class="num">Non-null</th>
+          <th>Column</th><th>Reads as</th><th class="num">Non-null</th>
           <th class="num">Missing</th><th class="num">Unique</th><th>Sample values</th>
         </tr></thead>
-        <tbody>${data.columns.map((c) => `
+        <tbody>${cols.map((c) => `
           <tr>
-            <td><strong>${esc(c.name)}</strong></td>
-            <td>${esc(c.inferred_type)}</td>
-            <td class="num">${c.non_null.toLocaleString()}</td>
-            <td class="num">${(c.null_pct * 100).toFixed(1)}%</td>
-            <td class="num">${c.unique.toLocaleString()}</td>
-            <td>${esc((c.sample || []).join(' · '))}</td>
+            <td><strong>${esc(c.name)}</strong>${(c.problems || []).length
+              ? `<br><span class="watch-for">${esc(c.problems.join(' · '))}</span>` : ''}</td>
+            <td>${esc(c.semantic || c.dtype || '')}</td>
+            <td class="num">${(c.non_null || 0).toLocaleString()}</td>
+            <td class="num">${((c.null_pct || 0) * 100).toFixed(1)}%</td>
+            <td class="num">${(c.unique || 0).toLocaleString()}</td>
+            <td>${esc((c.samples || []).join(' · '))}</td>
           </tr>`).join('')}</tbody>
       </table></div>
-      <p class="watch-for" style="margin-top:14px">${esc(data.note)}</p>`;
+
+      <div class="surprise-row" style="margin-top:24px">
+        <div>
+          <h3>Ready to use this file?</h3>
+          <p>Answer the profile questions first — a run needs to know who the
+             company is before it can read its numbers. Then adopt this file in
+             the Studio's Source panel.</p>
+        </div>
+        <button class="primary" data-nav="survey">Build the profile</button>
+      </div>`;
   } catch (err) {
     box.innerHTML = `<p class="empty">Upload failed: ${esc(err.message)}</p>`;
   }

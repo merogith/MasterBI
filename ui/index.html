@@ -119,18 +119,20 @@
     <div class="view-head">
       <button class="back" data-nav="home">← Back</button>
       <h1>Bring your data</h1>
-      <p class="lede">Upload a CSV or Excel file. We profile every column —
-         types, nulls, cardinality, samples — so you can see exactly what the
-         pipeline would be working with.</p>
+      <p class="lede">Upload a CSV or Excel file. We read it the way it was
+         actually written — encoding, delimiter, a title block above the real
+         header — then profile every column and work out which fact table it
+         could become.</p>
     </div>
 
     <div class="notice">
-      <strong>Honest status.</strong> Column profiling below is real and runs
-      locally. Automatic mapping to the KPI data model, and the Claude agents
-      that plan and narrate a run, are <em>not connected in this build</em>.
-      They are milestones M6 and M7 on the roadmap. Until then, use
+      <strong>What happens next.</strong> This step inspects your file and
+      changes nothing. To run it, a company profile has to exist first, so the
+      order is
       <button class="linkish" data-nav="survey">Build your own</button>
-      to generate a full pack.
+      to answer the profile questions, then adopt this file as the data source
+      in the Studio's <em>Source</em> panel. Making that one flow instead of
+      two is the next thing being built.
     </div>
 
     <label class="dropzone" id="dropzone">

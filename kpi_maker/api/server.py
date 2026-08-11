@@ -621,10 +621,9 @@ def list_ops() -> Dict[str, Any]:
 async def ingest_profile(file: UploadFile = File(...)) -> Dict[str, Any]:
     """Read, profile and shape-match an upload. Nothing is applied.
 
-    Replaces the old /api/upload, which profiled columns inside the route and
-    stopped there. This returns everything the Source panel needs to show the
-    user what they have and what it could become — and every suggestion is an
-    offer, not a change.
+    This is the only upload route. It returns everything the Source panel and
+    the "Bring your data" screen need to show the user what they have and what
+    it could become — and every suggestion is an offer, not a change.
     """
     suffix = Path(file.filename or "upload").suffix.lower()
     stored = UPLOADS_DIR / f"{uuid.uuid4().hex[:8]}{suffix}"
@@ -1033,63 +1032,6 @@ def list_tables(run_id: str) -> List[Dict[str, Any]]:
         out.append({"name": path.stem, "rows": max(rows, 0),
                     "url": f"/files/{run_id}/data/{path.name}"})
     return out
-
-
-@app.post("/api/upload")
-async def upload(file: UploadFile = File(...)) -> Dict[str, Any]:
-    """Profile an uploaded spreadsheet.
-
-    Deterministic column profiling only — this is the honest half of Mode 3
-    (ROADMAP M6). The mapping and narrative agents are not wired up, so the UI
-    presents this as an inspection step rather than pretending to be an AI.
-    """
-    suffix = Path(file.filename or "upload").suffix.lower()
-    if suffix not in (".csv", ".xlsx", ".xls", ".tsv"):
-        raise HTTPException(400, f"Unsupported file type {suffix!r}. "
-                                 f"Use CSV, TSV or Excel.")
-    target = UPLOADS_DIR / f"{uuid.uuid4().hex[:8]}{suffix}"
-    target.write_bytes(await file.read())
-
-    try:
-        if suffix in (".csv", ".tsv"):
-            df = pd.read_csv(target, sep="\t" if suffix == ".tsv" else ",")
-        else:
-            df = pd.read_excel(target)
-    except Exception as exc:                             # noqa: BLE001
-        raise HTTPException(422, f"Could not parse the file: {exc}")
-
-    columns = []
-    for col in df.columns:
-        series = df[col]
-        non_null = series.dropna()
-        inferred = "unknown"
-        if pd.api.types.is_numeric_dtype(series):
-            inferred = "number"
-        elif pd.api.types.is_datetime64_any_dtype(series):
-            inferred = "date"
-        elif non_null.size:
-            parsed = pd.to_datetime(non_null.head(50), errors="coerce", format="mixed")
-            inferred = "date" if parsed.notna().mean() > 0.8 else "text"
-        columns.append({
-            "name": str(col),
-            "inferred_type": inferred,
-            "non_null": int(non_null.size),
-            "null_pct": round(float(series.isna().mean()), 4),
-            "unique": int(non_null.nunique()) if non_null.size else 0,
-            "sample": [None if pd.isna(v) else str(v) for v in non_null.head(3)],
-        })
-
-    return {
-        "filename": file.filename,
-        "rows": int(len(df)),
-        "columns": columns,
-        "stored_as": target.name,
-        "note": (
-            "Column profiling is deterministic. Automatic mapping to the KPI "
-            "data model and the AI narrative layer are not connected in this "
-            "build — see ROADMAP M6 and M7."
-        ),
-    }
 
 
 @app.get("/files/{run_id}/{path:path}")
