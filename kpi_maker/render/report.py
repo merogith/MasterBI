@@ -446,6 +446,16 @@ def _draw_appendix(pdf: PDFReport, c: SectionContent) -> None:
                 pdf.body(block.intro)
             for line in block.lines:
                 pdf.bullet(line, marker=block.marker)
+            # `tinted` used to be read only by the KPI-definition branch below,
+            # so a section-level block that set it lost the text with no error —
+            # the DOCX printed it and the PDF did not. A field the registry
+            # offers has to mean the same thing in every renderer.
+            for line, tint in block.tinted:
+                pdf.set_text_color(*_rgb(pdf.t[tint]))
+                pdf.multi_cell(0, 4.6, pdf.clean(line))
+                pdf.set_text_color(*_rgb(pdf.t["text_primary"]))
+            if block.tinted:
+                pdf.ln(2)
             continue
 
         # A KPI definition. Keep the whole entry on one page where it fits.
@@ -485,7 +495,8 @@ def render_report(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                   section_order: Optional[List[str]] = None,
                   logo=None, origins: Optional[Dict[str, str]] = None,
                   narrative: Optional[Dict[str, List[str]]] = None,
-                  ai_notes: Optional[List[str]] = None) -> Path:
+                  ai_notes: Optional[List[str]] = None,
+                  caveats: Optional[List[str]] = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     pdf = PDFReport(profile, tokens)
     pdf.images = images
@@ -495,7 +506,8 @@ def render_report(path: Path, profile: CompanyProfile, kpi_set: KPISet,
         profile=profile, kpi_set=kpi_set, results=results, findings=findings,
         images=images, specs=specs, checks=checks,
         anomaly_notes=anomaly_notes, period=period, origins=origins or {},
-        narrated=sorted(narrative or {}), ai_notes=list(ai_notes or []))
+        narrated=sorted(narrative or {}), ai_notes=list(ai_notes or []),
+        caveats=list(caveats or []))
     for content in build_sections(ctx, section_order, narrative=narrative):
         DRAW[content.id](pdf, content)
 

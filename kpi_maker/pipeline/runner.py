@@ -40,8 +40,12 @@ class RunContext:
     # Set by the source stage for uploads: {table: measured|modelled}. Read by
     # `metrics` to decide each result's basis.
     origins: Any = None
-    # Tier 2 identity misses on uploaded data — reported, never fatal.
-    gate_warnings: Any = None
+    # Caveats this run carries: Tier 2 identity misses on uploaded data, and a
+    # sector simulated by a neighbouring archetype. Never fatal, always
+    # reported. A list rather than None so any stage can append without first
+    # checking whether an earlier one already did — it used to be assigned
+    # rather than appended to, so a second writer would have clobbered the first.
+    gate_warnings: List[str] = field(default_factory=list)
     # Where `source.uploads` names are resolved from. Uploads are shared
     # across runs — the same file can drive several — so they live beside the
     # run directories rather than inside one. Defaulting here rather than in
@@ -131,6 +135,9 @@ class RunResult:
     skipped: List[str]
     timings: Dict[str, float]
     out_dir: Path
+    # Caveats collected during the run. Carried here rather than left on the
+    # context so a caller that only holds the result can still report them.
+    warnings: List[str] = field(default_factory=list)
 
     @property
     def seconds(self) -> float:
@@ -181,4 +188,5 @@ def execute(spec: RunSpec, out_dir: Path, *,
         spec.model_dump_json(indent=2), encoding="utf-8")
 
     return RunResult(values=ctx.values, ran=ran, skipped=skipped,
-                     timings=timings, out_dir=out_dir)
+                     timings=timings, out_dir=out_dir,
+                     warnings=list(ctx.gate_warnings))

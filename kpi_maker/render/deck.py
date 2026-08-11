@@ -304,7 +304,8 @@ def render_deck(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                 tokens: Optional[Dict[str, str]] = None,
                 section_order: Optional[List[str]] = None,
                 logo=None,
-                narrative: Optional[Dict[str, List[str]]] = None) -> Path:
+                narrative: Optional[Dict[str, List[str]]] = None,
+                caveats: Optional[List[str]] = None) -> Path:
     deck = Deck(profile, tokens)
     deck.logo = logo
     cur = profile.identity.currency
@@ -312,7 +313,7 @@ def render_deck(path: Path, profile: CompanyProfile, kpi_set: KPISet,
     ctx = SectionContext(
         profile=profile, kpi_set=kpi_set, results=results, findings=findings,
         images=images, specs=specs, period=period,
-        narrated=sorted(narrative or {}))
+        narrated=sorted(narrative or {}), caveats=list(caveats or []))
     contents = build_sections(ctx, section_order, limits=DECK_LIMITS,
                               narrative=narrative)
     enabled = {c.id for c in contents}

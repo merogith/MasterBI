@@ -224,6 +224,13 @@ button, input, select { font: inherit; }
 .option.unknown { border-style: dashed; color: var(--text-secondary); }
 .option.disabled { opacity: .45; cursor: not-allowed; }
 .option-soon { margin-left: auto; font-size: 10.5px; color: var(--muted); }
+/* An approximated sector is selectable — the badge is a caveat, not a block,
+   so it must not read as disabled. Muted, but not greyed out. */
+.option-note {
+  margin-left: auto; font-size: 10.5px; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px;
+  white-space: nowrap;
+}
 
 .name-input {
   width: 100%; max-width: 420px; padding: 11px 14px;

@@ -61,6 +61,14 @@ def _source(ctx) -> Any:
             f"No data generator for business model {archetype!r}. "
             f"Available: {', '.join(_archetypes())}."
         )
+    # A sector simulated by a neighbouring archetype produces figures that
+    # reconcile but are not a model of its economics. That belongs in the same
+    # place as every other caveat the run carries, not in a log line nobody
+    # reads.
+    note = ctx.spec.archetype_note()
+    if note is not None:
+        ctx.gate_warnings.append(note)
+        ctx.say(f"  WARNING   {note}")
     profile = ctx.get("resolve")
     # Seed and history live on the profile, so a spec override is applied by
     # handing the generator an adjusted copy rather than by threading two more
@@ -136,8 +144,9 @@ def _model(ctx) -> Dict[str, pd.DataFrame]:
         # Uploaded data meets the contract here, once it is canonical. Tier 1
         # still raises; Tier 2 becomes warnings the appendix reports.
         from ..ingest.pipeline import gate_uploaded
-        ctx.gate_warnings = gate_uploaded(tables, ctx.get("resolve"))
-        for warning in ctx.gate_warnings:
+        uploaded_warnings = gate_uploaded(tables, ctx.get("resolve"))
+        ctx.gate_warnings.extend(uploaded_warnings)
+        for warning in uploaded_warnings:
             ctx.say(f"  WARNING   {warning}")
 
     return tables
@@ -249,6 +258,25 @@ def _logo(ctx):
     return cached
 
 
+def _caveats(ctx) -> List[str]:
+    """Everything this run had to approximate, for the appendix.
+
+    Two sources, deliberately merged here rather than at either one: the source
+    stage records a sector simulated by a neighbouring archetype and a Tier 2
+    identity miss on uploaded data, while the selection engine records a
+    scorecard built on the cross-sector pack. A reader needs both or neither,
+    and every print renderer needs the same list.
+    """
+    notes = list(ctx.gate_warnings)
+    try:
+        rationale = ctx.get("select").rationale
+    except KeyError:
+        return notes
+    notes.extend(rationale[k] for k in sorted(rationale)
+                 if k.endswith("_warning") and rationale[k] not in notes)
+    return notes
+
+
 def _narration(ctx) -> Dict[str, Any]:
     """The narrate stage's output, or nothing if it was pruned.
 
@@ -358,7 +386,8 @@ def _report_pdf(ctx):
                   section_order=ctx.spec.design.sections, logo=_logo(ctx),
                   origins=ctx.origins,
                   narrative=_narration(ctx).get("sections"),
-                  ai_notes=_narration(ctx).get("notes"))
+                  ai_notes=_narration(ctx).get("notes"),
+                  caveats=_caveats(ctx))
     return path
 
 
@@ -373,7 +402,8 @@ def _deck_pptx(ctx):
                 ctx.get("visualise")["light"], ctx.period,
                 tokens=_palettes(ctx)["light"],
                 section_order=ctx.spec.design.sections, logo=_logo(ctx),
-                narrative=_narration(ctx).get("sections"))
+                narrative=_narration(ctx).get("sections"),
+                caveats=_caveats(ctx))
     return path
 
 
@@ -391,7 +421,8 @@ def _doc_docx(ctx):
                section_order=ctx.spec.design.sections, logo=_logo(ctx),
                origins=ctx.origins,
                narrative=_narration(ctx).get("sections"),
-               ai_notes=_narration(ctx).get("notes"))
+               ai_notes=_narration(ctx).get("notes"),
+               caveats=_caveats(ctx))
     return path
 
 

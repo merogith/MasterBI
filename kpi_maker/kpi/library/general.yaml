@@ -1,0 +1,557 @@
+# Cross-sector pack — the scorecard any business can be held to.
+#
+# Every metric here computes from three tables that EVERY generator archetype
+# emits: `monthly_financials` (the P&L and cash), `headcount` (the roster) and
+# `marketing` (acquisition spend). Nothing here reads a sector-specific table,
+# so this pack is what a sector without its own library falls back on rather
+# than crashing — see `profile/sectors.py`.
+#
+# Ids are deliberately distinct from the sector packs' (`gross_margin` here,
+# `gross_margin_pct` in saas.yaml and ecommerce.yaml). The definitions are the
+# same arithmetic but the benchmark cohorts are not, and a 42% retail gross
+# margin judged against a 75% software band would tell a healthy business it is
+# failing. Distinct ids keep the two records from being mistaken for each other,
+# and keep the scoped-duplicate guard in `_load_packs` quiet.
+#
+# BENCHMARK HEALTH WARNING — every band below is an illustrative all-industry
+# composite, not a licensed cohort, and it is labelled as such in the appendix.
+# ROADMAP M4 / Phase 4.4 replaces these with cited public distributions
+# (Damodaran industry datasets, Eurostat SBS, OECD) behind a BenchmarkProvider.
+#
+# The customer perspective here is thinner than it should be, and for a
+# structural reason: the `customers` fact table is entity-grain (one row per
+# customer, no month), so it cannot back a monthly KPI at all. Until per-segment
+# metric evaluation lands, the customer perspective is served by acquisition
+# economics, which every sector has.
+
+# --- Financial ---------------------------------------------------------------
+
+- id: revenue_ttm
+  name: Revenue
+  short_name: Revenue
+  perspective: financial
+  tier: 0
+  timing: lagging
+  direction: higher_is_better
+  formula: revenue, trailing twelve months
+  compute:
+    kind: formula
+    expression: TTM(monthly_financials.revenue)
+  unit: currency
+  owner_role: CEO
+  source_systems: [gl]
+  interpretation: >
+    The top line on a rolling twelve-month basis, so seasonality does not make
+    the trend unreadable. This is the North Star when no sector-specific one
+    applies.
+  pitfalls: >
+    A trailing-twelve-month figure lags a turn by up to a year. Read it with the
+    growth rate, which turns first.
+  serves_objectives: [growth, fundraise, exit_prep]
+  core: true
+
+- id: revenue_growth_yoy
+  name: Revenue Growth
+  short_name: Growth
+  perspective: financial
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: revenue_ttm
+  formula: year-on-year change in monthly revenue
+  compute:
+    kind: formula
+    expression: YOY(monthly_financials.revenue)
+  unit: pct
+  owner_role: CEO
+  source_systems: [gl]
+  benchmark:
+    p25: 0.02
+    p50: 0.09
+    p75: 0.24
+    source: Illustrative all-industry composite, pending a cited public distribution
+  alert_bands: {green: 0.10, red: 0.0}
+  target_rule: "max(benchmark_p50, current * 1.1)"
+  interpretation: >
+    The single number every board, lender and investor asks for first. Compared
+    year-on-year rather than month-on-month so a seasonal business is not
+    reported as collapsing every January.
+  pitfalls: >
+    Growth bought with margin is not growth. Read it beside gross margin and
+    operating margin before drawing a conclusion.
+  serves_objectives: [growth, fundraise, market_entry]
+  core: true
+
+- id: gross_margin
+  name: Gross Margin
+  perspective: financial
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: revenue_ttm
+  formula: gross profit / revenue
+  compute:
+    kind: formula
+    expression: SAFE_DIV(monthly_financials.gross_profit, monthly_financials.revenue)
+  unit: pct
+  owner_role: CFO
+  source_systems: [gl]
+  benchmark:
+    p25: 0.28
+    p50: 0.42
+    p75: 0.62
+    source: Illustrative all-industry composite — spans software and distribution, so read the band widely
+  alert_bands: {green: 0.40, red: 0.22}
+  interpretation: >
+    Unit economics before any cost of selling. Because this band spans every
+    sector it is unusually wide; the trend in your own margin is far more
+    informative than your position in it.
+  pitfalls: >
+    What sits in cost of goods varies enormously between businesses — freight,
+    fulfilment, hosting, delivery labour. State the definition beside the number
+    or the comparison is meaningless.
+  serves_objectives: [margin_expansion, cost_reduction]
+  core: true
+
+- id: operating_margin
+  name: Operating Margin
+  short_name: EBITDA %
+  perspective: financial
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: gross_margin
+  formula: EBITDA / revenue
+  compute:
+    kind: formula
+    expression: SAFE_DIV(monthly_financials.ebitda, monthly_financials.revenue)
+  unit: pct
+  owner_role: CFO
+  source_systems: [gl]
+  benchmark:
+    p25: -0.01
+    p50: 0.08
+    p75: 0.19
+    source: Illustrative all-industry composite, pending a cited public distribution
+  alert_bands: {green: 0.10, red: -0.02}
+  interpretation: >
+    Operating profitability before capital structure and tax. The number that
+    decides whether growth is self-funding.
+  pitfalls: >
+    EBITDA ignores the working capital and capital expenditure that some sectors
+    genuinely consume. A business can hold this flat while running out of cash.
+  serves_objectives: [margin_expansion, turnaround, cost_reduction]
+  core: true
+
+- id: free_cash_flow_ratio
+  name: Free Cash Flow Margin
+  short_name: FCF %
+  perspective: financial
+  tier: 2
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: operating_margin
+  formula: free cash flow / revenue
+  compute:
+    kind: formula
+    expression: SAFE_DIV(monthly_financials.free_cash_flow, monthly_financials.revenue)
+  unit: pct
+  owner_role: CFO
+  source_systems: [gl]
+  benchmark:
+    p25: -0.05
+    p50: 0.04
+    p75: 0.13
+    source: Illustrative all-industry composite, pending a cited public distribution
+  alert_bands: {green: 0.05, red: -0.08}
+  interpretation: >
+    What the business actually generated after paying for its own growth. The
+    gap between this and operating margin is where working capital and capex
+    live.
+  pitfalls: >
+    Lumpy by nature — one large capital purchase distorts a month. Read the
+    trailing twelve months, not the latest point.
+  serves_objectives: [cash_liquidity, margin_expansion]
+
+- id: opex_ratio
+  name: Operating Expense Ratio
+  short_name: Opex %
+  perspective: financial
+  tier: 2
+  timing: lagging
+  direction: lower_is_better
+  driver_parent: operating_margin
+  formula: total operating expense / revenue
+  compute:
+    kind: formula
+    expression: SAFE_DIV(monthly_financials.total_opex, monthly_financials.revenue)
+  unit: pct
+  owner_role: CFO
+  source_systems: [gl]
+  benchmark:
+    p25: 0.48
+    p50: 0.34
+    p75: 0.22
+    source: Illustrative all-industry composite — p75 is the GOOD end for a lower-is-better metric
+  alert_bands: {green: 0.30, red: 0.45}
+  interpretation: >
+    How much of every unit of revenue is consumed running the business. Falling
+    while revenue grows is operating leverage; rising is the opposite.
+  pitfalls: >
+    Not comparable across sectors with different cost-of-goods conventions — a
+    business that books delivery labour above the gross-profit line will look
+    lean here and thin above it.
+  serves_objectives: [cost_reduction, margin_expansion]
+
+- id: cash_runway
+  name: Cash Runway
+  perspective: financial
+  tier: 1
+  timing: leading
+  direction: higher_is_better
+  formula: cash / average monthly net burn over the last three months
+  compute:
+    kind: formula
+    expression: >
+      IF(ROLLING(monthly_financials.net_burn, 3, 'mean') > 0,
+         SAFE_DIV(monthly_financials.cash,
+                  ROLLING(monthly_financials.net_burn, 3, 'mean')),
+         99)
+  unit: months
+  owner_role: CFO
+  source_systems: [gl]
+  alert_bands: {green: 18, red: 9}
+  interpretation: >
+    How long the business can operate on the cash it holds at the current rate
+    of burn. A profitable business reports the ceiling value rather than a
+    meaningless division by a negative burn.
+  pitfalls: >
+    Assumes the last three months repeat. It is a tripwire, not a forecast, and
+    it says nothing about undrawn facilities or committed funding.
+  serves_objectives: [cash_liquidity, turnaround, fundraise]
+
+# --- Customer ----------------------------------------------------------------
+
+- id: marketing_efficiency_ratio
+  name: Marketing Efficiency Ratio
+  short_name: MER
+  perspective: customer
+  tier: 2
+  timing: lagging
+  direction: higher_is_better
+  formula: revenue / total marketing spend
+  compute:
+    kind: formula
+    expression: SAFE_DIV(monthly_financials.revenue, SUM(marketing.spend))
+  unit: ratio
+  owner_role: CMO
+  source_systems: [gl, marketing]
+  benchmark:
+    p25: 4.0
+    p50: 8.0
+    p75: 16.0
+    source: Illustrative all-industry composite, pending a cited public distribution
+  alert_bands: {green: 8.0, red: 3.0}
+  interpretation: >
+    Revenue returned for every unit of marketing spend, blended across every
+    channel. Blended deliberately: channel-level return figures are the ones
+    most often overstated by attribution.
+  pitfalls: >
+    Includes revenue from customers acquired years ago, so it flatters a mature
+    book and punishes one investing in growth. Read it with the growth rate.
+  serves_objectives: [growth, cost_reduction]
+
+- id: acquisition_spend
+  name: Customer Acquisition Spend
+  perspective: customer
+  tier: 2
+  timing: leading
+  direction: higher_is_better
+  formula: total marketing spend across all channels
+  compute:
+    kind: formula
+    expression: SUM(marketing.spend)
+  unit: currency
+  owner_role: CMO
+  source_systems: [marketing]
+  interpretation: >
+    What is being put into the top of the funnel this month. A leading
+    indicator: it moves before the revenue it buys.
+  pitfalls: >
+    Higher is only better if efficiency holds. Never read this without the
+    marketing efficiency ratio beside it.
+  serves_objectives: [growth, market_entry]
+
+- id: acquisition_spend_growth
+  name: Acquisition Spend Growth
+  perspective: customer
+  tier: 3
+  timing: leading
+  direction: higher_is_better
+  driver_parent: acquisition_spend
+  formula: year-on-year change in total marketing spend
+  compute:
+    kind: formula
+    expression: YOY(SUM(marketing.spend))
+  unit: pct
+  owner_role: CMO
+  source_systems: [marketing]
+  interpretation: >
+    Whether the acquisition engine is being fed more or less than a year ago.
+    Compared against revenue growth it says whether growth is being bought.
+  pitfalls: >
+    A cut here shows up in revenue one to two quarters later, so a falling
+    number is an early warning rather than a saving.
+  serves_objectives: [growth, cost_reduction]
+
+# --- Internal process --------------------------------------------------------
+
+- id: marketing_intensity
+  name: Marketing Intensity
+  perspective: internal_process
+  tier: 2
+  timing: lagging
+  direction: lower_is_better
+  driver_parent: opex_ratio
+  formula: marketing cost / revenue
+  compute:
+    kind: formula
+    expression: SAFE_DIV(monthly_financials.marketing_cost, monthly_financials.revenue)
+  unit: pct
+  owner_role: CMO
+  source_systems: [gl]
+  benchmark:
+    p25: 0.18
+    p50: 0.11
+    p75: 0.05
+    source: Illustrative all-industry composite — p75 is the GOOD end
+  alert_bands: {green: 0.10, red: 0.20}
+  interpretation: >
+    The share of revenue spent reaching customers. Lower is better only at
+    constant growth — a business deliberately buying share should read high.
+  pitfalls: >
+    Judged in isolation this rewards cutting demand generation, which is the
+    classic way to make a quarter look good and the next year look bad.
+  serves_objectives: [cost_reduction, margin_expansion]
+
+- id: sales_intensity
+  name: Sales Intensity
+  perspective: internal_process
+  tier: 2
+  timing: lagging
+  direction: lower_is_better
+  driver_parent: opex_ratio
+  formula: sales cost / revenue
+  compute:
+    kind: formula
+    expression: SAFE_DIV(monthly_financials.sales_cost, monthly_financials.revenue)
+  unit: pct
+  owner_role: CRO
+  source_systems: [gl]
+  benchmark:
+    p25: 0.20
+    p50: 0.13
+    p75: 0.07
+    source: Illustrative all-industry composite — p75 is the GOOD end
+  alert_bands: {green: 0.12, red: 0.22}
+  interpretation: >
+    The cost of carrying revenue over the line. Structurally higher for field
+    and tender motions than for self-serve, so compare against your own history
+    first.
+  pitfalls: >
+    Sales headcount is added ahead of the revenue it produces, so this spikes
+    during a hiring push and recovers as reps ramp. A single high month is not
+    a finding.
+  serves_objectives: [cost_reduction, margin_expansion]
+
+- id: overhead_intensity
+  name: Overhead Intensity
+  short_name: G&A %
+  perspective: internal_process
+  tier: 3
+  timing: lagging
+  direction: lower_is_better
+  driver_parent: opex_ratio
+  formula: general and administrative cost / revenue
+  compute:
+    kind: formula
+    expression: SAFE_DIV(monthly_financials.ga_cost, monthly_financials.revenue)
+  unit: pct
+  owner_role: CFO
+  source_systems: [gl]
+  benchmark:
+    p25: 0.14
+    p50: 0.09
+    p75: 0.05
+    source: Illustrative all-industry composite — p75 is the GOOD end
+  alert_bands: {green: 0.08, red: 0.16}
+  interpretation: >
+    The cost of running the company rather than growing it. The clearest single
+    measure of whether scale is producing efficiency.
+  pitfalls: >
+    Where finance, legal, IT and facilities are booked varies between
+    businesses, so cross-company comparison is weak. The trend is the signal.
+  serves_objectives: [cost_reduction, margin_expansion]
+
+- id: capex_intensity
+  name: Capital Intensity
+  perspective: internal_process
+  tier: 3
+  timing: leading
+  direction: target_band
+  formula: capital expenditure / revenue
+  compute:
+    kind: formula
+    expression: SAFE_DIV(monthly_financials.capex, monthly_financials.revenue)
+  unit: pct
+  owner_role: CFO
+  source_systems: [gl]
+  benchmark:
+    p25: 0.01
+    p50: 0.03
+    p75: 0.07
+    source: Illustrative all-industry composite, pending a cited public distribution
+  interpretation: >
+    What is being reinvested in productive capacity. Scored as a band rather
+    than a direction, because too little is a slow-motion capacity problem and
+    too much is unfunded growth.
+  pitfalls: >
+    Lumpy, and heavily dependent on whether the business leases or buys. A
+    capital-light business sitting below the band is not necessarily
+    under-investing.
+  serves_objectives: [growth, quality]
+
+# --- Learning & growth -------------------------------------------------------
+
+- id: revenue_per_head
+  name: Revenue per Employee
+  short_name: Rev/FTE
+  perspective: learning_growth
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: revenue_ttm
+  formula: trailing twelve-month revenue / total full-time equivalents
+  compute:
+    kind: formula
+    expression: SAFE_DIV(TTM(monthly_financials.revenue), SUM(headcount.fte))
+  unit: currency
+  owner_role: COO
+  source_systems: [gl, hr]
+  benchmark:
+    p25: 90000
+    p50: 165000
+    p75: 320000
+    source: Illustrative all-industry composite — spans labour-intensive and capital-intensive models
+  interpretation: >
+    The most portable productivity measure there is, and the one that shows
+    whether headcount growth is producing anything. Uses trailing twelve-month
+    revenue so a seasonal peak does not read as a productivity jump.
+  pitfalls: >
+    Outsourcing raises this without changing productivity, because contractors
+    are not full-time equivalents. Contract-heavy businesses will overstate.
+  serves_objectives: [cost_reduction, margin_expansion, turnaround]
+  core: true
+
+- id: workforce_size
+  name: Headcount
+  perspective: learning_growth
+  tier: 2
+  timing: leading
+  direction: higher_is_better
+  formula: total full-time equivalents across all functions
+  compute:
+    kind: formula
+    expression: SUM(headcount.fte)
+  unit: count
+  owner_role: CHRO
+  source_systems: [hr]
+  interpretation: >
+    The largest committed cost in most businesses, and one that moves before
+    the revenue and the cost lines it drives.
+  pitfalls: >
+    Full-time equivalents, not people — a business running many part-time roles
+    will report fewer FTE than employees on its payroll.
+  serves_objectives: [growth]
+
+- id: personnel_cost_ratio
+  name: Personnel Cost Ratio
+  perspective: learning_growth
+  tier: 2
+  timing: lagging
+  direction: lower_is_better
+  driver_parent: revenue_per_head
+  formula: total payroll cost / revenue
+  compute:
+    kind: formula
+    expression: SAFE_DIV(SUM(headcount.cost), monthly_financials.revenue)
+  unit: pct
+  owner_role: CHRO
+  source_systems: [gl, hr]
+  benchmark:
+    p25: 0.42
+    p50: 0.30
+    p75: 0.18
+    source: Illustrative all-industry composite — p75 is the GOOD end
+  alert_bands: {green: 0.28, red: 0.45}
+  interpretation: >
+    The share of revenue that goes to the people producing it. The other side
+    of revenue per employee, and the one that shows up first when growth stalls.
+  pitfalls: >
+    Payroll cost here is what the roster reports, which may exclude equity,
+    bonus accrual or employer contributions depending on the source system.
+  serves_objectives: [cost_reduction, margin_expansion, turnaround]
+
+- id: attrition_rate
+  name: Employee Attrition
+  perspective: learning_growth
+  tier: 2
+  timing: lagging
+  direction: lower_is_better
+  formula: leavers in the month / total full-time equivalents, annualised
+  compute:
+    kind: formula
+    expression: SAFE_DIV(SUM(headcount.leavers) * 12, SUM(headcount.fte))
+  unit: pct
+  owner_role: CHRO
+  source_systems: [hr]
+  benchmark:
+    p25: 0.24
+    p50: 0.16
+    p75: 0.09
+    source: Illustrative all-industry composite — p75 is the GOOD end
+  alert_bands: {green: 0.12, red: 0.25}
+  interpretation: >
+    Annualised from the monthly leaver count so it can be read against a
+    published annual rate without waiting a year for twelve months of history.
+  pitfalls: >
+    Annualising a single month is noisy in a small team — one leaver from
+    twenty people annualises to 60%. Read the trend, not the point.
+  serves_objectives: [quality, cost_reduction]
+
+- id: rnd_intensity
+  name: R&D Intensity
+  perspective: learning_growth
+  tier: 3
+  timing: leading
+  direction: target_band
+  driver_parent: opex_ratio
+  formula: research and development cost / revenue
+  compute:
+    kind: formula
+    expression: SAFE_DIV(monthly_financials.rnd_cost, monthly_financials.revenue)
+  unit: pct
+  owner_role: CTO
+  source_systems: [gl]
+  benchmark:
+    p25: 0.02
+    p50: 0.06
+    p75: 0.15
+    source: Illustrative all-industry composite — the band is genuinely sector-shaped, read it as such
+  interpretation: >
+    Investment in what the business will sell next. A band rather than a
+    direction: too little mortgages the future, too much is unfunded.
+  pitfalls: >
+    Capitalisation policy moves this by several points without changing a
+    single thing anyone does. State whether development cost is expensed.
+  serves_objectives: [growth, quality, digital_transformation]

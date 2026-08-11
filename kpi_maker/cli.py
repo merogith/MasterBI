@@ -47,9 +47,11 @@ def run_pipeline(profile: CompanyProfile, out_dir: Path,
     if kpi_set is not None:
         say(f"  KPIs      {len(kpi_set.kpis)} selected, {len(kpi_set.dropped)} excluded "
             f"(north star: {kpi_set.north_star}, {kpi_set.leading_share:.0%} leading)")
-        for key in ("_coverage_warning", "_leading_warning"):
-            if key in kpi_set.rationale:
-                say(f"  WARNING   {kpi_set.rationale[key]}")
+        # Any `_*_warning` key, not a fixed list of two: a new warning added to
+        # the selection engine should reach the console without also having to
+        # be added here, which is how `_sector_warning` would have been missed.
+        for key in sorted(k for k in kpi_set.rationale if k.endswith("_warning")):
+            say(f"  WARNING   {kpi_set.rationale[key]}")
 
     data = values.get("source")
     tables = values.get("model", {})
@@ -94,7 +96,7 @@ def run_pipeline(profile: CompanyProfile, out_dir: Path,
         results=results, findings=findings, tables=tables,
         checks=data.checks if data is not None else [],
         spec=spec, ran=result.ran, skipped=result.skipped,
-        seconds=result.seconds,
+        seconds=result.seconds, warnings=result.warnings,
     )
 
 

@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Tuple
 
 import yaml
 
+from ..profile import sectors
 from ..profile.schema import Audience, CompanyProfile, KpiExperience
 from .expr import evaluate
 from .schema import KPI, AlertBands, KPISet, Perspective, Tier, Timing
@@ -71,12 +72,14 @@ REDUNDANT_PAIRS = [
     ("lead_to_mql_rate", "mql_to_sql_rate"),
 ]
 
+# Only ids that a shipped pack actually defines belong here. `gmv`, `oee` and
+# `utilization_rate` used to be listed for marketplace, manufacturing and
+# services; none of the three exists, so all three silently fell through to the
+# tier-0 fallback below and the map read as coverage the library did not have.
+# Re-add each one with its pack in ROADMAP M2 / Phase 4.
 NORTH_STAR_BY_MODEL = {
     "saas": "arr",
     "ecommerce": "contribution_margin",
-    "marketplace": "gmv",
-    "manufacturing": "oee",
-    "services": "utilization_rate",
 }
 
 
@@ -172,7 +175,14 @@ def load_all_known() -> List[KPI]:
 
 
 def _packs_for(profile: CompanyProfile) -> List[str]:
-    return [profile.business_model.type.value]
+    """The packs this company's sector resolves to.
+
+    Not `[business_model.type]`: eight of the ten declared sectors have no pack
+    of their own, and naming them here is what used to raise
+    `FileNotFoundError: KPI pack not found: manufacturing`. `sectors` falls back
+    to the cross-sector `general` pack and reports that it did.
+    """
+    return list(sectors.resolve_packs(profile.business_model.type.value).value)
 
 
 def candidates_for(profile: CompanyProfile, overrides=None) -> List[KPI]:
@@ -350,6 +360,14 @@ def select(profile: CompanyProfile, extra_packs: Optional[List[str]] = None,
     # disagree and nobody can tell why.
     for kpi_id, note in {**load_notes, **custom_notes}.items():
         rationale[f"_origin:{kpi_id}"] = note
+
+    # A scorecard built on the cross-sector pack because this sector has none of
+    # its own must say so wherever the rationale is read — the appendix, the
+    # studio, the dropped-KPI disclosure. Silently substituting content is the
+    # one thing worse than the crash this replaced.
+    pack_resolution = sectors.resolve_packs(profile.business_model.type.value)
+    if not pack_resolution.exact and (overrides is None or not overrides.packs):
+        rationale["_sector_warning"] = pack_resolution.note
 
     # --- Layers 1 & 2: applicability and feasibility -----------------------
     candidates: List[KPI] = []

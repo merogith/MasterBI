@@ -71,6 +71,80 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 
 # --------------------------------------------------------------------------
+# 0. Every declared sector runs
+# --------------------------------------------------------------------------
+
+def test_every_sector_runs() -> None:
+    """No sector the schema offers may raise.
+
+    `BusinessModel` declares ten sectors; two have their own archetype and pack.
+    For a long time the other eight raised `FileNotFoundError: KPI pack not
+    found: retail` out of the selection engine, or `ValueError: No data
+    generator for business model 'retail'` out of the source stage — so a survey
+    respondent who picked "manufacturing" got a stack trace rather than a
+    dashboard.
+
+    The bar here is not that every sector is *good*. It is that every sector
+    resolves to something runnable and that an approximated one says so. A
+    sector that quietly borrowed another's content would pass a "does it run"
+    test and fail the user, so the warning is asserted as hard as the run.
+    """
+    print("\nevery declared sector runs")
+
+    from kpi_maker.profile import sectors
+    from kpi_maker.profile.schema import BusinessModel, CompanyProfile
+    from kpi_maker.spec.schema import RunSpec
+
+    declared = [m.value for m in BusinessModel]
+    check("the schema still declares ten sectors", len(declared) == 10,
+          f"{len(declared)}: {declared}")
+
+    base = json.loads(SAAS.read_text(encoding="utf-8"))
+    exact = set(sectors.supported_sectors())
+
+    for model in declared:
+        raw = json.loads(json.dumps(base))
+        raw["business_model"]["type"] = model
+        profile = CompanyProfile(**raw)
+        spec = RunSpec.for_profile(profile)
+
+        # Both halves must resolve to something the registries actually hold.
+        archetype = spec.resolve_archetype()
+        check(f"{model}: archetype {archetype!r} is registered",
+              archetype in GENERATORS, str(sorted(GENERATORS)))
+
+        try:
+            kpi_set = select(profile)
+        except Exception as exc:                            # noqa: BLE001
+            check(f"{model}: selection does not raise", False,
+                  f"{type(exc).__name__}: {exc}")
+            continue
+
+        check(f"{model}: the scorecard is not empty", len(kpi_set.kpis) >= 8,
+              f"{len(kpi_set.kpis)} KPIs")
+        check(f"{model}: the north star is a selected KPI",
+              kpi_set.by_id(kpi_set.north_star) is not None,
+              kpi_set.north_star)
+
+        # Balanced Scorecard coverage has to survive the fallback too, or the
+        # degraded run is a financial dump rather than a scorecard.
+        perspectives = {k.perspective for k in kpi_set.kpis}
+        check(f"{model}: all four perspectives are represented",
+              len(perspectives) == 4, str(sorted(p.value for p in perspectives)))
+
+        warned = "_sector_warning" in kpi_set.rationale
+        if model in exact:
+            check(f"{model}: an exact sector carries no approximation warning",
+                  not warned and spec.archetype_note() is None)
+        else:
+            check(f"{model}: an approximated pack says so", warned)
+            check(f"{model}: an approximated archetype says so",
+                  spec.archetype_note() is not None)
+            check(f"{model}: the warning names the sector",
+                  model in kpi_set.rationale.get("_sector_warning", ""))
+
+
+# --------------------------------------------------------------------------
 # 1. The registry
 # --------------------------------------------------------------------------
 
@@ -453,6 +527,7 @@ def run() -> int:
         saas_data = GENERATORS["saas"](load_profile(SAAS))
         retail_data = GENERATORS["ecommerce"](load_profile(RETAIL))
         suites = [
+            test_every_sector_runs,
             test_registry,
             lambda: test_vacuity_guard(saas_data),
             lambda: test_contract_scoping(saas_data, retail_data),

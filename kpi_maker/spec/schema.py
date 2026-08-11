@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..profile import sectors
 from ..profile.schema import CompanyProfile
 
 SPEC_VERSION = 1
@@ -317,11 +318,34 @@ class RunSpec(SpecModel):
 
     def resolve_archetype(self) -> str:
         archetype = self.source.generator.archetype
-        return self.profile.business_model.type.value if archetype is None else archetype
+        if archetype is not None:
+            return archetype
+        # Not simply `business_model.type`: eight of the ten declared sectors
+        # have no generator of their own, and returning their name here is what
+        # used to raise `No data generator for business model 'retail'` one
+        # stage later. `sectors` maps every sector to something runnable and
+        # says when it had to approximate.
+        return sectors.resolve_archetype(self.profile.business_model.type.value).value
 
     def resolve_packs(self) -> List[str]:
         packs = self.metrics.packs
-        return [self.profile.business_model.type.value] if packs is None else list(packs)
+        if packs is not None:
+            return list(packs)
+        return list(sectors.resolve_packs(self.profile.business_model.type.value).value)
+
+    def archetype_note(self) -> Optional[str]:
+        """Why this run's data was simulated by a neighbouring archetype.
+
+        None when the sector has its own generator, or when the spec named an
+        archetype explicitly — an explicit choice is not an approximation.
+
+        Deliberately narrower than "every sector caveat": the pack half of the
+        same question is reported by the selection engine, which is what owns
+        it. Reporting both here as well printed each one twice.
+        """
+        if self.source.generator.archetype is not None:
+            return None
+        return sectors.resolve_archetype(self.profile.business_model.type.value).note
 
     def resolve_currency(self) -> str:
         return self.profile.identity.currency

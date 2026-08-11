@@ -220,17 +220,25 @@ function questionHtml(q) {
       ${q.unlocks ? `<div class="question-unlocks">Unlocks: ${esc(q.unlocks)}</div>` : ''}
       <div class="options">
         ${q.options.map((o) => {
+          // `approximate` is not `disabled`. An option that runs on the
+          // cross-sector pack is a real choice with a caveat, and offering it
+          // with the caveat attached beats the old "Soon" pill, which showed
+          // people two sectors they could look at and not pick.
           const disabled = o.disabled ? ' disabled' : '';
           const cls = [
             'option',
             o.value === '__unknown__' ? 'unknown' : '',
             o.disabled ? 'disabled' : '',
+            o.approximate ? 'approximate' : '',
           ].filter(Boolean).join(' ');
+          const badge = o.disabled
+            ? '<span class="option-soon">Soon</span>'
+            : (o.note ? `<span class="option-note">${esc(o.note)}</span>` : '');
           return `
           <label class="${cls}">
             <input type="radio" name="${esc(q.id)}" value="${esc(o.value)}"${disabled}>
             <span>${esc(o.label)}</span>
-            ${o.disabled ? '<span class="option-soon">Soon</span>' : ''}
+            ${badge}
           </label>`;
         }).join('')}
       </div>

@@ -190,7 +190,8 @@ def render_doc(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                section_order: Optional[List[str]] = None,
                logo=None, origins: Optional[Dict[str, str]] = None,
                narrative: Optional[Dict[str, List[str]]] = None,
-               ai_notes: Optional[List[str]] = None) -> Path:
+               ai_notes: Optional[List[str]] = None,
+               caveats: Optional[List[str]] = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     doc = Document()
     doc.logo = logo
@@ -204,7 +205,8 @@ def render_doc(path: Path, profile: CompanyProfile, kpi_set: KPISet,
         profile=profile, kpi_set=kpi_set, results=results, findings=findings,
         images=images, specs=specs, checks=checks,
         anomaly_notes=anomaly_notes, period=period, origins=origins or {},
-        narrated=sorted(narrative or {}), ai_notes=list(ai_notes or []))
+        narrated=sorted(narrative or {}), ai_notes=list(ai_notes or []),
+        caveats=list(caveats or []))
 
     for content in build_sections(ctx, section_order, narrative=narrative):
         if content.id == "cover":
