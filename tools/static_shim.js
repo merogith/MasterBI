@@ -83,6 +83,13 @@
       });
     }
 
+    // A pre-built run is already finished, so there is never anything to stop.
+    // Answering as the server would beats a 404 toast if someone reaches the
+    // running screen's Cancel in the moment before the first poll lands.
+    if (/^\/api\/runs\/[^/]+\/cancel$/.test(path) && method === 'POST') {
+      return Promise.resolve(json({ status: 'idle' }));
+    }
+
     const table = path.match(/^\/api\/runs\/([^/]+)\/table\/([^/]+)$/);
     if (table) return prebuilt(`data/runs/${table[1]}/table/${table[2]}.json`);
 

@@ -250,3 +250,45 @@ def test_unimplemented_kpis_never_reach_a_scorecard() -> None:
         for kpi_id in unimplemented & set(kpi_set.dropped):
             assert kpi_set.dropped[kpi_id], (
                 f"{sample.name}: {kpi_id} dropped with no reason")
+
+
+def test_the_ui_holds_no_copy_of_the_engines_stage_names() -> None:
+    """The running screen must render what the server sends, and nothing else.
+
+    `ui/app.js` used to carry `EXPECTED_STEPS`, five stage labels it ticked off
+    by string equality against what the server echoed — while the engine has
+    seventeen stages and the server reported none of them until the run was
+    already over. `tools/build_pages.py` carried the same five strings again.
+    Two hand-maintained copies of a vocabulary that lives in `graph.Stage.label`
+    is the drift this whole file exists to prevent, so assert the copies stay
+    deleted rather than trusting that they will.
+    """
+    from kpi_maker.pipeline.graph import STAGES
+
+    labels = {s.label for s in STAGES.values()}
+    for rel in ("ui/app.js", "tools/build_pages.py", "tools/static_shim.js"):
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        found = sorted(label for label in labels if f'"{label}"' in text
+                       or f"'{label}'" in text)
+        assert not found, f"{rel} hardcodes engine stage labels: {found}"
+
+
+def test_the_running_screen_can_actually_cancel() -> None:
+    """Cancel used to clear a timer and navigate home while the job ran on.
+
+    Three things have to line up for it to mean anything, and each is in a
+    different file: the button posts to the endpoint, the endpoint exists, and
+    the poll handles the status it produces. Asserting only one of the three
+    is how a working-looking Cancel came to do nothing for so long.
+    """
+    app_js = (ROOT / "ui" / "app.js").read_text(encoding="utf-8")
+    server = (ROOT / "kpi_maker" / "api" / "server.py").read_text(encoding="utf-8")
+
+    assert "/cancel`, { method: 'POST' }" in app_js, \
+        "the Cancel button does not call the cancel endpoint"
+    assert '@app.post("/api/runs/{run_id}/cancel")' in server, \
+        "there is no cancel endpoint to call"
+    assert "'cancelled'" in app_js, \
+        "the poll does not handle a cancelled run"
+    assert 'status="cancelled"' in server, \
+        "the server never reports a run as cancelled"

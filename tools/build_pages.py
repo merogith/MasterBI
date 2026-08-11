@@ -85,13 +85,6 @@ def build(out_dir: Path) -> int:
         run_pipeline(profile, run_dir, quiet=True)
 
         summary = api._build_summary(run_id, run_dir, profile)
-        summary["steps"] = [
-            "Validating profile",
-            "Selecting KPIs from the library",
-            "Generating data and reconciling",
-            "Computing metrics and detecting findings",
-            "Rendering dashboard, report, deck and workbook",
-        ]
         for artifact in summary.get("artifacts", []):
             artifact["url"] = relativise(artifact["url"])
 

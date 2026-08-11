@@ -152,8 +152,22 @@
       <h2 id="run-company">Generating…</h2>
       <p class="lede">Selecting KPIs, generating data, reconciling the books,
          then rendering five deliverables.</p>
-      <ol class="run-steps" id="run-steps"></ol>
+
+      <div class="run-bar" role="progressbar" aria-labelledby="run-stage"
+           aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="run-bar">
+        <div class="run-bar-fill" id="run-bar-fill"></div>
+      </div>
+      <p class="run-stage" id="run-stage" aria-live="polite">Queued</p>
+      <p class="run-count" id="run-count"></p>
+
+      <details class="run-detail">
+        <summary id="run-detail-summary">All stages</summary>
+        <ol class="run-steps" id="run-steps"></ol>
+      </details>
+
       <button class="ghost" id="run-cancel">Cancel</button>
+      <p class="run-note" id="run-note" hidden>Stopping after the current stage —
+         a stage is never interrupted part-way, so this can take a second or two.</p>
     </div>
   </section>
 

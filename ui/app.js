@@ -454,10 +454,20 @@ async function uploadFile(file) {
 
 /* ------------------------------------------------------------ run + poll */
 
+function resetRunProgress() {
+  $('#run-steps').innerHTML = '';
+  $('#run-bar-fill').style.width = '0%';
+  $('#run-bar').setAttribute('aria-valuenow', '0');
+  $('#run-stage').textContent = 'Queued';
+  $('#run-count').textContent = '';
+  $('#run-note').hidden = true;
+  $('#run-cancel').disabled = false;
+}
+
 async function startRun(payload) {
   show('running');
   $('#run-company').textContent = 'Starting…';
-  $('#run-steps').innerHTML = '';
+  resetRunProgress();
   try {
     const res = await api('/api/runs', { method: 'POST', body: JSON.stringify(payload) });
     state.runId = res.run_id;
@@ -469,48 +479,101 @@ async function startRun(payload) {
   }
 }
 
-const EXPECTED_STEPS = [
-  'Validating profile',
-  'Selecting KPIs from the library',
-  'Generating data and reconciling',
-  'Computing metrics and detecting findings',
-  'Rendering dashboard, report, deck and workbook',
-];
+/* The client used to hold its own list of five step labels and tick them off
+   by string equality against what the server echoed. That is how the two drifted:
+   the engine has seventeen stages and the screen knew about five of them, none
+   of which were reported until the whole run had already finished. Render what
+   the server sends and nothing else. */
+function renderProgress(progress) {
+  const stages = (progress && progress.stages) || [];
+  const total = (progress && progress.total) || 0;
+  const done = (progress && progress.done) || 0;
+  const current = progress && progress.current;
+
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  $('#run-bar-fill').style.width = `${pct}%`;
+  $('#run-bar').setAttribute('aria-valuenow', String(pct));
+
+  if (current) $('#run-stage').textContent = current.label;
+
+  const eta = progress ? progress.eta_seconds : null;
+  const left = eta === null || eta === undefined || eta < 0.5
+    ? 'almost done'
+    : `about ${eta < 1 ? 1 : Math.round(eta)}s left`;
+  $('#run-count').textContent = total ? `${done} of ${total} · ${left}` : '';
+
+  $('#run-steps').innerHTML = stages.map((s) => {
+    const cls = s.state === 'running' ? 'running' : s.state === 'reused' ? 'reused' : '';
+    const tail = s.state === 'reused' ? ' <span class="run-count">reused</span>' : '';
+    return `<li class="${cls}">${esc(s.label)}${tail}</li>`;
+  }).join('');
+}
+
+/* Backoff with a ceiling. A fixed 700ms interval polled a wedged run forever,
+   and a run that is a minute in does not need four requests a second. */
+const POLL_FIRST_MS = 400;
+const POLL_MAX_MS = 3000;
 
 function pollRun() {
-  clearInterval(state.poll);
-  state.poll = setInterval(async () => {
+  stopPolling();
+  let wait = POLL_FIRST_MS;
+
+  const tick = async () => {
     if (!state.runId) return;
     try {
       const run = await api(`/api/runs/${state.runId}`);
-      const done = run.steps || [];
-      $('#run-steps').innerHTML = EXPECTED_STEPS.map((label) => {
-        const complete = done.includes(label);
-        return `<li class="${complete ? '' : 'pending'}">${esc(label)}</li>`;
-      }).join('');
+      renderProgress(run.progress);
 
       if (run.status === 'done') {
-        clearInterval(state.poll);
+        stopPolling();
         state.summary = run.summary;
         renderResults(run.summary);
         show('results');
-      } else if (run.status === 'error') {
-        clearInterval(state.poll);
+        return;
+      }
+      if (run.status === 'cancelled') {
+        stopPolling();
+        state.runId = null;
+        toast('Run cancelled. Finished stages were kept, so starting again is quicker.');
+        show('home');
+        return;
+      }
+      if (run.status === 'error') {
+        stopPolling();
         toast('Run failed: ' + (run.error || 'unknown error'), true);
         show('home');
+        return;
       }
+      wait = Math.min(Math.round(wait * 1.25), POLL_MAX_MS);
+      state.poll = setTimeout(tick, wait);
     } catch (err) {
-      clearInterval(state.poll);
+      stopPolling();
       toast('Lost contact with the server: ' + err.message, true);
       show('home');
     }
-  }, 700);
+  };
+  state.poll = setTimeout(tick, POLL_FIRST_MS);
 }
 
-$('#run-cancel').addEventListener('click', () => {
-  clearInterval(state.poll);
-  state.runId = null;
-  show('home');
+function stopPolling() {
+  if (state.poll) clearTimeout(state.poll);
+  state.poll = null;
+}
+
+$('#run-cancel').addEventListener('click', async () => {
+  const runId = state.runId;
+  if (!runId) { show('home'); return; }
+  // Say what is actually happening rather than closing the screen on a request
+  // that had not been sent yet: the engine finishes the stage it is inside.
+  $('#run-note').hidden = false;
+  $('#run-cancel').disabled = true;
+  try {
+    await api(`/api/runs/${runId}/cancel`, { method: 'POST' });
+  } catch (err) {
+    toast('Could not cancel: ' + err.message, true);
+    $('#run-cancel').disabled = false;
+    $('#run-note').hidden = true;
+  }
 });
 
 /* -------------------------------------------------------------- results */
@@ -1856,6 +1919,7 @@ $('#studio-rerun').addEventListener('click', async () => {
   try {
     await api(`/api/runs/${state.runId}/rerun`, { method: 'POST' });
     show('running');
+    resetRunProgress();
     $('#run-company').textContent = studio.spec.profile.identity.name;
     pollRun();
   } catch (err) {

@@ -17,7 +17,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -41,7 +41,7 @@ from ..insight.detectors import DETECTOR_NAMES
 from ..kpi.schema import user_kpi
 from ..kpi.selection import load_library, unknown_kpi_ids
 from ..kpi.user_library import delete_user_kpi, save_user_kpi, user_kpi_ids
-from ..pipeline.runner import plan_rerun
+from ..pipeline.runner import RunCancelled, plan_rerun
 from ..prep import describe_ops
 from ..prep.model import preview_column
 from ..prep.recipe import preview_recipe
@@ -65,6 +65,11 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 # In-flight state. Completed runs are recovered from disk on restart, so this
 # is a cache of live progress rather than the source of truth.
 _STATE: Dict[str, Dict[str, Any]] = {}
+# One cancel event per in-flight run, added by `_execute` before the pipeline
+# starts and removed when it stops however it stops. Absent means "nothing to
+# cancel" rather than "cancel failed", which is why the endpoint treats a
+# missing id as a no-op on an already-finished run.
+_CANCEL: Dict[str, Event] = {}
 _LOCK = Lock()
 _POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pipeline")
 
@@ -240,33 +245,66 @@ def _build_summary(run_id: str, run_dir: Path, profile: CompanyProfile) -> Dict[
     }
 
 
-def _execute(run_id: str, spec: RunSpec) -> None:
-    run_dir = RUNS_DIR / run_id
-    steps: List[str] = []
+def _submit(run_id: str, spec: RunSpec) -> None:
+    """Queue a run, with its cancel event registered *before* it is queued.
 
-    def note(msg: str) -> None:
-        steps.append(msg)
-        _set(run_id, steps=list(steps))
+    The pool has two workers, so a third run waits. Creating the event inside
+    `_execute` would leave that waiting run uncancellable — the user would
+    press Cancel, get told there was nothing to cancel, and then watch it start.
+    """
+    cancel = Event()
+    with _LOCK:
+        _CANCEL[run_id] = cancel
+    _POOL.submit(_execute, run_id, spec, cancel)
+
+
+def _execute(run_id: str, spec: RunSpec, cancel: Event) -> None:
+    run_dir = RUNS_DIR / run_id
+    # Every stage the run has reported on, newest state per stage, in the order
+    # the engine reached them. A dict rather than a list because a stage
+    # reports twice — running, then done or reused — and the second report
+    # replaces the first rather than appending to it.
+    stages: Dict[str, Dict[str, Any]] = {}
+
+    def progress(event: Dict[str, Any]) -> None:
+        stages[event["stage"]] = event
+        _set(run_id, progress={
+            "current": event,
+            "stages": list(stages.values()),
+            "done": sum(1 for e in stages.values() if e["state"] != "running"),
+            "total": event["total"],
+            "eta_seconds": event["eta_seconds"],
+            "elapsed": event["elapsed"],
+        })
 
     try:
-        _set(run_id, status="running", steps=["Validating profile"])
-        note("Selecting KPIs from the library")
-        result = run_pipeline(spec.profile, run_dir, quiet=True, spec=spec)
-        note("Generating data and reconciling")
-        note("Computing metrics and detecting findings")
-        note("Rendering dashboard, report, deck and workbook")
+        _set(run_id, status="running", progress=None)
+        result = run_pipeline(spec.profile, run_dir, quiet=True, spec=spec,
+                              on_progress=progress, cancel=cancel)
 
         summary = _build_summary(run_id, run_dir, spec.profile)
-        summary["steps"] = steps
         summary["stages_ran"] = result.get("ran", [])
         summary["stages_reused"] = result.get("skipped", [])
         summary["seconds"] = result.get("seconds")
         (run_dir / "summary.json").write_text(
             json.dumps(summary, indent=2, default=str), encoding="utf-8")
         _set(run_id, status="done", finished_at=_now(), summary=summary)
+    except RunCancelled as stop:
+        # No summary.json: that file is what makes a run look finished, both to
+        # the results screen and to the disk scan that recovers runs after a
+        # restart. A cancelled run is not a short run.
+        _set(run_id, status="cancelled", cancelled_at=stop.stage,
+             error=str(stop), finished_at=_now())
     except Exception as exc:                             # noqa: BLE001
         _set(run_id, status="error", error=str(exc),
              traceback=traceback.format_exc(limit=6), finished_at=_now())
+    finally:
+        with _LOCK:
+            # Only retire our own event. A re-run of the same id queued while
+            # this one was finishing has already registered its own, and
+            # popping that would make the new run uncancellable.
+            if _CANCEL.get(run_id) is cancel:
+                del _CANCEL[run_id]
 
 
 # --------------------------------------------------------------------------
@@ -342,8 +380,8 @@ def create_run(req: RunRequest) -> Dict[str, Any]:
     # `run_id` is the positional key of _set — passing it again as a field
     # collides with it.
     _set(run_id, status="queued", mode=req.mode,
-         company=profile.identity.name, started_at=_now(), steps=[])
-    _POOL.submit(_execute, run_id, spec)
+         company=profile.identity.name, started_at=_now(), progress=None)
+    _submit(run_id, spec)
     return {"run_id": run_id, "status": "queued", "company": profile.identity.name}
 
 
@@ -404,8 +442,8 @@ def rerun(run_id: str) -> Dict[str, Any]:
     spec = _load_spec(run_id)
     report = plan_rerun(spec, RUNS_DIR / run_id)
     _set(run_id, status="queued", mode="rerun",
-         company=spec.profile.identity.name, started_at=_now(), steps=[])
-    _POOL.submit(_execute, run_id, spec)
+         company=spec.profile.identity.name, started_at=_now(), progress=None)
+    _submit(run_id, spec)
     return {"run_id": run_id, "status": "queued", **report}
 
 
@@ -992,6 +1030,23 @@ def get_run(run_id: str) -> Dict[str, Any]:
     return state
 
 
+@app.post("/api/runs/{run_id}/cancel")
+def cancel_run(run_id: str) -> Dict[str, Any]:
+    """Ask a running pipeline to stop at its next stage boundary.
+
+    Fire and forget: the caller does not wait, because the engine finishes the
+    stage it is inside first and that can take a couple of seconds. The reply
+    says whether anything was actually signalled, so a Cancel on a run that has
+    already finished reads as `"idle"` rather than pretending to have stopped it.
+    """
+    with _LOCK:
+        event = _CANCEL.get(run_id)
+    if event is None:
+        return {"status": "idle", "run_id": run_id}
+    event.set()
+    return {"status": "cancelling", "run_id": run_id}
+
+
 @app.delete("/api/runs/{run_id}")
 def delete_run(run_id: str) -> Dict[str, str]:
     run_dir = RUNS_DIR / run_id
@@ -999,6 +1054,12 @@ def delete_run(run_id: str) -> Dict[str, str]:
         shutil.rmtree(run_dir, ignore_errors=True)
     with _LOCK:
         _STATE.pop(run_id, None)
+        # Deleting a run mid-flight should stop it too, and must clear the
+        # event either way: a re-run under the same id would otherwise inherit
+        # a set flag and cancel itself before its first stage.
+        stale = _CANCEL.pop(run_id, None)
+    if stale is not None:
+        stale.set()
     return {"status": "deleted"}
 
 

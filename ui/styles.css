@@ -279,7 +279,26 @@ button, input, select { font: inherit; }
   animation: spin .9s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-.run-steps { list-style: none; padding: 0; margin: 26px 0; text-align: left; display: grid; gap: 9px; }
+/* The bar carries the whole story for anyone who does not open the detail:
+   how far along, what is happening now, and how much is left. */
+.run-bar {
+  height: 6px; margin: 24px 0 12px; border-radius: 999px;
+  background: var(--grid); overflow: hidden;
+}
+.run-bar-fill {
+  height: 100%; width: 0%; background: var(--accent);
+  transition: width .35s ease;
+}
+.run-stage { font-size: 15px; font-weight: 500; margin: 0; }
+.run-count { font-size: 13px; color: var(--muted); margin: 4px 0 0; }
+.run-note { font-size: 13px; color: var(--muted); margin: 12px 0 0; }
+
+.run-detail { margin: 20px 0 24px; text-align: left; }
+.run-detail summary {
+  cursor: pointer; font-size: 13px; color: var(--muted);
+  text-align: center; list-style-position: inside;
+}
+.run-steps { list-style: none; padding: 0; margin: 14px 0 0; text-align: left; display: grid; gap: 9px; }
 .run-steps li {
   display: flex; align-items: center; gap: 10px;
   font-size: 14px; color: var(--text-secondary);
@@ -289,8 +308,18 @@ button, input, select { font: inherit; }
   width: 18px; height: 18px; border-radius: 50%; background: var(--accent-soft);
   display: grid; place-items: center; flex: none;
 }
+/* Reused is not done: on a re-run the useful thing to see is which stages the
+   cache served, which is exactly what the Studio's cost estimate promised and
+   the running screen could never show. */
+.run-steps li.reused { color: var(--muted); }
+.run-steps li.reused::before { content: "↺"; color: var(--muted); background: var(--grid); }
+.run-steps li.running::before {
+  content: "●"; color: var(--accent); background: var(--accent-soft);
+  animation: pulse 1.1s ease-in-out infinite;
+}
 .run-steps li.pending { color: var(--muted); }
 .run-steps li.pending::before { content: "…"; color: var(--muted); background: var(--grid); }
+@keyframes pulse { 50% { opacity: .35; } }
 
 /* ---------------- results ---------------- */
 .result-head {
