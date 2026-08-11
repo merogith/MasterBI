@@ -17,7 +17,8 @@ Three environment problems are handled here rather than in a README:
    `readline()` and no timeout. The call never returns. Found by a CI stack
    dump after two runs' worth of Windows jobs sat in the test step for twenty
    minutes and were recorded as merely "cancelled". `_guarded_to_image` below
-   bounds it.
+   bounds it by *abandoning* the call rather than by trying to stop it —
+   see the note there on why killing the process is not enough.
 3. **Print backgrounds.** The dashboard uses transparent backgrounds so the card
    shows through. On paper that produces charts floating on nothing, so print
    exports get an explicit opaque surface.
@@ -124,54 +125,76 @@ _export_failure: Optional[str] = None
 
 
 def _kill_kaleido() -> None:
-    """Kill kaleido's subprocess so the blocked `readline()` returns empty.
+    """Best-effort release of kaleido's subprocess. Never relied upon.
 
-    This is the only way out. The hang is inside a blocking read on a pipe,
-    which no signal or flag reaches from another thread — but closing the
-    other end does. kaleido then sees an empty startup line and raises
-    `ValueError("Failed to start Kaleido subprocess")`, which is a path
-    `render_all` already handles. An infinite hang becomes an ordinary failure.
+    The first version of this fix killed the process and waited for the
+    blocked `readline()` to see EOF. It did not work, and the reason is one
+    line in kaleido's own source:
 
-    Reaching for `scope._proc` is reaching past a private name. It is the
-    documented-by-source structure of a pinned, effectively frozen dependency,
-    and the alternative is the product hanging — so it is guarded rather than
-    avoided.
+        shell=sys.platform == "win32"
+
+    On Windows `scope._proc` is therefore **cmd.exe**, not the kaleido binary.
+    Killing the shell leaves the grandchild alive holding the write end of the
+    pipe, so the read never sees EOF and the caller stays blocked — which is
+    exactly what CI showed: the kill fired and the stack was still parked on
+    `base.py:192` nine minutes later. `taskkill /T` would reach the tree, but
+    building the escape hatch out of a platform-specific process-tree walk
+    means the escape hatch has its own failure modes.
+
+    So this is now a courtesy — it frees the subprocess when it can — and the
+    timeout in `_guarded_to_image` no longer depends on it succeeding.
     """
     scope = getattr(pio.kaleido, "scope", None)
     proc = getattr(scope, "_proc", None)
     if proc is not None and proc.poll() is None:
         # Anything this raises — the process died between the poll and the
         # kill, a platform refusing the signal — leaves us exactly where we
-        # already were, with a caller that will time out and report.
+        # already were: the caller has already stopped waiting.
         with contextlib.suppress(Exception):
             proc.kill()
 
 
 def _guarded_to_image(fig, width: int, height: int, scale: float) -> bytes:
-    """`fig.to_image`, but it always returns or raises — never neither."""
+    """`fig.to_image`, but it always returns or raises — never neither.
+
+    The export runs on a daemon thread we are willing to abandon. That is the
+    whole idea: **we stop waiting rather than trying to make the call stop.**
+    Interrupting a blocking read on a pipe from outside is not something the
+    platform reliably offers, and the previous attempt failed precisely
+    because it assumed otherwise. Not waiting always works.
+
+    The abandoned thread stays parked on that read for the life of the
+    process. That is acceptable and bounded: it is a daemon, so it cannot hold
+    up interpreter exit, and `_export_failure` latches on the first timeout so
+    at most one is ever stranded.
+    """
     global _export_failure
 
-    fired = threading.Event()
+    result: Dict[str, object] = {}
 
-    def trip() -> None:
-        fired.set()
+    def work() -> None:
+        try:
+            result["png"] = fig.to_image(
+                format="png", width=width, height=height, scale=scale)
+        except BaseException as exc:                     # noqa: BLE001
+            result["error"] = exc
+
+    worker = threading.Thread(target=work, daemon=True, name="kaleido-export")
+    worker.start()
+    worker.join(EXPORT_TIMEOUT_SECONDS)
+
+    if worker.is_alive():
+        _export_failure = (
+            f"kaleido did not respond within {EXPORT_TIMEOUT_SECONDS:.0f}s and was "
+            f"abandoned; charts will be missing from the print deliverables"
+        )
         _kill_kaleido()
+        raise RuntimeError(_export_failure)
 
-    watchdog = threading.Timer(EXPORT_TIMEOUT_SECONDS, trip)
-    watchdog.daemon = True
-    watchdog.start()
-    try:
-        return fig.to_image(format="png", width=width, height=height, scale=scale)
-    except Exception as exc:                             # noqa: BLE001
-        if fired.is_set():
-            _export_failure = (
-                f"kaleido did not respond within {EXPORT_TIMEOUT_SECONDS:.0f}s and "
-                f"was stopped; charts will be missing from the print deliverables"
-            )
-            raise RuntimeError(_export_failure) from exc
-        raise
-    finally:
-        watchdog.cancel()
+    error = result.get("error")
+    if error is not None:
+        raise error                                      # type: ignore[misc]
+    return result["png"]                                 # type: ignore[return-value]
 
 
 def render_png(spec: ChartSpec, width: int = 900, height: Optional[int] = None,

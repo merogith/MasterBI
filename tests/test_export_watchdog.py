@@ -36,41 +36,72 @@ def _reset_latch():
 
 
 class Wedged:
-    """A figure whose `to_image` blocks until the subprocess is killed.
+    """A figure whose `to_image` never returns, no matter what we do to it.
 
-    This is exactly the shape of the real hang: a call that returns only when
-    something else closes the pipe underneath it. Faking the *timer* instead
-    would test that `threading.Timer` works, which is not in question.
+    This is the shape of the real hang *as CI proved it to be*, and the first
+    fix failed because the fake was gentler than reality. That version
+    unblocked when the subprocess was killed, so a kill-based watchdog passed
+    the test and hung on Windows anyway: kaleido spawns with `shell=True`
+    there, so the killed process is cmd.exe and the grandchild keeps the pipe
+    open. A test double that cooperates with the fix is worse than no test.
+
+    So this one cooperates with nothing. It is released only by
+    `abandon()`, which the tests call to clean up after asserting.
     """
 
     def __init__(self) -> None:
         self.released = threading.Event()
         self.calls = 0
+        self.killed = False
 
     def to_image(self, **kwargs):
         self.calls += 1
-        # Bounded so a broken watchdog fails the test in seconds instead of
-        # hanging the suite — which would be an ironic way to test this.
-        if not self.released.wait(timeout=20):
-            raise AssertionError("the watchdog never fired")
+        self.released.wait()
         raise ValueError("Failed to start Kaleido subprocess")
+
+    def kill(self) -> None:
+        """What `_kill_kaleido` does on Windows: nothing that helps."""
+        self.killed = True
+
+    def abandon(self) -> None:
+        self.released.set()
 
 
 @pytest.fixture
 def wedged(monkeypatch):
     fig = Wedged()
     monkeypatch.setattr(export, "EXPORT_TIMEOUT_SECONDS", 0.3)
-    monkeypatch.setattr(export, "_kill_kaleido", fig.released.set)
-    return fig
+    monkeypatch.setattr(export, "_kill_kaleido", fig.kill)
+    yield fig
+    fig.abandon()
 
 
-def test_a_wedged_export_raises_instead_of_blocking(wedged):
+def test_a_wedged_export_is_abandoned_even_when_the_kill_does_nothing(wedged):
+    """The regression the first fix failed: stopping waiting has to be enough.
+
+    Interrupting a blocking read on a pipe from outside is not something the
+    platform reliably offers. Not waiting always works.
+    """
     started = time.perf_counter()
     with pytest.raises(RuntimeError, match="did not respond"):
         export._guarded_to_image(wedged, 900, 320, 2.0)
     elapsed = time.perf_counter() - started
-    assert elapsed < 10, f"took {elapsed:.1f}s — the watchdog did not bound the call"
-    assert wedged.released.is_set(), "the subprocess was never killed"
+
+    assert elapsed < 10, f"took {elapsed:.1f}s — the call was not bounded"
+    assert not wedged.released.is_set(), \
+        "the fake unblocked itself, so this proves nothing about a real hang"
+    assert wedged.killed, "the best-effort release was not attempted"
+
+
+def test_the_abandoned_worker_cannot_hold_up_interpreter_exit(wedged):
+    """It stays parked on that read forever. A daemon thread is what makes
+    that acceptable rather than a leak that wedges shutdown instead."""
+    with pytest.raises(RuntimeError):
+        export._guarded_to_image(wedged, 900, 320, 2.0)
+
+    stuck = [t for t in threading.enumerate() if t.name == "kaleido-export"]
+    assert stuck, "the export worker finished, so this test proves nothing"
+    assert all(t.daemon for t in stuck)
 
 
 def test_the_failure_latches_so_later_charts_do_not_each_wait(wedged):
@@ -102,9 +133,9 @@ def test_an_ordinary_export_error_does_not_latch(monkeypatch):
     assert export._export_failure is None
 
 
-def test_a_successful_export_cancels_the_watchdog(monkeypatch):
-    """The timer must not fire behind a healthy run and kill a live
-    subprocess mid-report."""
+def test_a_healthy_export_is_untouched(monkeypatch):
+    """Nothing may fire behind a working run and kill a live subprocess
+    mid-report. Thirteen charts share it."""
     killed = threading.Event()
     monkeypatch.setattr(export, "EXPORT_TIMEOUT_SECONDS", 0.3)
     monkeypatch.setattr(export, "_kill_kaleido", killed.set)
@@ -115,7 +146,8 @@ def test_a_successful_export_cancels_the_watchdog(monkeypatch):
 
     assert export._guarded_to_image(Fine(), 900, 320, 2.0) == b"\x89PNG-ish"
     time.sleep(0.6)
-    assert not killed.is_set(), "the watchdog fired after the export succeeded"
+    assert not killed.is_set(), "a healthy export was interrupted"
+    assert export._export_failure is None
 
 
 # --------------------------------------------------------------------------
