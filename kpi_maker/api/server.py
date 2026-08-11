@@ -49,6 +49,8 @@ from ..profile.schema import CompanyProfile
 from ..render.sections import REGISTRY as SECTION_REGISTRY
 from ..render.sections import default_order
 from ..spec.schema import ALL_ARTIFACTS, PATCHABLE_SECTIONS, RunSpec
+from ..store import COLUMNS as STORE_COLUMNS
+from ..store import store as _open_store
 from ..survey import as_json as survey_json
 from ..survey import build_profile, surprise_profile
 from ..viz.charts import default_exhibits
@@ -62,8 +64,9 @@ UPLOADS_DIR = RUNS_DIR / "_uploads"
 RUNS_DIR.mkdir(exist_ok=True)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
-# In-flight state. Completed runs are recovered from disk on restart, so this
-# is a cache of live progress rather than the source of truth.
+# In-flight state: live progress, the current summary, tracebacks. The durable
+# facts about a run — its mode, timings and outcome — are written through to the
+# store, so this is a cache in front of it rather than the source of truth.
 _STATE: Dict[str, Dict[str, Any]] = {}
 # One cancel event per in-flight run, added by `_execute` before the pipeline
 # starts and removed when it stops however it stops. Absent means "nothing to
@@ -163,10 +166,26 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _store():
+    """The run index for the *current* `RUNS_DIR`.
+
+    Resolved per call, never captured at import: `tools/build_pages.py` rebinds
+    `RUNS_DIR` to the site tree and the tests rebind it to a tmp directory. A
+    module-level handle would put a `runs.db` in whichever of those ran first.
+    """
+    return _open_store(RUNS_DIR)
+
+
 def _set(run_id: str, **fields) -> None:
     with _LOCK:
         _STATE.setdefault(run_id, {})
         _STATE[run_id].update(fields)
+    # Write through whatever the index has a column for. Progress events carry
+    # none — they set `progress` alone — so the several-times-a-second stage
+    # reports never reach SQLite, and the four lifecycle transitions all do.
+    durable = {k: v for k, v in fields.items() if k in STORE_COLUMNS}
+    if durable:
+        _store().upsert(run_id, **durable)
 
 
 def _get(run_id: str) -> Optional[Dict[str, Any]]:
@@ -252,6 +271,13 @@ def _submit(run_id: str, spec: RunSpec) -> None:
     `_execute` would leave that waiting run uncancellable — the user would
     press Cancel, get told there was nothing to cancel, and then watch it start.
     """
+    # A new attempt has no outcome yet. Without this, re-running a cancelled run
+    # leaves it labelled with the stage it stopped at long after it finished —
+    # a row reading "done" beside "cancelled at charts_png". Half a stale fact
+    # is worse than none, and the same applies to a previous run's error.
+    _set(run_id, error=None, cancelled_stage=None, finished_at=None,
+         traceback=None)
+
     cancel = Event()
     with _LOCK:
         _CANCEL[run_id] = cancel
@@ -288,12 +314,15 @@ def _execute(run_id: str, spec: RunSpec, cancel: Event) -> None:
         summary["seconds"] = result.get("seconds")
         (run_dir / "summary.json").write_text(
             json.dumps(summary, indent=2, default=str), encoding="utf-8")
-        _set(run_id, status="done", finished_at=_now(), summary=summary)
+        _set(run_id, status="done", finished_at=_now(), summary=summary,
+             seconds=summary["seconds"], stages_ran=summary["stages_ran"],
+             stages_reused=summary["stages_reused"])
     except RunCancelled as stop:
-        # No summary.json: that file is what makes a run look finished, both to
-        # the results screen and to the disk scan that recovers runs after a
-        # restart. A cancelled run is not a short run.
-        _set(run_id, status="cancelled", cancelled_at=stop.stage,
+        # Still no summary.json: that file is what makes a run look *finished*,
+        # to the results screen and to the reconcile pass alike. A cancelled run
+        # is not a short run. It is the index, not the artifact directory, that
+        # remembers it — which is why cancelling one no longer erases it.
+        _set(run_id, status="cancelled", cancelled_stage=stop.stage,
              error=str(stop), finished_at=_now())
     except Exception as exc:                             # noqa: BLE001
         _set(run_id, status="error", error=str(exc),
@@ -994,40 +1023,74 @@ def preview_design(req: BrandRequest) -> Dict[str, Any]:
 
 @app.get("/api/runs")
 def list_runs() -> List[Dict[str, Any]]:
-    out = []
+    """Every run this installation knows about, newest first.
+
+    The index is the source, not a glob of `summary.json`: that scan could only
+    see runs that finished, so it reported every recovered run as mode
+    "restored" with no start time, and dropped cancelled and failed runs
+    entirely along with the work 0.6 kept on disk for them.
+    """
+    index = _store()
+    # Picks up directories this server did not create — a CLI run, or a
+    # `runs.db` that was deleted while the artifacts stayed.
+    index.reconcile(RUNS_DIR)
     with _LOCK:
         live = {k: dict(v) for k, v in _STATE.items()}
+
+    out: List[Dict[str, Any]] = []
+    for row in index.list():
+        run_id = row["run_id"]
+        state = live.pop(run_id, None)
+        if state is not None:
+            # Only ahead of the index inside a single write, but prefer it so a
+            # run cannot read as queued while its first stage is running.
+            row = {**row, **{k: v for k, v in state.items()
+                             if k in STORE_COLUMNS}}
+        elif not (RUNS_DIR / run_id).exists():
+            # The artifacts were deleted from underneath the index. Say so; a
+            # run that quietly vanishes from history is the bug being fixed.
+            row["status"] = "missing"
+        out.append(_run_row(run_id, row))
+
+    # A run that reached `_STATE` but not yet the index cannot normally exist,
+    # since `_set` writes through before returning. Carried anyway so a future
+    # write-through failure loses durability, not the run.
     for run_id, state in live.items():
-        out.append({
-            "run_id": run_id, "status": state.get("status"),
-            "company": state.get("company"), "mode": state.get("mode"),
-            "started_at": state.get("started_at"),
-        })
-    # Recover completed runs from earlier server sessions.
-    for path in sorted(RUNS_DIR.glob("*/summary.json")):
-        run_id = path.parent.name
-        if run_id in live:
-            continue
-        try:
-            summary = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:                                # noqa: BLE001
-            continue
-        out.append({"run_id": run_id, "status": "done",
-                    "company": summary.get("company"), "mode": "restored",
-                    "started_at": None})
+        out.append(_run_row(run_id, state))
+
     return sorted(out, key=lambda r: r.get("started_at") or "", reverse=True)
+
+
+def _run_row(run_id: str, source: Dict[str, Any]) -> Dict[str, Any]:
+    """The history drawer's shape. `cancelled_stage` is what a resume needs."""
+    return {
+        "run_id": run_id,
+        "status": source.get("status"),
+        "company": source.get("company"),
+        "mode": source.get("mode"),
+        "started_at": source.get("started_at"),
+        "finished_at": source.get("finished_at"),
+        "cancelled_stage": source.get("cancelled_stage"),
+    }
 
 
 @app.get("/api/runs/{run_id}")
 def get_run(run_id: str) -> Dict[str, Any]:
     state = _get(run_id)
-    if state is None:
-        summary_path = RUNS_DIR / run_id / "summary.json"
-        if summary_path.exists():
-            return {"run_id": run_id, "status": "done",
-                    "summary": json.loads(summary_path.read_text(encoding="utf-8"))}
-        raise HTTPException(404, "Run not found")
-    return state
+    if state is not None:
+        return state
+
+    summary_path = RUNS_DIR / run_id / "summary.json"
+    if summary_path.exists():
+        return {"run_id": run_id, "status": "done",
+                "summary": json.loads(summary_path.read_text(encoding="utf-8"))}
+    # No summary means the run did not finish — cancelled, or failed. Before the
+    # index that was indistinguishable from never having existed, so the answer
+    # was a 404 for a run whose stages were sitting on disk.
+    row = _store().get(run_id)
+    if row is not None:
+        return row
+    raise HTTPException(404, "Run not found")
 
 
 @app.post("/api/runs/{run_id}/cancel")
@@ -1052,6 +1115,10 @@ def delete_run(run_id: str) -> Dict[str, str]:
     run_dir = RUNS_DIR / run_id
     if run_dir.exists():
         shutil.rmtree(run_dir, ignore_errors=True)
+    # Before the row, so a crash between the two leaves a row pointing at no
+    # directory — which lists as "missing" — rather than a directory nothing
+    # indexes, which the next reconcile would silently resurrect.
+    _store().delete(run_id)
     with _LOCK:
         _STATE.pop(run_id, None)
         # Deleting a run mid-flight should stop it too, and must clear the

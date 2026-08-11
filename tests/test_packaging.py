@@ -292,3 +292,35 @@ def test_the_running_screen_can_actually_cancel() -> None:
         "the poll does not handle a cancelled run"
     assert 'status="cancelled"' in server, \
         "the server never reports a run as cancelled"
+
+
+def test_no_run_database_is_committed() -> None:
+    """`runs.db` is local state, like the run directories it indexes.
+
+    It lands inside `runs/`, which is already ignored, but the path moves with
+    `RUNS_DIR` and a stray copy would commit one machine's history — and, in the
+    Pages build's case, publish it.
+    """
+    found = sorted(str(p.relative_to(ROOT)) for p in ROOT.rglob("runs.db")
+                   if ".venv" not in p.parts and ".git" not in p.parts)
+    tracked = [p for p in found if not p.startswith(("runs/", "site/", "out/"))]
+    assert not tracked, f"a run database escaped its ignored directory: {tracked}"
+
+
+def test_history_reads_the_index_not_a_directory_scan() -> None:
+    """`list_runs` must not go back to globbing `summary.json` for its truth.
+
+    That scan could only see runs that finished, which is why every recovered
+    run reported mode "restored" with no start time, and why a cancelled run —
+    which deliberately writes no `summary.json` — vanished from history along
+    with the stages 0.6 kept on disk for it. The index replaced it; this keeps
+    it replaced.
+    """
+    server = (ROOT / "kpi_maker" / "api" / "server.py").read_text(encoding="utf-8")
+    body = server.split('@app.get("/api/runs")\n', 1)[1].split("\n@app.", 1)[0]
+
+    assert 'glob("*/summary.json")' not in body, \
+        "list_runs is scanning directories again instead of reading the index"
+    assert "_store()" in body, "list_runs does not read the run index"
+    assert '"mode": "restored"' not in body, \
+        "list_runs is labelling recovered runs again instead of storing the mode"
