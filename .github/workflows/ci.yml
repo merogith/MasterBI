@@ -60,6 +60,13 @@ jobs:
         # tests what the project actually supports.
         python: ['3.11', '3.12']
     runs-on: ${{ matrix.os }}
+    # A hang is not a failure GitHub notices: the default job limit is six
+    # hours. Both Windows jobs on the two previous runs sat in the Test step
+    # for 22+ minutes and were only stopped because the next push cancelled
+    # them — which is how "Windows has never passed" went unnoticed while the
+    # runs looked merely cancelled. Ubuntu and macOS finish the suite in ~40s,
+    # so twelve minutes is generous even for a slow Windows runner.
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -74,7 +81,11 @@ jobs:
           pip install pytest pypdf
 
       - name: Test
-        run: python -m pytest -q
+        # `faulthandler_timeout` in pyproject.toml turns a hang into a stack
+        # dump on stderr, which is the only way to find one on a runner you
+        # cannot attach to. `-p no:cacheprovider` keeps the runner's read-only
+        # checkout from being written to.
+        run: python -m pytest -q -p no:cacheprovider
 
   artifacts:
     # The end-to-end check: does a run still produce all nine deliverables?

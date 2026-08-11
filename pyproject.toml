@@ -66,6 +66,15 @@ testpaths = ["tests"]
 # the packaging checks are collectable.
 python_files = ["test_*.py"]
 addopts = "-ra --strict-markers"
+# Dump every thread's stack for any test still running after two minutes.
+# Both Windows jobs on the two previous CI runs sat in the Test step for 22+
+# minutes and were only stopped because the next push cancelled them, so the
+# runs read as "cancelled" and nobody noticed Windows had never passed. A
+# killed job says nothing; this says which line. The slowest test here is a
+# full four-artifact render at roughly twenty seconds, so two minutes only
+# fires on a genuine hang. Dump, do not exit — the job's `timeout-minutes`
+# ends the run, and one dump per stuck test is more useful than the first.
+faulthandler_timeout = 120
 
 [tool.ruff]
 line-length = 88

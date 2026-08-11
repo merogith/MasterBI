@@ -356,7 +356,12 @@ def test_the_server_forwards_real_stage_progress(server):
     appear in the state the poll endpoint reads."""
     STORE.clear()
     spec = _spec()
-    spec = RunSpec(**{**spec.model_dump(), "outputs": {"only": ["dashboard"]}})
+    # `artifacts`, not `only`: pydantic ignores unknown keys by default, so the
+    # first draft of this line silently asked for all nine deliverables — and
+    # dragged kaleido's native subprocess into a test that is about progress
+    # events. That is the same shape of bug as a spec field nothing reads.
+    spec = RunSpec(**{**spec.model_dump(), "outputs": {"artifacts": ["dashboard"]}})
+    assert spec.outputs.resolved() == ["dashboard"]
     server._set("live", status="queued")
     server._execute("live", spec, threading.Event())
 
