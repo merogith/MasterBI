@@ -24,6 +24,8 @@ export interface Match {
 const ROUTES: ReadonlyArray<readonly [pattern: string, name: string]> = [
   ['/', 'home'],
   ['/samples', 'samples'],
+  ['/survey', 'survey'],
+  ['/data', 'builder'],
   ['/runs/:runId', 'run'],
 ];
 

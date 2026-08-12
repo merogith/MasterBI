@@ -365,7 +365,7 @@ def test_the_rewrite_declares_itself_partial() -> None:
     app = (ROOT / "web" / "src" / "app.tsx").read_text(encoding="utf-8")
     router = (ROOT / "web" / "src" / "lib" / "router.ts").read_text(encoding="utf-8")
 
-    ported = {"home", "samples", "run"}
+    ported = {"home", "samples", "survey", "builder", "run"}
     declared = set(re.findall(r"\['/[^']*',\s*'([a-z-]+)'\]", router))
     assert declared == ported, (
         f"routes changed to {sorted(declared)}; update the preview banner in "
@@ -397,3 +397,26 @@ def test_the_launchers_gate_on_the_python_floor_they_need() -> None:
     for stated in re.findall(r"Needs Python (\d+\.\d+) or newer", readme):
         assert stated == f"{major}.{minor}", \
             f"README says Python {stated}; requires-python says {major}.{minor}"
+
+
+def test_the_readme_counts_the_sector_packs_correctly() -> None:
+    """The gap list must agree with the status table two screens above it.
+
+    "Only the SaaS pack exists" survived in Known gaps while the same file's
+    status table already said "2 of 10 have their own archetype and pack" — the
+    e-commerce pack and 0.1's cross-sector fallback had both landed. A file
+    that contradicts itself is worse than one that is merely out of date.
+    """
+    from kpi_maker.profile.sectors import supported_sectors
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    words = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}
+    n = len(supported_sectors())
+
+    assert f"**{words[n]} sectors have their own KPI pack**" in readme, (
+        f"{n} sectors have their own pack; the Known gaps section says "
+        "something else")
+    for stated in re.findall(r"(\d+) of 10 have their own archetype and pack",
+                             readme):
+        assert int(stated) == n, (
+            f"the status table says {stated} of 10; there are {n}")

@@ -160,6 +160,80 @@ export interface Run {
   company?: string | null;
 }
 
+export interface SurveyOption {
+  value: string;
+  label: string;
+  note?: string;
+  disabled?: boolean;
+  approximate?: boolean;
+}
+
+export interface SurveyQuestion {
+  id: string;
+  text: string;
+  help: string;
+  group: string;
+  options: SurveyOption[];
+  default?: string;
+  optional?: boolean;
+  unlocks?: string;
+}
+
+export interface Survey {
+  questions: SurveyQuestion[];
+  groups: string[];
+  optional_group: string;
+  count: number;
+  core_count: number;
+  optional_count: number;
+}
+
+export interface UploadColumn {
+  name: string;
+  semantic?: string;
+  dtype?: string;
+  non_null?: number;
+  null_pct?: number;
+  unique?: number;
+  samples?: (string | number)[];
+  problems?: string[];
+}
+
+export interface UploadShape {
+  shape: string;
+  target_table: string;
+  usable: boolean;
+  matches?: { field: string; column: string | null; status?: string; reason?: string }[];
+  missing_required?: string[];
+}
+
+export interface UploadProfile {
+  filename: string;
+  table_key?: string;
+  read?: { rows: number; columns: string[]; notes?: string[] };
+  profile?: { rows?: number; columns?: UploadColumn[]; problems?: string[] };
+  shapes?: UploadShape[];
+}
+
+/** Multipart, so no JSON content-type — `api()` would set one and break the
+ *  boundary. Profiling is read-only: nothing about a run changes here. */
+export async function profileUpload(file: File): Promise<UploadProfile> {
+  const body = new FormData();
+  body.append('file', file);
+  const response = await fetch('/api/ingest/profile', { method: 'POST', body });
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      detail = (await response.json()).detail ?? detail;
+    } catch {
+      /* a non-JSON error body is still an error */
+    }
+    throw new ApiError(detail, response.status);
+  }
+  return await response.json();
+}
+
+export const getSurvey = () => api<Survey>('/api/survey');
 export const listSamples = () => api<Sample[]>('/api/samples');
 export const listRuns = () => api<RunRow[]>('/api/runs');
 export const getRun = (runId: string) => api<Run>(`/api/runs/${runId}`);
@@ -172,3 +246,14 @@ export const createRun = (body: CreateRunRequest) =>
 
 export const cancelRun = (runId: string) =>
   api<{ status: string }>(`/api/runs/${runId}/cancel`, { method: 'POST' });
+
+export interface RerunReport {
+  run_id: string;
+  status: RunStatus;
+  dirty: string[];
+  reused: string[];
+  estimated_seconds?: number;
+}
+
+export const rerunRun = (runId: string) =>
+  api<RerunReport>(`/api/runs/${runId}/rerun`, { method: 'POST' });

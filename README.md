@@ -386,5 +386,8 @@ cannot pass the gate on an empty set.
 - `nps`, `employee_enps` and support metrics need survey/helpdesk feeds the
   generator does not fabricate, so they drop out at selection with a recorded
   reason instead of showing invented scores.
-- Only the SaaS pack exists. Adding a sector is a YAML file plus a generator
-  archetype (ROADMAP M2).
+- **Two sectors have their own KPI pack** — SaaS and e-commerce. The other
+  eight run on the cross-sector `general` pack and the nearest generator
+  archetype, and every run says so in its own output rather than presenting a
+  borrowed scorecard as a native one. Adding a sector is a YAML file plus a
+  generator archetype (ROADMAP M2).

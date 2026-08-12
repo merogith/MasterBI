@@ -177,8 +177,31 @@ def next_page(browser, next_server):
     yield from _open(browser, next_server)
 
 
+@pytest.fixture(params=["legacy", "rewrite"])
+def either_page(request, browser):
+    """Runs a test against both front ends.
+
+    Everything ported has to behave the same in both, and asserting that in one
+    parametrised test rather than two copies is what stops the copies drifting —
+    which is the bug class this repo is most prone to.
+    """
+    base = request.getfixturevalue(
+        "server" if request.param == "legacy" else "next_server")
+    yield from _open(browser, base)
+
+
 def _visible(page, view: str):
     return page.wait_for_selector(f"#view-{view}:not([hidden])")
+
+
+def _go_home(page) -> None:
+    """Back to the origin, dropping all in-page state.
+
+    Not `reload()`: the rewrite keeps a run's URL across a refresh, so a reload
+    on `/runs/<id>` correctly stays on that run rather than landing home.
+    """
+    origin = "/".join(page.url.split("/")[:3])
+    page.goto(origin, wait_until="domcontentloaded")
 
 
 def _start_first_sample(page) -> None:
@@ -229,20 +252,25 @@ def test_the_studio_edits_a_spec_and_re_runs_it(page):
     page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
 
 
-def test_a_cancelled_run_is_listed_in_history_and_can_be_resumed(page):
-    """0.7's fix, from the outside.
+def test_a_cancelled_run_is_listed_in_history_and_can_be_resumed(either_page):
+    """0.7's fix, from the outside — and in both front ends.
 
     A cancelled run writes no `summary.json`, so before the run store it
     vanished from this drawer entirely — along with the finished stages 0.6
     kept on disk to make resuming cheap. It must now be listed, say where it
     stopped, and offer the one action that fits it.
     """
+    page = either_page
     _start_first_sample(page)
     _visible(page, "running")
     page.click("#run-cancel")
 
-    # The poll returns home once the server confirms the run stopped.
-    page.wait_for_selector("#view-home:not([hidden])", timeout=60_000)
+    # Where a stopped run leaves you differs by front end — the legacy poll
+    # returns home, the rewrite keeps the run's own URL and explains itself
+    # there. Both agree that it stops running, which is what this waits on.
+    page.wait_for_selector("#view-running:not([hidden])", state="detached",
+                           timeout=60_000)
+    _go_home(page)
 
     page.click("#btn-history")
     row = page.locator(".run-row").filter(has_text="cancelled").first
@@ -255,18 +283,20 @@ def test_a_cancelled_run_is_listed_in_history_and_can_be_resumed(page):
     page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
 
 
-def test_a_finished_run_reopens_after_a_reload(page):
+def test_a_finished_run_reopens_from_history(either_page):
     """History has to reopen what it lists, from a client that has forgotten.
 
-    The reload is the point: it drops every scrap of in-page state, so getting
-    back to the results screen exercises the same recovery the restart tests
-    cover on the server side — this time through the door a user uses.
+    Going back to the origin is the point: it drops every scrap of in-page
+    state, so getting to the results screen from the drawer exercises the same
+    recovery the restart tests cover on the server side — through the door a
+    user actually uses.
     """
+    page = either_page
     _start_first_sample(page)
     page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
     company = page.locator("#res-company").inner_text().strip()
 
-    page.reload(wait_until="domcontentloaded")
+    _go_home(page)
     _visible(page, "home")
 
     page.click("#btn-history")
@@ -340,3 +370,59 @@ def test_the_rewrite_says_which_screens_it_has(next_page):
     because this build is one env var away from being what a user sees.
     """
     assert "Rewrite preview" in next_page.locator(".warn-banner").first.inner_text()
+
+
+def test_the_survey_runs_end_to_end_on_averages(either_page):
+    """Every question skipped is still a complete, honest run.
+
+    "Skip — use averages" records `__unknown__` rather than leaving the field
+    blank, so the provenance says the value was defaulted instead of quietly
+    inventing one. Walking the whole survey that way is the fastest path that
+    still exercises every step, the review screen and the run it starts.
+    """
+    page = either_page
+    page.click('[data-nav="survey"]')
+    page.wait_for_selector("#survey-next")
+
+    # Skip forward until the review step, which is the one that offers to run.
+    for _ in range(20):
+        if page.locator("#survey-next").inner_text().strip() == 'Generate my pack':
+            break
+        page.click("#survey-skip")
+    else:
+        raise AssertionError("never reached the review step")
+
+    assert page.locator("#review-list .review-row").count() > 0, \
+        "the review step lists none of the answers it is about to run"
+    assert "assumed" in page.locator("#review-list").inner_text(), \
+        "skipped answers must be marked as assumptions, not presented as facts"
+
+    page.click("#survey-next")
+    _visible(page, "running")
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+
+
+def test_bringing_data_profiles_the_file_without_running_it(either_page, tmp_path):
+    """Profiling is not adoption, and the screen has to say which it did.
+
+    The upload inspects a file and changes nothing: a run needs a company
+    profile before it can read anyone's numbers. A screen that took a file and
+    looked like it had started something would be promising a flow that does
+    not exist yet.
+    """
+    page = either_page
+    csv = tmp_path / "monthly.csv"
+    csv.write_text("month,revenue,cogs\n2025-01,1000,400\n2025-02,1100,430\n",
+                   encoding="utf-8")
+
+    page.click('[data-nav="builder"]')
+    _visible(page, "builder")
+    page.set_input_files("#file-input", str(csv))
+
+    page.wait_for_selector("#upload-result table tbody tr")
+    report = page.locator("#upload-result")
+    assert "monthly.csv" in report.inner_text()
+    assert report.locator("table tbody tr").count() == 3, \
+        "one row per column of the uploaded file"
+    # Still on the builder screen: nothing was run.
+    assert page.locator("#view-builder:not([hidden])").count() == 1
