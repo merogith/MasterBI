@@ -108,6 +108,12 @@ jobs:
           python-version: '3.11'
           cache: pip
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
       - name: Install
         run: |
           python -m pip install --upgrade pip
@@ -118,9 +124,20 @@ jobs:
       # libraries, which `pip install playwright` does not.
       - run: python -m playwright install --with-deps chromium
 
+      # The rewritten front end (1.1b). `npm run build` runs `tsc --noEmit`
+      # first, so this type-checks it as well as producing the bundle the
+      # smoke test needs to grade it. Nothing else in CI requires Node, and
+      # nothing at runtime does either.
+      - name: Build the front end
+        run: |
+          npm --prefix web ci
+          npm --prefix web run build
+
       - name: Browser smoke test
-        # Skipped rather than failed anywhere playwright is absent, which is
-        # what keeps the three-OS `test` matrix from needing a browser.
+        # Covers both front ends: the legacy one a user gets today, and the
+        # rewrite, graded by the same activation path. Skipped rather than
+        # failed anywhere playwright is absent, which is what keeps the
+        # three-OS `test` matrix from needing a browser.
         run: python -m pytest tests/test_smoke_ui.py -q -p no:cacheprovider
 
   artifacts:

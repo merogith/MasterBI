@@ -65,6 +65,11 @@ SAMPLES_DIR = ROOT / "samples"
 # not beside a read-only executable.
 RUNS_DIR = Path(os.environ.get("MASTERBI_RUNS_DIR") or ROOT / "runs")
 UI_DIR = ROOT / "ui"
+# The rewritten front end (1.1b): Vite build output, inside the package because
+# that is what ships — no Node at runtime, and 1.3's one-file executable bundles
+# it. Opt-in until it reaches parity with `ui/`, because it is not there yet.
+UI_DIST_DIR = Path(__file__).resolve().parents[1] / "ui_dist"
+SERVE_NEXT_UI = os.environ.get("MASTERBI_UI") == "next"
 UPLOADS_DIR = RUNS_DIR / "_uploads"
 
 RUNS_DIR.mkdir(exist_ok=True)
@@ -1225,7 +1230,25 @@ def health() -> Dict[str, Any]:
     return {"status": "ok", "runs": len(_STATE), "ui": UI_DIR.exists()}
 
 
-if UI_DIR.exists():
+if SERVE_NEXT_UI and UI_DIST_DIR.exists():
+    # Registered last, so it cannot shadow `/api/*` or `/files/*` — FastAPI
+    # matches routes in declaration order.
+    @app.get("/{path:path}")
+    def serve_app(path: str):
+        """Serve the bundle, and the shell for anything that is not a file.
+
+        Client-side routing means `/samples` and `/runs/abc` are real URLs the
+        user can reload or link to, but they are not files on disk. A static
+        mount answers 404 for them, which is what makes hand-rolled SPA routing
+        appear to work until the first refresh.
+        """
+        root = UI_DIST_DIR.resolve()
+        target = (root / path).resolve()
+        if path and target.is_file() and str(target).startswith(str(root)):
+            return FileResponse(target)
+        return FileResponse(root / "index.html")
+
+elif UI_DIR.exists():
     app.mount("/", StaticFiles(directory=str(UI_DIR), html=True), name="ui")
 else:
     @app.get("/")

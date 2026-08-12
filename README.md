@@ -42,7 +42,7 @@ the dependencies, starts the server and opens your browser — and on a network
 that intercepts TLS it retries pip with the trusted-host flags rather than
 dying on a certificate error. Only the first run is slow.
 
-Needs Python 3.9 or newer. If it is missing, the launcher says so and where to
+Needs Python 3.11 or newer. If it is missing, the launcher says so and where to
 get it.
 
 <details>
@@ -252,6 +252,31 @@ out/
   kpi_set.json       which KPIs were selected, why, and what was dropped
   data/*.csv         six normalized fact tables
 ```
+
+## The front end, and the rewrite in progress
+
+What a user gets today is `ui/` — one 2,000-line `app.js`, no build step, and
+no URL for anything: every screen change flips a `hidden` attribute, so Back
+leaves the app and no run can be linked to.
+
+`web/` is the replacement: Vite, TypeScript and Preact, with real routing. It
+is **opt-in and incomplete** — home, samples, the running screen and results
+are ported; the survey, the upload funnel, the Studio and the history drawer
+are not, and the app says so in a banner until they are.
+
+```bash
+npm --prefix web ci && npm --prefix web run build   # → kpi_maker/ui_dist/
+MASTERBI_UI=next python -m uvicorn kpi_maker.api.server:app
+```
+
+Without `MASTERBI_UI=next` the server keeps serving `ui/`. Nothing at runtime
+needs Node: the build produces static files that FastAPI serves and that the
+packaged executable will bundle. `web/src/lib/api.ts` deliberately leaves API
+paths bare, because `tools/static_shim.js` replaces `window.fetch` on the
+hosted demo — only artifact `href`s resolve against `window.KPI_FILES_BASE`.
+
+Both front ends are graded by the same browser tests, which is what makes this
+a port rather than a second product.
 
 ## Testing
 

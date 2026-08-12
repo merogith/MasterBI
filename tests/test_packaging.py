@@ -266,11 +266,19 @@ def test_the_ui_holds_no_copy_of_the_engines_stage_names() -> None:
     from kpi_maker.pipeline.graph import STAGES
 
     labels = {s.label for s in STAGES.values()}
-    for rel in ("ui/app.js", "tools/build_pages.py", "tools/static_shim.js"):
-        text = (ROOT / rel).read_text(encoding="utf-8")
+    # The rewritten front end is included: a port is exactly when a deleted
+    # hardcoded list gets helpfully retyped into the new code.
+    sources = [ROOT / rel for rel in
+               ("ui/app.js", "tools/build_pages.py", "tools/static_shim.js")]
+    sources += sorted((ROOT / "web" / "src").rglob("*.ts"))
+    sources += sorted((ROOT / "web" / "src").rglob("*.tsx"))
+
+    for path in sources:
+        text = path.read_text(encoding="utf-8")
         found = sorted(label for label in labels if f'"{label}"' in text
                        or f"'{label}'" in text)
-        assert not found, f"{rel} hardcodes engine stage labels: {found}"
+        assert not found, (
+            f"{path.relative_to(ROOT)} hardcodes engine stage labels: {found}")
 
 
 def test_the_running_screen_can_actually_cancel() -> None:
@@ -344,3 +352,48 @@ def test_the_history_drawer_can_resume_what_it_lists() -> None:
     assert '"resumable"' in server, "the server never says whether a run is resumable"
     assert '@app.post("/api/runs/{run_id}/rerun")' in server, \
         "there is no re-run endpoint for Resume to call"
+
+
+def test_the_rewrite_declares_itself_partial() -> None:
+    """While the port is incomplete, the app must say so on screen.
+
+    `MASTERBI_UI=next` is one environment variable away from being what a user
+    sees, and the rewrite is missing the survey, the upload funnel, the Studio
+    and the history drawer. The banner comes out when they land — this is what
+    stops it coming out early.
+    """
+    app = (ROOT / "web" / "src" / "app.tsx").read_text(encoding="utf-8")
+    router = (ROOT / "web" / "src" / "lib" / "router.ts").read_text(encoding="utf-8")
+
+    ported = {"home", "samples", "run"}
+    declared = set(re.findall(r"\['/[^']*',\s*'([a-z-]+)'\]", router))
+    assert declared == ported, (
+        f"routes changed to {sorted(declared)}; update the preview banner in "
+        "app.tsx and this list together, or drop both if the port is complete")
+    assert "Rewrite preview" in app, \
+        "the partial rewrite no longer tells the user it is partial"
+
+
+def test_the_launchers_gate_on_the_python_floor_they_need() -> None:
+    """The double-click launchers must refuse the versions pip will refuse.
+
+    `start.command` gated on 3.9 while `requires-python` had moved to 3.11, so
+    a user on 3.9 or 3.10 got a built virtualenv and then a pip resolution
+    failure with nothing in it that names the actual problem. The README stated
+    the same wrong floor. All three read from one fact.
+    """
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    floor = re.search(r">=\s*(\d+)\.(\d+)", pyproject["project"]["requires-python"])
+    assert floor
+    major, minor = floor.group(1), floor.group(2)
+
+    launcher = (ROOT / "start.command").read_text(encoding="utf-8")
+    assert f"({major},{minor})" in launcher, \
+        f"start.command does not gate on Python {major}.{minor}"
+    assert f"Python {major}.{minor} or newer" in launcher, \
+        "start.command's message states a different floor than it enforces"
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    for stated in re.findall(r"Needs Python (\d+\.\d+) or newer", readme):
+        assert stated == f"{major}.{minor}", \
+            f"README says Python {stated}; requires-python says {major}.{minor}"

@@ -75,8 +75,7 @@ def _chromium_executable() -> str | None:
     return None
 
 
-@pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def _serve(tmp_path_factory, **extra_env):
     """The real server, on a throwaway run directory.
 
     A subprocess rather than an in-process TestClient: the point is to exercise
@@ -92,7 +91,7 @@ def server(tmp_path_factory):
             [sys.executable, "-m", "uvicorn", "kpi_maker.api.server:app",
              "--host", "127.0.0.1", "--port", str(port), "--log-level", "warning"],
             cwd=ROOT, stdout=sink, stderr=subprocess.STDOUT,
-            env={**os.environ, "MASTERBI_RUNS_DIR": str(runs)})
+            env={**os.environ, "MASTERBI_RUNS_DIR": str(runs), **extra_env})
 
         base = f"http://127.0.0.1:{port}"
         deadline = time.monotonic() + 60
@@ -119,6 +118,26 @@ def server(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
+def server(tmp_path_factory):
+    """The legacy front end — still what a user gets by default."""
+    yield from _serve(tmp_path_factory)
+
+
+@pytest.fixture(scope="module")
+def next_server(tmp_path_factory):
+    """The rewritten front end (1.1b), which is opt-in until it reaches parity.
+
+    Skipped rather than failed when the bundle has not been built: the Python
+    suite must not require Node, which is the same property that lets the exe
+    ship without it.
+    """
+    dist = ROOT / "kpi_maker" / "ui_dist" / "index.html"
+    if not dist.exists():
+        pytest.skip("no ui_dist bundle — run `npm --prefix web ci && npm --prefix web run build`")
+    yield from _serve(tmp_path_factory, MASTERBI_UI="next")
+
+
+@pytest.fixture(scope="module")
 def browser():
     executable = _chromium_executable()
     with sync_playwright() as pw:
@@ -130,23 +149,32 @@ def browser():
             instance.close()
 
 
-@pytest.fixture
-def page(browser, server):
+def _open(browser, base: str):
     context = browser.new_context(viewport={"width": 1280, "height": 900})
     page = context.new_page()
     page.set_default_timeout(20_000)
 
-    # The app has no error surface: an uncaught exception in `app.js` leaves a
-    # half-rendered screen and says nothing. Here it fails the test.
+    # The app has no error surface: an uncaught exception leaves a half-rendered
+    # screen and says nothing. Here it fails the test.
     errors: list[str] = []
     page.on("pageerror", lambda exc: errors.append(str(exc)))
 
-    page.goto(server, wait_until="domcontentloaded")
+    page.goto(base, wait_until="domcontentloaded")
     try:
         yield page
     finally:
         context.close()
     assert not errors, "uncaught JS errors: " + "; ".join(errors)
+
+
+@pytest.fixture
+def page(browser, server):
+    yield from _open(browser, server)
+
+
+@pytest.fixture
+def next_page(browser, next_server):
+    yield from _open(browser, next_server)
 
 
 def _visible(page, view: str):
@@ -247,3 +275,68 @@ def test_a_finished_run_reopens_after_a_reload(page):
 
     _visible(page, "results")
     assert page.locator("#res-company").inner_text().strip() == company
+
+
+# --------------------------------------------------------------------------
+# The rewritten front end (1.1b), graded by the same path
+# --------------------------------------------------------------------------
+
+def test_the_rewrite_reaches_the_results_screen(next_page):
+    """The activation path again, against Vite + Preact instead of `app.js`.
+
+    Same three clicks, same assertions, different implementation — which is
+    what makes this a port rather than a new product. The tests were written
+    against the visible DOM for exactly this moment.
+    """
+    _start_first_sample(next_page)
+    _visible(next_page, "running")
+
+    next_page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    assert next_page.locator("#res-tiles .tile").count() > 0, "no KPI tiles rendered"
+    assert next_page.locator("#res-downloads .dl-card").count() >= 5, \
+        "the results screen is missing its artifacts"
+    assert next_page.locator("#res-company").inner_text().strip()
+
+
+def test_the_rewrite_gives_every_screen_a_url(next_page):
+    """The point of the router: Back works and a run is a link.
+
+    The legacy front end has zero `pushState` calls, so every screen is the
+    same URL, Back leaves the app, and no run can be sent to anyone.
+    """
+    assert next_page.url.endswith("/")
+
+    next_page.click('[data-nav="samples"]')
+    _visible(next_page, "samples")
+    assert next_page.url.endswith("/samples")
+
+    next_page.go_back()
+    _visible(next_page, "home")
+
+    next_page.go_forward()
+    _visible(next_page, "samples")
+
+
+def test_a_run_url_survives_a_reload(next_page):
+    """`/runs/<id>` is a real address, not a screen you can only arrive at.
+
+    This is the failure that makes hand-rolled SPA routing look fine until the
+    first refresh: the server has to answer an unknown path with the shell.
+    """
+    _start_first_sample(next_page)
+    _visible(next_page, "running")
+    url = next_page.url
+    assert "/runs/" in url
+
+    next_page.reload(wait_until="domcontentloaded")
+    assert next_page.url == url
+    next_page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+
+
+def test_the_rewrite_says_which_screens_it_has(next_page):
+    """A partial app that does not say it is partial is a quiet half-truth.
+
+    The banner goes when the port is complete; until then it must be present,
+    because this build is one env var away from being what a user sees.
+    """
+    assert "Rewrite preview" in next_page.locator(".warn-banner").first.inner_text()
