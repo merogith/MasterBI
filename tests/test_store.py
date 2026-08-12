@@ -155,6 +155,25 @@ def test_an_unfinished_run_is_addressable_after_a_restart(api):
 # The index against the directories it indexes
 # --------------------------------------------------------------------------
 
+def test_a_run_is_only_resumable_if_it_kept_a_spec(api):
+    """The drawer offers Resume on a cancelled run, and a re-run reads `spec.json`.
+
+    A run that failed before writing one cannot be resumed, so the row has to
+    say so — offering the button and letting it 404 is the working-looking
+    control that does nothing, which is the failure mode 0.6 was about.
+    """
+    (api.RUNS_DIR / "qqq").mkdir(parents=True)
+    api._set("qqq", status="cancelled", mode="sample", company="Acme",
+             cancelled_stage="render", started_at="2026-01-10T00:00:00+00:00")
+
+    row = next(r for r in api.list_runs() if r["run_id"] == "qqq")
+    assert row["resumable"] is False
+
+    (api.RUNS_DIR / "qqq" / "spec.json").write_text("{}", encoding="utf-8")
+    row = next(r for r in api.list_runs() if r["run_id"] == "qqq")
+    assert row["resumable"] is True
+
+
 def test_a_run_whose_directory_was_deleted_reads_as_missing(api):
     """Deleted artifacts make a run "missing", not absent.
 

@@ -324,3 +324,23 @@ def test_history_reads_the_index_not_a_directory_scan() -> None:
     assert "_store()" in body, "list_runs does not read the run index"
     assert '"mode": "restored"' not in body, \
         "list_runs is labelling recovered runs again instead of storing the mode"
+
+
+def test_the_history_drawer_can_resume_what_it_lists() -> None:
+    """0.7 made cancelled runs visible again; a row you cannot act on is half a fix.
+
+    Four things have to line up, in three files: the row offers Resume, the
+    server says whether a resume is possible, the drawer posts to the re-run
+    endpoint, and that endpoint exists. Asserting one of the four is how a
+    working-looking button comes to do nothing — which is what `test_the_
+    running_screen_can_actually_cancel` above exists to remember.
+    """
+    app_js = (ROOT / "ui" / "app.js").read_text(encoding="utf-8")
+    server = (ROOT / "kpi_maker" / "api" / "server.py").read_text(encoding="utf-8")
+
+    assert "data-resume-run" in app_js, "the drawer offers no way to resume a run"
+    assert "r.resumable" in app_js, \
+        "the drawer offers Resume without checking the run can be resumed"
+    assert '"resumable"' in server, "the server never says whether a run is resumable"
+    assert '@app.post("/api/runs/{run_id}/rerun")' in server, \
+        "there is no re-run endpoint for Resume to call"

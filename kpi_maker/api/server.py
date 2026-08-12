@@ -1100,7 +1100,7 @@ def list_runs() -> List[Dict[str, Any]]:
 
 
 def _run_row(run_id: str, source: Dict[str, Any]) -> Dict[str, Any]:
-    """The history drawer's shape. `cancelled_stage` is what a resume needs."""
+    """The history drawer's shape. `cancelled_stage` is what a resume starts from."""
     return {
         "run_id": run_id,
         "status": source.get("status"),
@@ -1109,6 +1109,10 @@ def _run_row(run_id: str, source: Dict[str, Any]) -> Dict[str, Any]:
         "started_at": source.get("started_at"),
         "finished_at": source.get("finished_at"),
         "cancelled_stage": source.get("cancelled_stage"),
+        # A re-run reads `spec.json`, so a run that failed before writing one
+        # cannot be resumed. The server knows; offering the button anyway and
+        # letting it 404 would be a working-looking control that does nothing.
+        "resumable": (RUNS_DIR / run_id / "spec.json").exists(),
     }
 
 

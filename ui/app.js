@@ -773,19 +773,41 @@ async function openDrawer() {
   list.innerHTML = '<p class="empty">Loading…</p>';
   try {
     const runs = await api('/api/runs');
-    list.innerHTML = runs.length ? runs.map((r) => `
-      <div class="run-row">
-        <div>
-          <div class="r-name">${esc(r.company || 'Untitled')}</div>
-          <div class="r-meta">${esc(r.status)} · ${esc(r.mode || '')}</div>
-        </div>
-        ${r.status === 'done'
-          ? `<button class="ghost" data-open-run="${esc(r.run_id)}">Open</button>`
-          : ''}
-      </div>`).join('') : '<p class="empty">No runs yet.</p>';
+    list.innerHTML = runs.length ? runs.map(runRow).join('')
+      : '<p class="empty">No runs yet.</p>';
   } catch (err) {
     list.innerHTML = `<p class="empty">${esc(err.message)}</p>`;
   }
+}
+
+/* A run belongs in history whatever became of it, so each row has to say what
+   its state means and offer the one action that fits. A cancelled run kept its
+   finished stages, so the action is Resume, not Open — and the stage it stopped
+   before is what that resume starts from. `missing` is the index outliving its
+   artifacts: nothing to open, nothing to resume. */
+function runRow(r) {
+  const bits = [r.status, r.mode].filter(Boolean);
+  if (r.status === 'cancelled' && r.cancelled_stage) {
+    bits.push(`stopped before ${r.cancelled_stage}`);
+  }
+  if (r.status === 'missing') bits.push('artifacts deleted');
+
+  let action = '';
+  if (r.status === 'done') {
+    action = `<button class="ghost" data-open-run="${esc(r.run_id)}">Open</button>`;
+  } else if ((r.status === 'cancelled' || r.status === 'error') && r.resumable) {
+    action = `<button class="ghost" data-resume-run="${esc(r.run_id)}"
+                      data-company="${esc(r.company || '')}">Resume</button>`;
+  }
+
+  return `
+    <div class="run-row">
+      <div>
+        <div class="r-name">${esc(r.company || 'Untitled')}</div>
+        <div class="r-meta">${bits.map(esc).join(' · ')}</div>
+      </div>
+      ${action}
+    </div>`;
 }
 
 function closeDrawer() { drawer.hidden = true; scrim.hidden = true; }
@@ -806,6 +828,29 @@ document.addEventListener('click', async (e) => {
     show('results');
   } catch (err) {
     toast(err.message, true);
+  }
+});
+
+// Resuming a cancelled run is the whole point of having kept its stages. The
+// re-run endpoint rebuilds only what the cancel left unfinished, and the reply
+// says how much was kept — which is the difference between "starting again" and
+// "starting over".
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-resume-run]');
+  if (!btn) return;
+  closeDrawer();
+  const runId = btn.dataset.resumeRun;
+  try {
+    const report = await api(`/api/runs/${runId}/rerun`, { method: 'POST' });
+    state.runId = runId;
+    show('running');
+    resetRunProgress();
+    $('#run-company').textContent = btn.dataset.company || '';
+    pollRun();
+    const kept = (report.reused || []).length;
+    if (kept) toast(`Resuming — ${kept} finished stage${kept === 1 ? '' : 's'} kept.`);
+  } catch (err) {
+    toast('Could not resume: ' + err.message, true);
   }
 });
 
