@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
-  getAiStatus, getSpec, listCatalogKpis, getOptions, putSpec, rerunRun,
+  getAiStatus, getSpec, listCatalogKpis, listTables, getOptions, putSpec, rerunRun,
   type AiStatus, type CatalogKpi, type CatalogOptions, type PlanReport, type Spec,
 } from '../lib/api';
 import { navigate } from '../lib/router';
@@ -25,6 +25,7 @@ export function Studio({ runId }: { runId: string }) {
   const [options, setOptions] = useState<CatalogOptions | null>(null);
   const [catalog, setCatalog] = useState<CatalogKpi[]>([]);
   const [ai, setAi] = useState<AiStatus>({ available: false });
+  const [tables, setTables] = useState<string[]>([]);
   const [plan, setPlan] = useState<PlanReport | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,8 +33,11 @@ export function Studio({ runId }: { runId: string }) {
   const timer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    Promise.all([getSpec(runId), getOptions(), listCatalogKpis(), getAiStatus()])
-      .then(([loaded, opts, kpis, status]) => {
+    Promise.all([getSpec(runId), getOptions(), listCatalogKpis(), getAiStatus(),
+                 // A run that has not produced tables yet is not an error here;
+                 // the editors that need them simply have nothing to target.
+                 listTables(runId).catch(() => [])])
+      .then(([loaded, opts, kpis, status, found]) => {
         setSpec(loaded);
         // A deep copy, so Revert restores what was on disk rather than a
         // reference the edits have already mutated.
@@ -41,6 +45,7 @@ export function Studio({ runId }: { runId: string }) {
         setOptions(opts);
         setCatalog(kpis.kpis);
         setAi(status);
+        setTables(found.map((t) => t.name));
       })
       .catch((err: Error) => setError(err.message));
   }, [runId]);
@@ -58,6 +63,16 @@ export function Studio({ runId }: { runId: string }) {
         .catch((err: Error) => { setError(err.message); setPlan(null); })
         .finally(() => setChecking(false));
     }, PLAN_DEBOUNCE_MS) as unknown as number;
+  }
+
+  /* The planner writes straight to `spec.json` through `put_spec`, so the
+     Studio's copy is stale the moment a patch lands. Re-read rather than
+     merging locally: the server validated and may have normalised. */
+  function reload() {
+    getSpec(runId).then((loaded) => {
+      setSpec(loaded);
+      return putSpec(runId, loaded).then(setPlan);
+    }).catch((err: Error) => setError(err.message));
   }
 
   async function rerun() {
@@ -89,7 +104,7 @@ export function Studio({ runId }: { runId: string }) {
     );
   }
 
-  const shared = { spec, options, catalog, onChange: edit };
+  const shared = { spec, options, catalog, tables, runId, onChange: edit };
   const dirty = plan?.dirty ?? [];
 
   return (
@@ -123,7 +138,8 @@ export function Studio({ runId }: { runId: string }) {
             {stage === 'analysis' && <AnalysisPanel {...shared} />}
             {stage === 'design' && <DesignPanel {...shared} />}
             {stage === 'outputs' && <OutputsPanel {...shared} />}
-            {stage === 'ai' && <AiPanel {...shared} status={ai} />}
+            {stage === 'ai' && <AiPanel {...shared} status={ai} runId={runId}
+                                       onApplied={reload} />}
           </div>
         </div>
       </div>

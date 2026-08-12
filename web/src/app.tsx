@@ -41,17 +41,6 @@ export function App() {
 
       <HistoryDrawer open={historyOpen} onClose={() => setHistoryOpen(false)} />
 
-      {/* Unmissable, and deleted at switchover. This build is reachable only
-          by setting MASTERBI_UI=next, but a partial app that does not say it is
-          partial is the kind of quiet half-truth this project keeps removing. */}
-      <div class="warn-banner" role="status">
-        <strong>Rewrite preview (1.1b).</strong> Every screen is ported, and all
-        eight Studio panels edit the spec. Six flows inside the Studio are not
-        yet carried over — adopting an upload, adding a cleaning step, adding a
-        calculated column, the add-a-KPI formula editor, per-KPI targets, the
-        live brand preview, and the AI estimate and plan review. Use the legacy
-        front end for those.
-      </div>
 
       <main id="app">
         {route.name === 'home' && <Home />}

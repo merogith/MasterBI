@@ -354,24 +354,18 @@ def test_the_history_drawer_can_resume_what_it_lists() -> None:
         "there is no re-run endpoint for Resume to call"
 
 
-def test_the_rewrite_declares_itself_partial() -> None:
-    """While the port is incomplete, the app must say so on screen.
+def test_every_screen_has_a_route() -> None:
+    """The route table is the list of screens that exist.
 
-    `MASTERBI_UI=next` is one environment variable away from being what a user
-    sees, and the rewrite is missing the survey, the upload funnel, the Studio
-    and the history drawer. The banner comes out when they land — this is what
-    stops it coming out early.
+    Only routes that exist may be listed: an entry pointing at an unported
+    screen is a link that 404s inside its own app. This is what the preview
+    banner's check turned into once the port was complete.
     """
-    app = (ROOT / "web" / "src" / "app.tsx").read_text(encoding="utf-8")
     router = (ROOT / "web" / "src" / "lib" / "router.ts").read_text(encoding="utf-8")
-
-    ported = {"home", "samples", "survey", "builder", "run", "studio"}
     declared = set(re.findall(r"\['/[^']*',\s*'([a-z-]+)'\]", router))
-    assert declared == ported, (
-        f"routes changed to {sorted(declared)}; update the preview banner in "
-        "app.tsx and this list together, or drop both if the port is complete")
-    assert "Rewrite preview" in app, \
-        "the partial rewrite no longer tells the user it is partial"
+    assert declared == {"home", "samples", "survey", "builder", "run", "studio"}, (
+        f"routes are now {sorted(declared)} — if a screen was added or removed, "
+        "update this list and the README's front-end section together")
 
 
 def test_the_launchers_gate_on_the_python_floor_they_need() -> None:
@@ -422,24 +416,35 @@ def test_the_readme_counts_the_sector_packs_correctly() -> None:
             f"the status table says {stated} of 10; there are {n}")
 
 
-def test_the_studio_banner_lists_what_it_cannot_do_yet() -> None:
-    """The Studio port edits every panel but not every flow inside them.
+def test_the_rewrite_is_what_a_user_gets() -> None:
+    """The port reached parity, so the flag inverted: legacy is now the opt-in.
 
-    Six interactions still only exist in `ui/app.js` — adopting an upload,
-    adding a cleaning step or calculated column, the add-a-KPI formula editor,
-    per-KPI targets, the brand preview, and the AI estimate and plan review.
-    A Studio that silently dropped them would look complete and quietly do
-    less, which is the failure mode this whole file exists to catch.
+    Every screen and every Studio flow is ported, so serving the old front end
+    by default would mean shipping the version nobody is developing. The
+    preview banner is gone with the list it enumerated — a test held it honest
+    while the list had entries, and this replaces it.
     """
+    server = (ROOT / "kpi_maker" / "api" / "server.py").read_text(encoding="utf-8")
     app = (ROOT / "web" / "src" / "app.tsx").read_text(encoding="utf-8")
-    panels = (ROOT / "web" / "src" / "studio" / "panels.tsx").read_text(encoding="utf-8")
 
-    for absent, marker in (
-        ("the add-a-KPI formula editor", "kpi-add"),
-        ("brand preview", "brand-preview"),
-        ("the AI estimate", "ai-estimate-btn"),
-    ):
-        if marker in panels:
-            raise AssertionError(
-                f"{marker} is implemented now — drop '{absent}' from the banner")
-        assert absent in app, f"the banner no longer mentions {absent}"
+    assert 'SERVE_LEGACY_UI = os.environ.get("MASTERBI_UI") == "legacy"' in server, \
+        "the rewrite is not the default front end"
+    assert "if not SERVE_LEGACY_UI and UI_DIST_DIR.exists():" in server, \
+        "the server does not prefer the built bundle"
+    assert "Rewrite preview" not in app, \
+        "the preview banner outlived the list of things it said were missing"
+
+
+def test_the_legacy_front_end_is_kept_only_for_the_pages_demo() -> None:
+    """`ui/` cannot be deleted yet, and the reason has to stay written down.
+
+    `tools/build_pages.py` reads `ui/index.html`, patches it, and ships
+    `app.js` behind `static_shim.js`; deleting the directory would take the
+    hosted demo with it. 1.2 builds the Pages bundle from `web/` instead, and
+    that is when `ui/` goes. Until then the smoke suite keeps testing both.
+    """
+    builder = (ROOT / "tools" / "build_pages.py").read_text(encoding="utf-8")
+    assert "UI_DIR" in builder, (
+        "build_pages.py no longer reads ui/ — if the Pages bundle now comes "
+        "from web/, delete ui/ and this test with it")
+    assert (ROOT / "ui" / "app.js").exists()

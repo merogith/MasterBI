@@ -259,26 +259,30 @@ What a user gets today is `ui/` — one 2,000-line `app.js`, no build step, and
 no URL for anything: every screen change flips a `hidden` attribute, so Back
 leaves the app and no run can be linked to.
 
-`web/` is the replacement: Vite, TypeScript and Preact, with real routing. Every
-screen is ported — home, samples, survey, Bring-your-data, running, results, the
-history drawer and all eight Studio panels. It is still **opt-in**, because six
-interactions inside the Studio have not been carried over yet: adopting an
-upload, adding a cleaning step, adding a calculated column, the add-a-KPI
-formula editor, per-KPI targets, the live brand preview, and the AI estimate and
-plan review. The app names them in a banner, and a test keeps that banner
-honest in both directions — it fails if the list goes stale *or* if one of those
-flows lands without being removed from it.
+`web/` is the replacement, and it is **what the server now serves**: Vite,
+TypeScript and Preact, with real routing. Every screen is ported — home,
+samples, survey, Bring-your-data, running, results, the history drawer and all
+eight Studio panels, including the flows inside them (adopting an upload, the
+cleaning-step and calculated-column editors, the add-a-KPI formula editor,
+per-KPI targets, the live brand preview, and the AI estimate and plan review).
 
 ```bash
 npm --prefix web ci && npm --prefix web run build   # → kpi_maker/ui_dist/
-MASTERBI_UI=next python -m uvicorn kpi_maker.api.server:app
+python -m uvicorn kpi_maker.api.server:app
 ```
 
-Without `MASTERBI_UI=next` the server keeps serving `ui/`. Nothing at runtime
-needs Node: the build produces static files that FastAPI serves and that the
-packaged executable will bundle. `web/src/lib/api.ts` deliberately leaves API
-paths bare, because `tools/static_shim.js` replaces `window.fetch` on the
-hosted demo — only artifact `href`s resolve against `window.KPI_FILES_BASE`.
+`ui/` has not been deleted, and not as a fallback anyone should rely on: the
+GitHub Pages demo is still built from it by `tools/build_pages.py`, which
+patches its `index.html` and serves `app.js` behind `static_shim.js`. Deleting
+it today would take the hosted demo with it, so it goes when the Pages bundle is
+built from `web/` instead. `MASTERBI_UI=legacy` selects it meanwhile, and it is
+also what serves a checkout where the bundle was never built.
+
+Nothing at runtime needs Node: the build produces static files that FastAPI
+serves and that the packaged executable will bundle. `web/src/lib/api.ts`
+deliberately leaves API paths bare, because `tools/static_shim.js` replaces
+`window.fetch` on the hosted demo — only artifact `href`s resolve against
+`window.KPI_FILES_BASE`.
 
 Both front ends are graded by the same browser tests, which is what makes this
 a port rather than a second product.

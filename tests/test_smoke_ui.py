@@ -119,13 +119,14 @@ def _serve(tmp_path_factory, **extra_env):
 
 @pytest.fixture(scope="module")
 def server(tmp_path_factory):
-    """The legacy front end — still what a user gets by default."""
-    yield from _serve(tmp_path_factory)
+    """The legacy front end. No longer the default, but still what the GitHub
+    Pages demo is built from, so it has to keep working until 1.2 replaces it."""
+    yield from _serve(tmp_path_factory, MASTERBI_UI="legacy")
 
 
 @pytest.fixture(scope="module")
 def next_server(tmp_path_factory):
-    """The rewritten front end (1.1b), which is opt-in until it reaches parity.
+    """The rewritten front end, which is what a user now gets.
 
     Skipped rather than failed when the bundle has not been built: the Python
     suite must not require Node, which is the same property that lets the exe
@@ -134,7 +135,7 @@ def next_server(tmp_path_factory):
     dist = ROOT / "kpi_maker" / "ui_dist" / "index.html"
     if not dist.exists():
         pytest.skip("no ui_dist bundle — run `npm --prefix web ci && npm --prefix web run build`")
-    yield from _serve(tmp_path_factory, MASTERBI_UI="next")
+    yield from _serve(tmp_path_factory)
 
 
 @pytest.fixture(scope="module")
@@ -363,14 +364,6 @@ def test_a_run_url_survives_a_reload(next_page):
     assert next_page.url == url
     next_page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
 
-
-def test_the_rewrite_says_which_screens_it_has(next_page):
-    """A partial app that does not say it is partial is a quiet half-truth.
-
-    The banner goes when the port is complete; until then it must be present,
-    because this build is one env var away from being what a user sees.
-    """
-    assert "Rewrite preview" in next_page.locator(".warn-banner").first.inner_text()
 
 
 def test_the_survey_runs_end_to_end_on_averages(either_page):

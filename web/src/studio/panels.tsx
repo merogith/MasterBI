@@ -5,13 +5,22 @@
  * legacy panels were eight hand-written `innerHTML` templates, and the
  * duplication is what made them drift from each other.
  */
+import { useState } from 'preact/hooks';
 import type { CatalogKpi, CatalogOptions, Spec } from '../lib/api';
 import { getPath, setPath, titleCase, toggleIn } from '../lib/spec';
+import { AdoptUpload } from './AdoptUpload';
+import { AiActions } from './AiActions';
+import { AddCalculatedColumn, AddCleaningStep, AddKpi } from './Editors';
+import { BrandPreview } from './BrandPreview';
 
 export interface PanelProps {
   spec: Spec;
   options: CatalogOptions;
   catalog: CatalogKpi[];
+  /** This run's own fact tables, which is what a cleaning step or a calculated
+   *  column targets — not the archetype's full list. */
+  tables: string[];
+  runId: string;
   onChange: (spec: Spec) => void;
 }
 
@@ -111,6 +120,8 @@ export function SourcePanel({ spec, options, onChange }: PanelProps) {
                : `Synthetic data, generated from the profile. The same seed always
                   produces the same company — reproducibility is a feature, not a
                   coincidence.`}>
+      <AdoptUpload spec={spec} onChange={onChange} />
+
       <h3 class="studio-sub">Fill gaps from the generator</h3>
       <p class="hint">A table you have not uploaded is modelled instead, so a
          partial upload still produces a complete pack. Untick one to leave it
@@ -180,7 +191,7 @@ export function SourcePanel({ spec, options, onChange }: PanelProps) {
 
 // -- cleaning --------------------------------------------------------------
 
-export function CleanPanel({ spec, onChange }: PanelProps) {
+export function CleanPanel({ spec, options, tables, onChange }: PanelProps) {
   const steps = (getPath(spec, 'cleaning.steps') ?? []) as Spec[];
 
   function replace(next: Spec[]) {
@@ -239,13 +250,16 @@ export function CleanPanel({ spec, onChange }: PanelProps) {
             ))}
           </div>
         )}
+
+      <AddCleaningStep spec={spec} ops={options.ops} tables={tables}
+                       onChange={onChange} />
     </Section>
   );
 }
 
 // -- model -----------------------------------------------------------------
 
-export function ModelPanel({ spec, onChange }: PanelProps) {
+export function ModelPanel({ spec, runId, tables, onChange }: PanelProps) {
   const columns = (getPath(spec, 'model.calculated_columns') ?? []) as Spec[];
 
   return (
@@ -280,26 +294,50 @@ export function ModelPanel({ spec, onChange }: PanelProps) {
             ))}
         </tbody>
       </table>
+
+      <AddCalculatedColumn spec={spec} runId={runId} tables={tables}
+                           onChange={onChange} />
     </Section>
   );
 }
 
 // -- KPIs ------------------------------------------------------------------
 
-export function KpiPanel({ spec, catalog, onChange }: PanelProps) {
+export function KpiPanel({ spec, catalog, runId, onChange }: PanelProps) {
+  const [adding, setAdding] = useState(false);
   const pinned = (getPath(spec, 'metrics.pinned') ?? []) as string[];
   const excluded = (getPath(spec, 'metrics.excluded') ?? []) as string[];
+  const overrides = (getPath(spec, 'metrics.overrides') ?? {}) as Record<string, Spec>;
+  // A KPI added for this run alone lives in the spec, not the catalog. Listing
+  // only the catalog would hide it the moment the modal closed.
+  const custom = ((getPath(spec, 'metrics.custom') ?? []) as Spec[]).map((entry) => ({
+    id: String(entry['id']), name: String(entry['name']),
+    unit: String(entry['unit'] ?? ''), timing: String(entry['timing'] ?? ''),
+    origin: 'user',
+  })) as CatalogKpi[];
+  const listed = [...custom, ...catalog]
+    .filter((kpi, index, all) => all.findIndex((o) => o.id === kpi.id) === index);
 
   return (
     <Section title="Which KPIs, and your own"
-             blurb={`Pin one to force it onto the scorecard, or exclude one to
-                     drop it. The Balanced Scorecard coverage warnings still
-                     fire — you can overrule the selection engine, and it will
-                     tell you what that cost.`}>
+             blurb={`Pin one to force it onto the scorecard, exclude one to drop
+                     it, or set a target that beats the benchmark median. The
+                     Balanced Scorecard coverage warnings still fire — you can
+                     overrule the selection engine, and it will tell you what
+                     that cost.`}>
+      <div style={{ marginBottom: '14px' }}>
+        <button class="primary" id="kpi-add" onClick={() => setAdding(true)}>
+          + Add a KPI
+        </button>
+      </div>
+      {adding && (
+        <AddKpi spec={spec} runId={runId} onChange={onChange}
+                onClose={() => setAdding(false)} />
+      )}
       <table class="kpi-table">
-        <thead><tr><th>KPI</th><th>State</th></tr></thead>
+        <thead><tr><th>KPI</th><th>Target</th><th>State</th></tr></thead>
         <tbody>
-          {catalog.map((kpi) => (
+          {listed.map((kpi) => (
             <tr class={excluded.includes(kpi.id) ? 'excluded' : ''} key={kpi.id}>
               <td>
                 <span class="k-name">{kpi.name}</span>
@@ -307,6 +345,25 @@ export function KpiPanel({ spec, catalog, onChange }: PanelProps) {
                 <div class="k-id">
                   {kpi.id} · {kpi.unit} · {(kpi.timing ?? '').replace('_', ' ')}
                 </div>
+              </td>
+              <td>
+                <input type="number" step="any" data-target={kpi.id}
+                       placeholder="auto"
+                       value={(overrides[kpi.id]?.['target'] as number | undefined) ?? ''}
+                       onChange={(e) => {
+                         const raw = e.currentTarget.value;
+                         const next = { ...overrides };
+                         if (raw === '') {
+                           // Clearing a target removes the override entirely
+                           // rather than storing null: an empty override would
+                           // read as "targeted at nothing" to the scorecard.
+                           const { [kpi.id]: _dropped, ...rest } = next;
+                           onChange(setPath(spec, 'metrics.overrides', rest));
+                           return;
+                         }
+                         next[kpi.id] = { ...(next[kpi.id] ?? {}), target: Number(raw) };
+                         onChange(setPath(spec, 'metrics.overrides', next));
+                       }} />
               </td>
               <td>
                 <div class="k-state">
@@ -413,6 +470,11 @@ export function DesignPanel({ spec, options, onChange }: PanelProps) {
             </label>
           ))}
       </div>
+
+      <BrandPreview
+        primary={(design['brand'] as Spec | undefined)?.['primary'] ?? null}
+        accent={(design['brand'] as Spec | undefined)?.['accent'] ?? null}
+        logoPath={(design['brand'] as Spec | undefined)?.['logo_path'] ?? null} />
 
       <h3 class="studio-sub">Sections</h3>
       <p class="hint">Order and inclusion apply to the PDF, the editable report
@@ -521,9 +583,11 @@ export function OutputsPanel({ spec, options, onChange }: PanelProps) {
 
 // -- AI --------------------------------------------------------------------
 
-export function AiPanel({ spec, onChange, status }: PanelProps & {
+export function AiPanel({ spec, onChange, status, runId, onApplied }: PanelProps & {
   status: { available: boolean; reason?: string; default_model?: string;
             narratable_sections?: string[] };
+  runId: string;
+  onApplied: () => void;
 }) {
   const ai = (getPath(spec, 'ai') ?? {}) as Spec;
 
@@ -571,6 +635,8 @@ export function AiPanel({ spec, onChange, status }: PanelProps & {
                       : [...chosen, section]))} />
         ))}
       </div>
+
+      <AiActions runId={runId} onApplied={onApplied} />
     </Section>
   );
 }

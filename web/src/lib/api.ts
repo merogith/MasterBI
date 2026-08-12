@@ -209,6 +209,9 @@ export interface UploadShape {
 
 export interface UploadProfile {
   filename: string;
+  /** Where the server put the file. Adoption records this, not the original
+   *  name — two uploads called `data.csv` are two different files. */
+  stored_as?: string;
   table_key?: string;
   read?: { rows: number; columns: string[]; notes?: string[] };
   profile?: { rows?: number; columns?: UploadColumn[]; problems?: string[] };
@@ -310,3 +313,81 @@ export const putSpec = (runId: string, spec: Spec) =>
   api<PlanReport>(`/api/runs/${runId}/spec`, {
     method: 'PUT', body: JSON.stringify(spec),
   });
+
+export interface Adjustment {
+  token: string;
+  original: string;
+  applied: string;
+  reason: string;
+  detail: string;
+}
+
+export interface PalettePreview {
+  series: string[];
+  tokens: Record<string, string>;
+  adjustments: Adjustment[];
+  notes?: string[];
+  against_surface: number;
+  heading_ratio: number;
+}
+
+export interface DesignPreview {
+  palettes: { light: PalettePreview; dark: PalettePreview };
+  logo: { path: string | null; ok: boolean; data_uri?: string; error?: string };
+  thresholds: { text: number; graphical: number; separation: number };
+}
+
+export const previewDesign = (body: {
+  primary: string | null; accent: string | null; logo_path: string | null;
+}) => api<DesignPreview>('/api/design/preview', {
+  method: 'POST', body: JSON.stringify(body),
+});
+
+export interface AiEstimate {
+  worst_case_tokens: number;
+  worst_case_cost_usd: number;
+}
+
+export interface PlanChange {
+  path: string;
+  value: unknown;
+  reason?: string;
+  current?: unknown;
+}
+
+export interface AiPlan {
+  changes: PlanChange[];
+  summary?: string;
+  notes?: string[];
+}
+
+export const aiEstimate = (runId: string) =>
+  api<AiEstimate>(`/api/ai/estimate/${runId}`, { method: 'POST' });
+
+export const aiPlan = (runId: string) =>
+  api<AiPlan>(`/api/ai/plan/${runId}`, { method: 'POST' });
+
+export const aiApply = (runId: string, changes: { path: string; value: unknown }[]) =>
+  api<PlanReport>(`/api/ai/apply/${runId}`, {
+    method: 'POST', body: JSON.stringify({ changes }),
+  });
+
+export interface FormulaCheck {
+  ok: boolean;
+  error?: { message: string };
+  unknown?: string[];
+  value?: number | null;
+}
+
+export const validateFormula = (body: {
+  expression: string; scope: string; run_id?: string; table?: string;
+}) => api<FormulaCheck>('/api/formula/validate', {
+  method: 'POST', body: JSON.stringify(body),
+});
+
+export const listOps = () =>
+  api<{ ops: { name: string; label: string; help: string;
+               params: Record<string, unknown> }[] }>('/api/ops');
+
+export const listTables = (runId: string) =>
+  api<{ name: string; rows: number }[]>(`/api/runs/${runId}/tables`);

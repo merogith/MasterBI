@@ -67,9 +67,16 @@ RUNS_DIR = Path(os.environ.get("MASTERBI_RUNS_DIR") or ROOT / "runs")
 UI_DIR = ROOT / "ui"
 # The rewritten front end (1.1b): Vite build output, inside the package because
 # that is what ships — no Node at runtime, and 1.3's one-file executable bundles
-# it. Opt-in until it reaches parity with `ui/`, because it is not there yet.
+# it. This is what a user gets, when it has been built.
+#
+# `ui/` is still here, and not as a fallback anyone should rely on: the GitHub
+# Pages demo is produced from it by `tools/build_pages.py`, which patches its
+# `index.html` and serves `app.js` behind `static_shim.js`. Deleting it would
+# take the hosted demo with it, so it goes when 1.2 builds the Pages bundle
+# from this same source. `MASTERBI_UI=legacy` selects it meanwhile, and it is
+# also what serves a checkout where the bundle was never built.
 UI_DIST_DIR = Path(__file__).resolve().parents[1] / "ui_dist"
-SERVE_NEXT_UI = os.environ.get("MASTERBI_UI") == "next"
+SERVE_LEGACY_UI = os.environ.get("MASTERBI_UI") == "legacy"
 UPLOADS_DIR = RUNS_DIR / "_uploads"
 
 RUNS_DIR.mkdir(exist_ok=True)
@@ -1230,7 +1237,7 @@ def health() -> Dict[str, Any]:
     return {"status": "ok", "runs": len(_STATE), "ui": UI_DIR.exists()}
 
 
-if SERVE_NEXT_UI and UI_DIST_DIR.exists():
+if not SERVE_LEGACY_UI and UI_DIST_DIR.exists():
     # Registered last, so it cannot shadow `/api/*` or `/files/*` — FastAPI
     # matches routes in declaration order.
     @app.get("/{path:path}")
