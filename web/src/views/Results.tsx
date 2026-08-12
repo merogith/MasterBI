@@ -29,6 +29,10 @@ export function Results({ summary }: { summary: Summary }) {
           <a class="back" href="/" onClick={(e) => { e.preventDefault(); navigate('/'); }}>
             ← Home
           </a>
+          <button class="ghost" id="res-adjust"
+                  onClick={() => navigate(`/runs/${summary.run_id}/studio`)}>
+            Adjust in Studio
+          </button>
           {dashboard && (
             <a class="primary" id="res-open-dashboard" target="_blank" rel="noopener"
                href={filesBase() + dashboard.url}>

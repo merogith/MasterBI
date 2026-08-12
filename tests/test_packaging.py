@@ -365,7 +365,7 @@ def test_the_rewrite_declares_itself_partial() -> None:
     app = (ROOT / "web" / "src" / "app.tsx").read_text(encoding="utf-8")
     router = (ROOT / "web" / "src" / "lib" / "router.ts").read_text(encoding="utf-8")
 
-    ported = {"home", "samples", "survey", "builder", "run"}
+    ported = {"home", "samples", "survey", "builder", "run", "studio"}
     declared = set(re.findall(r"\['/[^']*',\s*'([a-z-]+)'\]", router))
     assert declared == ported, (
         f"routes changed to {sorted(declared)}; update the preview banner in "
@@ -420,3 +420,26 @@ def test_the_readme_counts_the_sector_packs_correctly() -> None:
                              readme):
         assert int(stated) == n, (
             f"the status table says {stated} of 10; there are {n}")
+
+
+def test_the_studio_banner_lists_what_it_cannot_do_yet() -> None:
+    """The Studio port edits every panel but not every flow inside them.
+
+    Six interactions still only exist in `ui/app.js` — adopting an upload,
+    adding a cleaning step or calculated column, the add-a-KPI formula editor,
+    per-KPI targets, the brand preview, and the AI estimate and plan review.
+    A Studio that silently dropped them would look complete and quietly do
+    less, which is the failure mode this whole file exists to catch.
+    """
+    app = (ROOT / "web" / "src" / "app.tsx").read_text(encoding="utf-8")
+    panels = (ROOT / "web" / "src" / "studio" / "panels.tsx").read_text(encoding="utf-8")
+
+    for absent, marker in (
+        ("the add-a-KPI formula editor", "kpi-add"),
+        ("brand preview", "brand-preview"),
+        ("the AI estimate", "ai-estimate-btn"),
+    ):
+        if marker in panels:
+            raise AssertionError(
+                f"{marker} is implemented now — drop '{absent}' from the banner")
+        assert absent in app, f"the banner no longer mentions {absent}"

@@ -27,6 +27,7 @@ const ROUTES: ReadonlyArray<readonly [pattern: string, name: string]> = [
   ['/survey', 'survey'],
   ['/data', 'builder'],
   ['/runs/:runId', 'run'],
+  ['/runs/:runId/studio', 'studio'],
 ];
 
 /** Trailing slashes are the same page; the root is the one exception. */

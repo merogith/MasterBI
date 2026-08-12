@@ -259,10 +259,15 @@ What a user gets today is `ui/` — one 2,000-line `app.js`, no build step, and
 no URL for anything: every screen change flips a `hidden` attribute, so Back
 leaves the app and no run can be linked to.
 
-`web/` is the replacement: Vite, TypeScript and Preact, with real routing. It
-is **opt-in and incomplete** — home, samples, the running screen and results
-are ported; the survey, the upload funnel, the Studio and the history drawer
-are not, and the app says so in a banner until they are.
+`web/` is the replacement: Vite, TypeScript and Preact, with real routing. Every
+screen is ported — home, samples, survey, Bring-your-data, running, results, the
+history drawer and all eight Studio panels. It is still **opt-in**, because six
+interactions inside the Studio have not been carried over yet: adopting an
+upload, adding a cleaning step, adding a calculated column, the add-a-KPI
+formula editor, per-KPI targets, the live brand preview, and the AI estimate and
+plan review. The app names them in a banner, and a test keeps that banner
+honest in both directions — it fails if the list goes stale *or* if one of those
+flows lands without being removed from it.
 
 ```bash
 npm --prefix web ci && npm --prefix web run build   # → kpi_maker/ui_dist/

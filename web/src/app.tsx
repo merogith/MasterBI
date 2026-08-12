@@ -5,6 +5,7 @@ import { Builder } from './views/Builder';
 import { Home } from './views/Home';
 import { RunView } from './views/RunView';
 import { Samples } from './views/Samples';
+import { Studio } from './views/Studio';
 import { Survey } from './views/Survey';
 
 function useTheme() {
@@ -44,9 +45,12 @@ export function App() {
           by setting MASTERBI_UI=next, but a partial app that does not say it is
           partial is the kind of quiet half-truth this project keeps removing. */}
       <div class="warn-banner" role="status">
-        <strong>Rewrite preview (1.1b).</strong> Ported so far: home, samples,
-        everything except the Studio, whose eight panels still live in the
-        legacy front end.
+        <strong>Rewrite preview (1.1b).</strong> Every screen is ported, and all
+        eight Studio panels edit the spec. Six flows inside the Studio are not
+        yet carried over — adopting an upload, adding a cleaning step, adding a
+        calculated column, the add-a-KPI formula editor, per-KPI targets, the
+        live brand preview, and the AI estimate and plan review. Use the legacy
+        front end for those.
       </div>
 
       <main id="app">
@@ -55,6 +59,7 @@ export function App() {
         {route.name === 'survey' && <Survey />}
         {route.name === 'builder' && <Builder />}
         {route.name === 'run' && <RunView runId={route.params['runId'] as string} />}
+        {route.name === 'studio' && <Studio runId={route.params['runId'] as string} />}
         {route.name === 'not-found' && (
           <section class="view view-center" id="view-not-found">
             <div class="run-card">

@@ -257,3 +257,56 @@ export interface RerunReport {
 
 export const rerunRun = (runId: string) =>
   api<RerunReport>(`/api/runs/${runId}/rerun`, { method: 'POST' });
+
+// -- studio ----------------------------------------------------------------
+
+export interface CatalogOptions {
+  artifacts: string[];
+  detectors: string[];
+  themes: string[];
+  sections: { id: string; title: string }[];
+  exhibits: string[];
+  widths: string[];
+  fact_tables: string[];
+  ops: { name: string; label: string; help: string; params: Record<string, unknown> }[];
+}
+
+export interface PlanReport {
+  dirty: string[];
+  reused: string[];
+  estimated_seconds: number;
+}
+
+export interface CatalogKpi {
+  id: string;
+  name: string;
+  unit: string;
+  timing?: string;
+  origin?: string;
+}
+
+export interface AiStatus {
+  available: boolean;
+  reason?: string;
+  default_model?: string;
+  narratable_sections?: string[];
+}
+
+/** The spec is deliberately untyped here. It is a large nested Pydantic model
+ *  whose shape belongs to the server, and mirroring all of it in TypeScript
+ *  would create a second definition to keep in sync — the exact drift this
+ *  repo tests for elsewhere. The Studio reads and writes it by path. */
+export type Spec = Record<string, any>;
+
+export const getSpec = (runId: string) => api<Spec>(`/api/runs/${runId}/spec`);
+export const getPlan = (runId: string) => api<PlanReport>(`/api/runs/${runId}/plan`);
+export const getOptions = () => api<CatalogOptions>('/api/catalog/options');
+export const getAiStatus = () => api<AiStatus>('/api/ai/status');
+
+export const listCatalogKpis = () =>
+  api<{ kpis: CatalogKpi[] }>('/api/catalog/kpis');
+
+export const putSpec = (runId: string, spec: Spec) =>
+  api<PlanReport>(`/api/runs/${runId}/spec`, {
+    method: 'PUT', body: JSON.stringify(spec),
+  });

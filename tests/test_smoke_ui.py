@@ -228,12 +228,13 @@ def test_a_sample_run_reaches_the_results_screen(page):
     assert page.locator("#res-company").inner_text().strip()
 
 
-def test_the_studio_edits_a_spec_and_re_runs_it(page):
+def test_the_studio_edits_a_spec_and_re_runs_it(either_page):
     """The Studio's contract: an edit produces a plan, and the plan re-runs.
 
     `#studio-rerun` starts disabled and is enabled only when the server reports
     dirty stages, so this also covers the PUT round trip that computes them.
     """
+    page = either_page
     _start_first_sample(page)
     page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
 
