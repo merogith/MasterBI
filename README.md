@@ -266,6 +266,28 @@ out/
 ./.venv/Scripts/python.exe -m tests.ai              # the AI layer, entirely offline
 ```
 
+All of them, plus the pytest-native suites, run under one command — this is
+what CI runs on every push:
+
+```bash
+python -m pytest -q
+```
+
+`tests/test_smoke_ui.py` is the only test that opens the product in a browser.
+It drives Chromium through the path that has to keep working — pick a sample,
+watch it run, land on results, edit the spec in the Studio, re-run it, then find
+and reopen the run in history — and fails on any uncaught JS error, which is
+otherwise reported nowhere. It needs a browser:
+
+```bash
+pip install playwright && python -m playwright install chromium
+```
+
+Without those it skips rather than fails, so the three-OS matrix does not need
+one. It runs the real server as a subprocess against a throwaway run directory,
+via `MASTERBI_RUNS_DIR` — the same environment override the desktop build uses
+to keep runs in a user data folder instead of beside the executable.
+
 `tests/ai.py` needs no API key and makes no network call — the client is
 swapped for a transcript player at one module seam. A gate nobody can run is
 not a gate. Its central assertions are that with AI off no client is ever

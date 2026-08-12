@@ -87,6 +87,42 @@ jobs:
         # checkout from being written to.
         run: python -m pytest -q -p no:cacheprovider
 
+  smoke:
+    # The only test that opens the product in a browser. Everything else in
+    # `tests/` checks the engine, the API, or a string in a file — `ui/app.js`
+    # is 2,000 lines with no build step and no error surface, so until this job
+    # existed a mistake in it failed in front of a user rather than in CI.
+    #
+    # Ubuntu only, deliberately. It asserts that the front end and the server
+    # agree, and neither is platform-specific; this project's two real
+    # portability failures were kaleido's subprocess and a missing font face,
+    # both covered on three OSes by `test` and `artifacts`. Paying a browser
+    # download on macOS and Windows to re-run identical assertions is not worth
+    # the minutes.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest playwright
+
+      # Not in the step above: this fetches the browser binary and its system
+      # libraries, which `pip install playwright` does not.
+      - run: python -m playwright install --with-deps chromium
+
+      - name: Browser smoke test
+        # Skipped rather than failed anywhere playwright is absent, which is
+        # what keeps the three-OS `test` matrix from needing a browser.
+        run: python -m pytest tests/test_smoke_ui.py -q -p no:cacheprovider
+
   artifacts:
     # The end-to-end check: does a run still produce all nine deliverables?
     # Separate from `test` because it is the slowest job and because a failure

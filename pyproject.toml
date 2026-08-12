@@ -45,7 +45,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ai = ["anthropic>=0.40"]
-dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "pypdf>=4"]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "pypdf>=4", "playwright>=1.40"]
 
 [project.scripts]
 kpi-maker = "kpi_maker.cli:main"

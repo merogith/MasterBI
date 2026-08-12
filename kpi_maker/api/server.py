@@ -11,6 +11,7 @@ rather than re-parsing artifacts on every poll.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import traceback
 import uuid
@@ -57,7 +58,12 @@ from ..viz.charts import default_exhibits
 
 ROOT = Path(__file__).resolve().parents[2]
 SAMPLES_DIR = ROOT / "samples"
-RUNS_DIR = ROOT / "runs"
+# Overridable by environment so a test can point the *real* server at a
+# throwaway tree — the browser smoke test drives the same process a user would,
+# and must not write into the developer's own history. The desktop build needs
+# the same hook for a different reason: runs belong in a user data directory,
+# not beside a read-only executable.
+RUNS_DIR = Path(os.environ.get("MASTERBI_RUNS_DIR") or ROOT / "runs")
 UI_DIR = ROOT / "ui"
 UPLOADS_DIR = RUNS_DIR / "_uploads"
 
