@@ -11,7 +11,6 @@ rather than re-parsing artifacts on every poll.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import traceback
 import uuid
@@ -27,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
+from .. import paths
 from ..cli import load_profile, run_pipeline
 from ..contract.schemas import FACT_SCHEMAS
 from ..design.contrast import AA_TEXT, GRAPHICAL, MIN_DELTA_E, ColourError, ratio
@@ -55,19 +55,17 @@ from ..survey import as_json as survey_json
 from ..survey import build_profile, surprise_profile
 from ..viz.charts import default_exhibits
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = paths.resource_root()
 SAMPLES_DIR = ROOT / "samples"
-# Overridable by environment so a test can point the *real* server at a
-# throwaway tree — the browser smoke test drives the same process a user would,
-# and must not write into the developer's own history. The desktop build needs
-# the same hook for a different reason: runs belong in a user data directory,
-# not beside a read-only executable.
-RUNS_DIR = Path(os.environ.get("MASTERBI_RUNS_DIR") or ROOT / "runs")
-# The front end: Vite build output, inside the package because that is what
-# ships — no Node at runtime, and 1.3's one-file executable bundles it. There is
-# no second copy any more; the Pages demo is built from the same source by
-# `tools/build_pages.py`.
-UI_DIST_DIR = Path(__file__).resolve().parents[1] / "ui_dist"
+# `MASTERBI_RUNS_DIR` overrides, which is how the browser smoke test drives the
+# real server without writing into the developer's own history. Frozen, this is
+# a user data directory rather than the temporary tree the bundle unpacks into
+# — see `kpi_maker/paths.py`, where getting it wrong loses every run on exit.
+RUNS_DIR = paths.runs_dir()
+# The front end: Vite build output, shipped inside the package — no Node at
+# runtime, and the one-file executable bundles it. There is no second copy; the
+# Pages demo is built from the same source by `tools/build_pages.py`.
+UI_DIST_DIR = ROOT / "kpi_maker" / "ui_dist"
 UPLOADS_DIR = RUNS_DIR / "_uploads"
 
 RUNS_DIR.mkdir(exist_ok=True)

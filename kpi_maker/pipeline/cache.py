@@ -29,6 +29,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
+from .. import paths
+
 
 def _code_version() -> str:
     """A digest of the engine's own source, as half of every stage's cache key.
@@ -49,9 +51,23 @@ def _code_version() -> str:
     a close call. If it ever does matter, cache it in a build artifact — do not
     go back to a hand-maintained string.
     """
+    # A frozen build ships bytecode, so this scan finds nothing and the hash
+    # would be a constant for every version ever released — which is exactly
+    # the stale-result bug the constant exists to prevent, wearing the disguise
+    # of working code. The build stamps an id in instead; refusing to guess is
+    # the only safe third option.
+    stamp = paths.build_id()
+    if stamp:
+        return hashlib.sha256(stamp.encode()).hexdigest()[:16]
+
     root = Path(__file__).resolve().parents[1]
     h = hashlib.sha256()
     sources = sorted(root.rglob("*.py")) + sorted((root / "kpi" / "library").glob("*.yaml"))
+    if not sources:
+        raise RuntimeError(
+            "cannot derive CODE_VERSION: no source files found and no build id "
+            "was stamped. A constant here serves results computed by code that "
+            "has since changed — see installer/build.py.")
     for path in sources:
         if "__pycache__" in path.parts:
             continue

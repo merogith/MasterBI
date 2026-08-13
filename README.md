@@ -36,6 +36,35 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 
 ## Run it
 
+**Download the app** from [Releases](https://github.com/merogith/MasterBI/releases)
+— `MasterBI-windows-x86_64.exe`, `MasterBI-macos-arm64`, or
+`MasterBI-linux-x86_64` — and open it. It picks a free port, starts, and opens
+your browser. No Python, no virtualenv, no pip: the interpreter and every
+dependency are inside the file.
+
+Your runs are saved outside the app, so they survive closing it and upgrading
+it: `%LOCALAPPDATA%\MasterBI` on Windows, `~/Library/Application Support/MasterBI`
+on macOS, `~/.local/share/MasterBI` on Linux. `MASTERBI_DATA_DIR` moves that
+anywhere you like — a USB stick, for instance.
+
+<details>
+<summary>Building one yourself</summary>
+
+```bash
+npm --prefix web ci && npm --prefix web run build   # the front end is compiled
+pip install pyinstaller
+python -m installer.build                           # -> dist/MasterBI
+python installer/smoke.py dist/MasterBI             # it produces a board pack
+```
+
+The smoke check is not optional politeness. kaleido is a native subprocess and
+a build that "succeeds" can still produce a run with no chart images at all, so
+the PDF and the deck ship with every exhibit missing. `.github/workflows/release.yml`
+runs the same check on all three platforms before attaching anything.
+</details>
+
+### From source
+
 **Double-click `start.bat`** (Windows) or **`start.command`** (macOS, Linux).
 That is the whole procedure. It finds Python, builds the environment, installs
 the dependencies, starts the server and opens your browser — and on a network

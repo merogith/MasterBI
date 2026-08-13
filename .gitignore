@@ -41,3 +41,7 @@ Thumbs.db
 web/node_modules/
 kpi_maker/ui_dist/
 web/dist-pages/
+
+# Desktop build. `_build_id.txt` is stamped at freeze time by installer/build.py
+# and is meaningless in a checkout — CODE_VERSION hashes the source there.
+kpi_maker/_build_id.txt

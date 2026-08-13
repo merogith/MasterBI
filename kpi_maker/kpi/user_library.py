@@ -17,9 +17,15 @@ from typing import Dict, List, Tuple
 
 import yaml
 
+from .. import paths
 from .schema import KPI
 
-USER_DIR = Path(__file__).parent / "library" / "user"
+
+# A function rather than a constant: a frozen build resolves this to a user
+# data directory, and a module-level constant would be computed before a test
+# or a portable install could redirect it.
+def _user_dir() -> Path:
+    return paths.user_library_dir()
 
 
 def _path_for(kpi_id: str) -> Path:
@@ -30,7 +36,7 @@ def _path_for(kpi_id: str) -> Path:
     if not safe or safe != kpi_id:
         raise ValueError(
             f"invalid KPI id {kpi_id!r} — letters, digits, underscore and hyphen only")
-    return USER_DIR / f"{safe}.yaml"
+    return _user_dir() / f"{safe}.yaml"
 
 
 def load_user_kpis() -> Tuple[List[KPI], Dict[str, str]]:
@@ -40,12 +46,12 @@ def load_user_kpis() -> Tuple[List[KPI], Dict[str, str]]:
     reported by id so the studio can show "this KPI could not be loaded" next to
     the others rather than the app refusing to start.
     """
-    if not USER_DIR.exists():
+    if not _user_dir().exists():
         return [], {}
 
     kpis: List[KPI] = []
     broken: Dict[str, str] = {}
-    for path in sorted(USER_DIR.glob("*.yaml")):
+    for path in sorted(_user_dir().glob("*.yaml")):
         try:
             raw = yaml.safe_load(path.read_text(encoding="utf-8"))
             if not raw:
@@ -59,7 +65,7 @@ def load_user_kpis() -> Tuple[List[KPI], Dict[str, str]]:
 
 
 def save_user_kpi(kpi: KPI) -> Path:
-    USER_DIR.mkdir(parents=True, exist_ok=True)
+    _user_dir().mkdir(parents=True, exist_ok=True)
     path = _path_for(kpi.id)
     payload = kpi.model_dump(mode="json", exclude_none=True)
     path.write_text(
