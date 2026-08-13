@@ -42,6 +42,14 @@ jobs:
       # consistent and the aligned comment blocks carry meaning. Adopting a
       # formatter is a decision worth taking on its own, not a side effect of
       # turning on CI.
+      - name: Generated design tokens are current
+        # `web/src/tokens.css` is derived from `kpi_maker/viz/theme.TOKENS`.
+        # The app chrome and the charts drawn inside it have to agree, and the
+        # only way that stays true is for a stale copy to fail here.
+        run: |
+          pip install -r requirements.txt
+          python -m tools.gen_tokens --check
+
       - name: mypy
         # Scoped to the spec, the KPI schema and the formula sandbox — the
         # three places a type error is a correctness bug. Advisory for now:
@@ -89,9 +97,9 @@ jobs:
 
   smoke:
     # The only test that opens the product in a browser. Everything else in
-    # `tests/` checks the engine, the API, or a string in a file — `ui/app.js`
-    # is 2,000 lines with no build step and no error surface, so until this job
-    # existed a mistake in it failed in front of a user rather than in CI.
+    # `tests/` checks the engine, the API, or a string in a file, so until this
+    # job existed a front-end mistake failed in front of a user rather than in
+    # CI — which is how both bugs 0.7 shipped were found by hand instead.
     #
     # Ubuntu only, deliberately. It asserts that the front end and the server
     # agree, and neither is platform-specific; this project's two real
@@ -124,20 +132,18 @@ jobs:
       # libraries, which `pip install playwright` does not.
       - run: python -m playwright install --with-deps chromium
 
-      # The rewritten front end (1.1b). `npm run build` runs `tsc --noEmit`
-      # first, so this type-checks it as well as producing the bundle the
-      # smoke test needs to grade it. Nothing else in CI requires Node, and
-      # nothing at runtime does either.
+      # `npm run build` runs `tsc --noEmit` first, so this type-checks the
+      # front end as well as producing the bundle the smoke test drives.
+      # Nothing else in CI requires Node, and nothing at runtime does either.
       - name: Build the front end
         run: |
           npm --prefix web ci
           npm --prefix web run build
 
       - name: Browser smoke test
-        # Covers both front ends: the legacy one a user gets today, and the
-        # rewrite, graded by the same activation path. Skipped rather than
-        # failed anywhere playwright is absent, which is what keeps the
-        # three-OS `test` matrix from needing a browser.
+        # Skipped rather than failed anywhere playwright or the bundle is
+        # absent, which is what keeps the three-OS `test` matrix from needing
+        # either a browser or Node.
         run: python -m pytest tests/test_smoke_ui.py -q -p no:cacheprovider
 
   artifacts:

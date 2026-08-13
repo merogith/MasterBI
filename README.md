@@ -279,6 +279,13 @@ the site is served from a repository sub-path rather than a domain root. Pages
 has no rewrite rule, so `tools/build_pages.py` also writes the shell as
 `404.html`; that is what makes a shared run URL resolve instead of 404.
 
+The colour tokens are **generated**, not restated: `web/src/tokens.css` comes
+from `kpi_maker/viz/theme.TOKENS` — the same palette the charts, the PDF and the
+deck are drawn with — via `python -m tools.gen_tokens`. CI fails on a stale copy,
+so the app chrome and the artifacts inside it cannot drift apart. `styles.css`
+keeps only what the engine has no opinion about: radii, shadows, chrome-only
+surfaces.
+
 Nothing at runtime needs Node: the build produces static files that FastAPI
 serves and that the packaged executable will bundle. `web/src/lib/api.ts`
 deliberately leaves API paths bare, because `tools/static_shim.js` replaces

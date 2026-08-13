@@ -1,49 +1,26 @@
 /* KPI Dashboard Maker — UI design system.
-   Tokens are the same validated palette the charts use (see
-   kpi_maker/viz/theme.py), so the app chrome and the exhibits inside it never
-   disagree. Dark mode is a selected second set of steps, not an inversion. */
+
+   The colour tokens are generated from `kpi_maker/viz/theme.TOKENS` into
+   `tokens.css`, so the app chrome and the exhibits inside it cannot disagree —
+   this file used to restate them by hand under a comment claiming they matched.
+   What stays here is what the engine has no opinion about: surfaces that exist
+   only in chrome, radii, shadows, layout width. Dark mode is a selected second
+   set of steps, not an inversion. */
+
+@import './tokens.css';
 
 :root {
-  --surface:        #fcfcfb;
-  --page:           #f9f9f7;
   --raised:         #ffffff;
-  --text-primary:   #0b0b0b;
-  --text-secondary: #52514e;
-  --muted:          #898781;
-  --grid:           #e1e0d9;
-  --axis:           #c3c2b7;
-  --border:         rgba(11, 11, 11, 0.10);
   --border-strong:  rgba(11, 11, 11, 0.18);
-  --accent:         #2a78d6;
-  --accent-soft:    rgba(42, 120, 214, 0.10);
-  --good:           #0ca30c;
-  --warning:        #fab219;
-  --serious:        #ec835a;
-  --critical:       #d03b3b;
   --shadow:         0 1px 2px rgba(11,11,11,.04), 0 8px 24px rgba(11,11,11,.06);
   --radius:         14px;
   --radius-sm:      9px;
-  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
   --maxw: 1180px;
 }
 
 :root[data-theme="dark"] {
-  --surface:        #1a1a19;
-  --page:           #0d0d0d;
   --raised:         #212120;
-  --text-primary:   #ffffff;
-  --text-secondary: #c3c2b7;
-  --muted:          #898781;
-  --grid:           #2c2c2a;
-  --axis:           #383835;
-  --border:         rgba(255, 255, 255, 0.10);
   --border-strong:  rgba(255, 255, 255, 0.20);
-  --accent:         #3987e5;
-  --accent-soft:    rgba(57, 135, 229, 0.14);
-  --good:           #0ca30c;
-  --warning:        #fab219;
-  --serious:        #ec835a;
-  --critical:       #d03b3b;
   --shadow:         0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
 }
 

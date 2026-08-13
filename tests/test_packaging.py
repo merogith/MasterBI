@@ -209,9 +209,13 @@ def test_static_shim_only_uses_defined_css_variables() -> None:
     same page as `styles.css`, so its variables have to come from there.
     """
     shim = (ROOT / "tools" / "static_shim.js").read_text(encoding="utf-8")
-    styles = (ROOT / "web" / "src" / "styles.css").read_text(encoding="utf-8")
+    # Both halves of the token set: the generated engine palette and the
+    # chrome-only additions beside it.
+    styles = "\n".join(
+        (ROOT / "web" / "src" / name).read_text(encoding="utf-8")
+        for name in ("tokens.css", "styles.css"))
 
-    defined = set(re.findall(r"^\s+(--[a-z-]+):", styles, re.MULTILINE))
+    defined = set(re.findall(r"^\s+(--[a-z0-9-]+):", styles, re.MULTILINE))
     used = set(re.findall(r"var\((--[a-z-]+)", shim))
     assert used <= defined, (
         f"static_shim.js uses undefined CSS variables: {sorted(used - defined)}")
@@ -497,3 +501,104 @@ def test_the_shim_resolves_against_the_deployment_root() -> None:
     assert "new URL(window.KPI_BASE || '.', window.location.href)" in shim, \
         "a root-relative base must be resolved before it is used as a URL base"
     assert "window.KPI_BASE =" in builder, "the build stamps no deployment root"
+
+
+def test_the_generated_tokens_are_current() -> None:
+    """`web/src/tokens.css` is generated; a stale copy is a silent disagreement.
+
+    The stylesheet used to restate the engine's palette by hand under a comment
+    claiming the two matched. Nothing checked it, so the app chrome and the
+    charts drawn inside it could drift apart with nobody noticing until a
+    screenshot looked wrong. Change a token in `viz/theme.py` and forget to run
+    the generator, and this is red.
+    """
+    from tools.gen_tokens import TARGET, render
+
+    assert TARGET.exists(), "tokens.css has not been generated"
+    assert TARGET.read_text(encoding="utf-8") == render(), (
+        "web/src/tokens.css is stale — run `python -m tools.gen_tokens`")
+
+
+def test_the_stylesheet_does_not_redefine_engine_tokens() -> None:
+    """Chrome-only tokens live beside the generated ones, never on top of them.
+
+    A `--critical` redefined in `styles.css` would win by import order and put
+    the app back to disagreeing with the PDF — the exact failure the generator
+    exists to prevent, reintroduced one line at a time.
+    """
+    from kpi_maker.viz.theme import TOKENS
+
+    owned = {f"--{name.replace('_', '-')}" for name in TOKENS["light"]}
+    owned |= {"--accent", "--accent-soft", "--font"}
+
+    styles = (ROOT / "web" / "src" / "styles.css").read_text(encoding="utf-8")
+    declared = set(re.findall(r"^\s+(--[a-z0-9-]+):", styles, re.MULTILINE))
+
+    clash = sorted(declared & owned)
+    assert not clash, (
+        f"styles.css redefines engine-owned tokens: {clash}. Change them in "
+        "kpi_maker/viz/theme.py and regenerate.")
+
+
+def test_the_shipped_palette_meets_its_own_thresholds() -> None:
+    """The palette the app and the charts share, checked with the engine's own
+    validator rather than a second copy of the maths.
+
+    Scoped to what `derive_tokens` actually enforces. It applies the graphical
+    floor to slot 1 — the brand colour a user supplies — and ΔE separation to
+    the companions it chooses; it takes the shipped `series_2` and `series_3`
+    as given. Asserting a bar the engine never claimed would be inventing a
+    contract, so this asserts the real one. The gap that leaves is measured in
+    the next test rather than ignored.
+    """
+    from kpi_maker.design.contrast import (
+        AA_TEXT,
+        GRAPHICAL,
+        MIN_DELTA_E,
+        distinguishable,
+        ratio,
+    )
+    from kpi_maker.viz.theme import MAX_CATEGORICAL_SERIES, TOKENS
+
+    for mode, tokens in TOKENS.items():
+        page, surface = tokens["page"], tokens["surface"]
+
+        assert ratio(tokens["text_primary"], page) >= AA_TEXT, (
+            f"{mode}: body text fails AA against the page")
+        assert ratio(tokens["text_secondary"], page) >= AA_TEXT, (
+            f"{mode}: secondary text fails AA against the page")
+
+        assert ratio(tokens["series_1"], surface) >= GRAPHICAL, (
+            f"{mode}: series_1 is below the floor the derivation enforces on a "
+            "user's own brand colour")
+
+        # Including under colour vision deficiency, which is what
+        # `distinguishable` simulates — three categorical series separated only
+        # by hue are three series a deuteranope reads as one.
+        series = [tokens[f"series_{i}"] for i in range(1, MAX_CATEGORICAL_SERIES + 1)]
+        report = distinguishable(series, MIN_DELTA_E)
+        assert report["ok"], f"{mode}: series are not distinguishable — {report}"
+
+
+def test_the_shipped_series_are_no_less_visible_than_they_are_today() -> None:
+    """A measured floor, not an aspiration — and a gap written down.
+
+    `series_3` in light mode is `#1baf7a` at **2.74:1** against the surface,
+    below the 3:1 graphical floor `derive_tokens` imposes on a user's brand
+    colour. A user supplying that green would have it moved with the note "too
+    close to the page to see as a line"; the shipped one is not. That is a real
+    inconsistency and this test does not pretend otherwise — it pins the
+    current values so they cannot quietly get worse while the question of
+    whether to move slot 3 is decided. Raising the bound is the fix; lowering
+    it needs a reason.
+    """
+    from kpi_maker.design.contrast import ratio
+    from kpi_maker.viz.theme import MAX_CATEGORICAL_SERIES, TOKENS
+
+    worst = min(
+        ratio(tokens[f"series_{i}"], tokens["surface"])
+        for tokens in TOKENS.values()
+        for i in range(1, MAX_CATEGORICAL_SERIES + 1)
+    )
+    assert worst >= 2.74, (
+        f"a chart series became less visible than it was ({worst:.2f}:1)")
