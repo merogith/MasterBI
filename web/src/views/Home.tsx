@@ -1,3 +1,4 @@
+import { DemoNotice } from '../components/DemoNotice';
 import { createRun } from '../lib/api';
 import { navigate } from '../lib/router';
 
@@ -23,6 +24,8 @@ export function Home() {
           data behind them. Every number is computed, not guessed.
         </p>
       </div>
+
+      <DemoNotice />
 
       <div class="mode-grid">
         <button class="mode-card" data-nav="samples"

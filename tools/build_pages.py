@@ -30,19 +30,6 @@ if str(ROOT) not in sys.path:
 from kpi_maker.api import server as api  # noqa: E402
 from kpi_maker.cli import load_profile, run_pipeline  # noqa: E402
 
-# The banner the static site shows under the hero. The live app never sees it.
-STATIC_NOTICE = """
-    <div class="notice static-notice" style="margin:0 0 28px">
-      <strong>Demo mode.</strong> The four companies below are pre-rendered and
-      fully explorable — dashboard, scorecard, every fact table, every download.
-      Building your own, uploading a spreadsheet and <em>Surprise me</em> run a
-      Python pipeline, which a static host cannot do. Start the app on your own
-      machine and <strong>this page connects to it automatically</strong>: every
-      mode unlocks and your runs are saved in your own <code>runs/</code> folder.
-      Press <em>Run locally</em> in the header for the commands.
-    </div>
-"""
-
 
 def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -107,22 +94,43 @@ def build(out_dir: Path) -> int:
 
     write_json(site / "data" / "runs.json", index)
 
-    # Front end, verbatim, plus the shim.
-    for name in ("app.js", "styles.css"):
-        shutil.copy2(api.UI_DIR / name, site / name)
+    # Front end: the Vite bundle built for this sub-path, plus the shim.
+    dist = ROOT / "web" / "dist-pages"
+    if not (dist / "index.html").exists():
+        raise SystemExit(
+            "no Pages bundle — run `npm --prefix web ci && "
+            "npm --prefix web run build:pages` first")
+    shutil.copytree(dist / "assets", site / "assets")
 
-    html = (api.UI_DIR / "index.html").read_text(encoding="utf-8")
-    # The shim loads app.js itself once it knows whether a local server is
-    # there, so app.js sees a settled KPI_FILES_BASE rather than one that
-    # changes after it has already read it.
-    marker = '<script src="app.js"></script>'
+    html = (dist / "index.html").read_text(encoding="utf-8")
+
+    # The deployment root, taken from what Vite actually emitted rather than
+    # restated here — one fact, one place. Everything the page loads has to be
+    # absolute against it, because 404.html serves deep links from directories
+    # that do not exist.
+    asset = re.search(r'src="([^"]*/assets/[^"]+\.js)"', html)
+    if asset is None:
+        raise SystemExit("the Vite bundle's index.html has no module script")
+    base = asset.group(1).split("assets/")[0]
+
+    # The shim has to replace `window.fetch` before the app issues a request.
+    # A classic script runs the moment it is parsed and a module script is
+    # deferred to after parsing, so this ordering is guaranteed by the spec —
+    # no coordination between the two files required.
+    marker = "</head>"
     if marker not in html:
-        raise SystemExit("index.html no longer loads app.js the expected way")
-    html = html.replace(marker, '<script src="static_shim.js"></script>')
-    # Anchor the banner to the hero block rather than a line number.
-    html = re.sub(r'(<div class="mode-grid">)', STATIC_NOTICE.strip() + r"\n\n    \1",
-                  html, count=1)
+        raise SystemExit("the Vite bundle's index.html has no <head> to patch")
+    html = html.replace(marker, (
+        f'  <script>window.KPI_BASE = "{base}";</script>\n'
+        f'  <script src="{base}static_shim.js"></script>\n' + marker), 1)
     (site / "index.html").write_text(html, encoding="utf-8")
+
+    # GitHub Pages has no rewrite rule, so a deep link — `/MasterBI/samples`, or
+    # any run URL someone shares — is a 404 from a static host. Serving the same
+    # shell as the 404 page is the standard answer: the app boots and reads
+    # `location.pathname` itself, so the link resolves to the screen it names.
+    (site / "404.html").write_text(html, encoding="utf-8")
+
     shutil.copy2(Path(__file__).parent / "static_shim.js", site / "static_shim.js")
 
     # Without this, Jekyll reprocesses the tree and drops anything it does not

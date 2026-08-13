@@ -14,13 +14,15 @@
  * http://127.0.0.1 is not mixed content. Chrome's Private Network Access rules
  * additionally want a header on the preflight, which the server sends.
  *
- * ui/app.js is untouched by all of this: it calls the same six endpoints and
- * never learns which side answered. That is the point — one front end, not a
- * hosted copy and a local copy drifting apart.
+ * The app is untouched by all of this: it calls the same endpoints and never
+ * learns which side answered. That is the point — one front end, not a hosted
+ * copy and a local copy drifting apart. This file is a classic script and the
+ * app's bundle is a module, so `window.fetch` is already replaced by the time
+ * the app runs, without either file coordinating with the other.
  *
- * The probe never blocks startup. app.js loads immediately in demo mode and
+ * The probe never blocks startup. The app renders immediately in demo mode and
  * the detection runs behind it; if a local server turns up, the switch is a
- * variable assignment, because app.js resolves both the API target and the
+ * variable assignment, because the app resolves both the API target and the
  * file base at call time. Blocking on the probe cost six seconds of dead page
  * for the common case of nobody running anything locally. */
 
@@ -32,7 +34,14 @@
   const STORE_KEY = 'kpiBridgePort';
 
   const realFetch = window.fetch.bind(window);
-  const BASE = new URL('.', window.location.href).href;
+  // Where the site is deployed, not where the current page happens to sit.
+  // Deep links are served by 404.html — at `/MasterBI/runs/abc` the page's own
+  // directory is `/MasterBI/runs/`, so resolving assets and file URLs against
+  // it would 404 on every link anyone actually shares. The build stamps the
+  // real root in; the fallback keeps this file usable on its own.
+  // Resolved against the page, because the build stamps in a root-relative
+  // path and `new URL(rel, base)` rejects a base that is not absolute.
+  const BASE = new URL(window.KPI_BASE || '.', window.location.href).href;
   const asset = (rel) => new URL(rel, BASE).href;
 
   let live = null;                     // e.g. 'http://127.0.0.1:8000'
@@ -184,12 +193,25 @@
       window.KPI_STATIC = false;
       window.KPI_FILES_BASE = live;
       try { localStorage.setItem(STORE_KEY, String(port)); } catch (_) {}
+      announce();
       return true;
     }
     live = null;
     window.KPI_STATIC = true;
     window.KPI_FILES_BASE = BASE.replace(/\/$/, '');
+    announce();
     return false;
+  }
+
+  /* The app renders the demo-mode notice itself, because whether this is a
+     frozen demo or a live local server is a fact about the product, not about
+     the page chrome. The probe settles after the app has already mounted, so
+     tell it rather than expecting it to poll. */
+  function announce() {
+    try {
+      window.dispatchEvent(new CustomEvent('kpi-static-change',
+                                           { detail: window.KPI_STATIC }));
+    } catch (_) {}
   }
 
   /* ------------------------------------------------------------ status UI */
@@ -328,11 +350,7 @@
   injectStyles();
   renderPill('off');
 
-  // Load the app first; detection catches up behind it.
-  const tag = document.createElement('script');
-  tag.src = asset('app.js');
-  document.body.appendChild(tag);
-
+  // The app is already rendering; detection catches up behind it.
   connect().then((found) => {
     if (!found) { renderPill('off'); return; }
 
@@ -340,8 +358,11 @@
     // data. Once a pre-built run is open, its id exists only in this build —
     // routing the next call to the local server would 404 on a page that looks
     // fine. Offer the switch instead of performing it.
-    let busy = false;
-    try { busy = typeof state !== 'undefined' && state.runId !== null; } catch (_) {}
+    // `window.KPI_RUN_OPEN` is set by the app while a run's screen is mounted.
+    // It replaced a read of `app.js`'s module-global `state.runId`, which a
+    // bundled module no longer exposes — left as it was, this check would have
+    // silently become "never busy" and upgraded out from under an open demo.
+    const busy = window.KPI_RUN_OPEN === true;
     if (busy) {
       live = null;                       // stay on demo data until they choose
       window.KPI_STATIC = true;

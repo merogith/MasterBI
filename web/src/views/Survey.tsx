@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { createRun, getSurvey, type Survey as SurveyData, type SurveyQuestion } from '../lib/api';
-import { navigate } from '../lib/router';
+import { href, navigate } from '../lib/router';
 
 /** "Use averages" is a real answer, not an absence: recording `__unknown__`
  *  makes the provenance say the field was defaulted rather than guessed. */
@@ -190,7 +190,7 @@ export function Survey() {
   return (
     <section class="view" id="view-survey">
       <div class="view-head">
-        <a class="back" href="/" onClick={(e) => { e.preventDefault(); navigate('/'); }}>
+        <a class="back" href={href('/')} onClick={(e) => { e.preventDefault(); navigate('/'); }}>
           ← Back
         </a>
         <h1>Build your own</h1>

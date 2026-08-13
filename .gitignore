@@ -40,3 +40,4 @@ Thumbs.db
 # reason `site/` is excluded above.
 web/node_modules/
 kpi_maker/ui_dist/
+web/dist-pages/

@@ -1,10 +1,10 @@
 import { render } from 'preact';
 import { App } from './app';
 
-// The legacy stylesheet, imported rather than copied. One source of truth until
-// 1.1c generates the tokens from `kpi_maker/design/`; a second copy here would
-// be exactly the drift `tests/test_packaging.py` exists to prevent.
-import '../../ui/styles.css';
+// Moved here with the rest of the front end when `ui/` was deleted. 1.1c
+// generates the token block at the top of it from `kpi_maker/design/`, so the
+// app, the dashboard, the PDF and the deck cannot drift apart.
+import './styles.css';
 
 const root = document.getElementById('root');
 if (root === null) throw new Error('no #root to mount into');

@@ -25,7 +25,6 @@ import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ..cli import load_profile, run_pipeline
@@ -64,19 +63,11 @@ SAMPLES_DIR = ROOT / "samples"
 # the same hook for a different reason: runs belong in a user data directory,
 # not beside a read-only executable.
 RUNS_DIR = Path(os.environ.get("MASTERBI_RUNS_DIR") or ROOT / "runs")
-UI_DIR = ROOT / "ui"
-# The rewritten front end (1.1b): Vite build output, inside the package because
-# that is what ships — no Node at runtime, and 1.3's one-file executable bundles
-# it. This is what a user gets, when it has been built.
-#
-# `ui/` is still here, and not as a fallback anyone should rely on: the GitHub
-# Pages demo is produced from it by `tools/build_pages.py`, which patches its
-# `index.html` and serves `app.js` behind `static_shim.js`. Deleting it would
-# take the hosted demo with it, so it goes when 1.2 builds the Pages bundle
-# from this same source. `MASTERBI_UI=legacy` selects it meanwhile, and it is
-# also what serves a checkout where the bundle was never built.
+# The front end: Vite build output, inside the package because that is what
+# ships — no Node at runtime, and 1.3's one-file executable bundles it. There is
+# no second copy any more; the Pages demo is built from the same source by
+# `tools/build_pages.py`.
 UI_DIST_DIR = Path(__file__).resolve().parents[1] / "ui_dist"
-SERVE_LEGACY_UI = os.environ.get("MASTERBI_UI") == "legacy"
 UPLOADS_DIR = RUNS_DIR / "_uploads"
 
 RUNS_DIR.mkdir(exist_ok=True)
@@ -1234,10 +1225,10 @@ def serve_file(run_id: str, path: str):
 
 @app.get("/api/health")
 def health() -> Dict[str, Any]:
-    return {"status": "ok", "runs": len(_STATE), "ui": UI_DIR.exists()}
+    return {"status": "ok", "runs": len(_STATE), "ui": UI_DIST_DIR.exists()}
 
 
-if not SERVE_LEGACY_UI and UI_DIST_DIR.exists():
+if UI_DIST_DIR.exists():
     # Registered last, so it cannot shadow `/api/*` or `/files/*` — FastAPI
     # matches routes in declaration order.
     @app.get("/{path:path}")
@@ -1255,9 +1246,11 @@ if not SERVE_LEGACY_UI and UI_DIST_DIR.exists():
             return FileResponse(target)
         return FileResponse(root / "index.html")
 
-elif UI_DIR.exists():
-    app.mount("/", StaticFiles(directory=str(UI_DIR), html=True), name="ui")
 else:
     @app.get("/")
     def missing_ui() -> JSONResponse:
-        return JSONResponse({"error": f"UI directory not found at {UI_DIR}"}, 500)
+        # A checkout where the bundle was never built. Say what to run rather
+        # than serving a blank page: there is no vendored copy to fall back on.
+        return JSONResponse(
+            {"error": f"No front end at {UI_DIST_DIR}. Run "
+                      "`npm --prefix web ci && npm --prefix web run build`."}, 500)

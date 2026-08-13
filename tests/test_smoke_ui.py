@@ -1,22 +1,19 @@
-"""The first test that opens the product in a browser.
+"""The only test that opens the product in a browser.
 
 Every other test in this repo checks the engine, the API, or a string in a file.
-Nothing has ever driven the actual UI, and `ui/app.js` is 2,000 lines of
-`innerHTML` with no build step, no types and no error surface — so a mistake in
-it fails silently in front of a user rather than loudly in CI. Both bugs found
-in 0.7 were found by booting the server and clicking, which is exactly the
-evidence that this ought to be automated instead of remembered.
+Before this existed nothing drove the UI at all, so a mistake there failed
+silently in front of a user rather than loudly in CI. Both bugs found in 0.7
+were found by booting the server and clicking — this is that, automated.
 
 It walks the path that has to keep working: pick a sample, watch it run, land on
 results, open the Studio, change something, re-run it, and find it in history.
-That is the product's whole spine, and it is about to be rewritten — 1.1 replaces
-this front end with Vite and Preact, and this file is what says the replacement
-still does what the original did. Written against the DOM the user sees (visible
-views, real buttons, text on screen) rather than against internals, so it
-survives that rewrite instead of being thrown away with the code it tests.
+That is the product's whole spine, and it is what graded the 1.1 rewrite: these
+assertions are written against the DOM the user sees — visible views, real
+buttons, text on screen — so they survived the front end being replaced
+underneath them, which is the whole reason they were written that way.
 
 Uncaught JS exceptions fail the test that provoked them. There is no other
-place a front-end error is currently reported at all.
+place a front-end error is reported at all.
 """
 from __future__ import annotations
 
@@ -119,22 +116,16 @@ def _serve(tmp_path_factory, **extra_env):
 
 @pytest.fixture(scope="module")
 def server(tmp_path_factory):
-    """The legacy front end. No longer the default, but still what the GitHub
-    Pages demo is built from, so it has to keep working until 1.2 replaces it."""
-    yield from _serve(tmp_path_factory, MASTERBI_UI="legacy")
-
-
-@pytest.fixture(scope="module")
-def next_server(tmp_path_factory):
-    """The rewritten front end, which is what a user now gets.
+    """The app, served the way a user gets it.
 
     Skipped rather than failed when the bundle has not been built: the Python
-    suite must not require Node, which is the same property that lets the exe
-    ship without it.
+    suite must not require Node, which is the same property that lets the
+    packaged executable ship without it.
     """
     dist = ROOT / "kpi_maker" / "ui_dist" / "index.html"
     if not dist.exists():
-        pytest.skip("no ui_dist bundle — run `npm --prefix web ci && npm --prefix web run build`")
+        pytest.skip("no ui_dist bundle — run `npm --prefix web ci && "
+                    "npm --prefix web run build`")
     yield from _serve(tmp_path_factory)
 
 
@@ -172,23 +163,6 @@ def _open(browser, base: str):
 def page(browser, server):
     yield from _open(browser, server)
 
-
-@pytest.fixture
-def next_page(browser, next_server):
-    yield from _open(browser, next_server)
-
-
-@pytest.fixture(params=["legacy", "rewrite"])
-def either_page(request, browser):
-    """Runs a test against both front ends.
-
-    Everything ported has to behave the same in both, and asserting that in one
-    parametrised test rather than two copies is what stops the copies drifting —
-    which is the bug class this repo is most prone to.
-    """
-    base = request.getfixturevalue(
-        "server" if request.param == "legacy" else "next_server")
-    yield from _open(browser, base)
 
 
 def _visible(page, view: str):
@@ -229,13 +203,12 @@ def test_a_sample_run_reaches_the_results_screen(page):
     assert page.locator("#res-company").inner_text().strip()
 
 
-def test_the_studio_edits_a_spec_and_re_runs_it(either_page):
+def test_the_studio_edits_a_spec_and_re_runs_it(page):
     """The Studio's contract: an edit produces a plan, and the plan re-runs.
 
     `#studio-rerun` starts disabled and is enabled only when the server reports
     dirty stages, so this also covers the PUT round trip that computes them.
     """
-    page = either_page
     _start_first_sample(page)
     page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
 
@@ -254,7 +227,7 @@ def test_the_studio_edits_a_spec_and_re_runs_it(either_page):
     page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
 
 
-def test_a_cancelled_run_is_listed_in_history_and_can_be_resumed(either_page):
+def test_a_cancelled_run_is_listed_in_history_and_can_be_resumed(page):
     """0.7's fix, from the outside — and in both front ends.
 
     A cancelled run writes no `summary.json`, so before the run store it
@@ -262,7 +235,6 @@ def test_a_cancelled_run_is_listed_in_history_and_can_be_resumed(either_page):
     kept on disk to make resuming cheap. It must now be listed, say where it
     stopped, and offer the one action that fits it.
     """
-    page = either_page
     _start_first_sample(page)
     _visible(page, "running")
     page.click("#run-cancel")
@@ -285,7 +257,7 @@ def test_a_cancelled_run_is_listed_in_history_and_can_be_resumed(either_page):
     page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
 
 
-def test_a_finished_run_reopens_from_history(either_page):
+def test_a_finished_run_reopens_from_history(page):
     """History has to reopen what it lists, from a client that has forgotten.
 
     Going back to the origin is the point: it drops every scrap of in-page
@@ -293,7 +265,6 @@ def test_a_finished_run_reopens_from_history(either_page):
     recovery the restart tests cover on the server side — through the door a
     user actually uses.
     """
-    page = either_page
     _start_first_sample(page)
     page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
     company = page.locator("#res-company").inner_text().strip()
@@ -309,64 +280,41 @@ def test_a_finished_run_reopens_from_history(either_page):
     assert page.locator("#res-company").inner_text().strip() == company
 
 
-# --------------------------------------------------------------------------
-# The rewritten front end (1.1b), graded by the same path
-# --------------------------------------------------------------------------
+def test_back_and_forward_move_between_screens(page):
+    """The point of the router. The front end this replaced had zero
+    `pushState` calls, so every screen was the same URL, Back left the app,
+    and no run could be sent to anyone."""
+    assert page.url.endswith("/")
 
-def test_the_rewrite_reaches_the_results_screen(next_page):
-    """The activation path again, against Vite + Preact instead of `app.js`.
+    page.click('[data-nav="samples"]')
+    _visible(page, "samples")
+    assert page.url.endswith("/samples")
 
-    Same three clicks, same assertions, different implementation — which is
-    what makes this a port rather than a new product. The tests were written
-    against the visible DOM for exactly this moment.
-    """
-    _start_first_sample(next_page)
-    _visible(next_page, "running")
+    page.go_back()
+    _visible(page, "home")
 
-    next_page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
-    assert next_page.locator("#res-tiles .tile").count() > 0, "no KPI tiles rendered"
-    assert next_page.locator("#res-downloads .dl-card").count() >= 5, \
-        "the results screen is missing its artifacts"
-    assert next_page.locator("#res-company").inner_text().strip()
+    page.go_forward()
+    _visible(page, "samples")
 
 
-def test_the_rewrite_gives_every_screen_a_url(next_page):
-    """The point of the router: Back works and a run is a link.
-
-    The legacy front end has zero `pushState` calls, so every screen is the
-    same URL, Back leaves the app, and no run can be sent to anyone.
-    """
-    assert next_page.url.endswith("/")
-
-    next_page.click('[data-nav="samples"]')
-    _visible(next_page, "samples")
-    assert next_page.url.endswith("/samples")
-
-    next_page.go_back()
-    _visible(next_page, "home")
-
-    next_page.go_forward()
-    _visible(next_page, "samples")
-
-
-def test_a_run_url_survives_a_reload(next_page):
+def test_a_run_url_survives_a_reload(page):
     """`/runs/<id>` is a real address, not a screen you can only arrive at.
 
     This is the failure that makes hand-rolled SPA routing look fine until the
     first refresh: the server has to answer an unknown path with the shell.
     """
-    _start_first_sample(next_page)
-    _visible(next_page, "running")
-    url = next_page.url
+    _start_first_sample(page)
+    _visible(page, "running")
+    url = page.url
     assert "/runs/" in url
 
-    next_page.reload(wait_until="domcontentloaded")
-    assert next_page.url == url
-    next_page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.reload(wait_until="domcontentloaded")
+    assert page.url == url
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
 
 
 
-def test_the_survey_runs_end_to_end_on_averages(either_page):
+def test_the_survey_runs_end_to_end_on_averages(page):
     """Every question skipped is still a complete, honest run.
 
     "Skip — use averages" records `__unknown__` rather than leaving the field
@@ -374,7 +322,6 @@ def test_the_survey_runs_end_to_end_on_averages(either_page):
     inventing one. Walking the whole survey that way is the fastest path that
     still exercises every step, the review screen and the run it starts.
     """
-    page = either_page
     page.click('[data-nav="survey"]')
     page.wait_for_selector("#survey-next")
 
@@ -396,7 +343,7 @@ def test_the_survey_runs_end_to_end_on_averages(either_page):
     page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
 
 
-def test_bringing_data_profiles_the_file_without_running_it(either_page, tmp_path):
+def test_bringing_data_profiles_the_file_without_running_it(page, tmp_path):
     """Profiling is not adoption, and the screen has to say which it did.
 
     The upload inspects a file and changes nothing: a run needs a company
@@ -404,7 +351,6 @@ def test_bringing_data_profiles_the_file_without_running_it(either_page, tmp_pat
     looked like it had started something would be promising a flow that does
     not exist yet.
     """
-    page = either_page
     csv = tmp_path / "monthly.csv"
     csv.write_text("month,revenue,cogs\n2025-01,1000,400\n2025-02,1100,430\n",
                    encoding="utf-8")

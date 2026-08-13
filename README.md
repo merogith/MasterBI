@@ -15,7 +15,7 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 | Profile schema + cross-block validation | `kpi_maker/profile/` | done |
 | RunSpec contract + staged, cacheable pipeline | `kpi_maker/spec/`, `kpi_maker/pipeline/` | done |
 | Formula engine (KPIs + calculated columns) | `kpi_maker/formula/`, `kpi_maker/prep/` | done |
-| Studio — adjust any stage, re-run what changed | `ui/` | done |
+| Studio — adjust any stage, re-run what changed | `web/` | done |
 | Two-tier reconciliation gate + pandera contract | `kpi_maker/contract/` | done |
 | Cleaning ops + lineage log | `kpi_maker/prep/` | done — 19 ops |
 | Real-data ingestion (5 shapes) | `kpi_maker/ingest/` | done |
@@ -29,7 +29,7 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 | Survey + benchmark priors | `kpi_maker/survey/` | done — M3/M4 (SaaS) |
 | Sample gallery (Mode 1) | `samples/` | done — M5, 4 companies |
 | HTTP API | `kpi_maker/api/` | done |
-| Web UI | `ui/` | done — M8 (vanilla JS, no build step) |
+| Web UI | `web/` | done — M8 (Vite + TypeScript + Preact, URL routing) |
 | Cross-sector fallback pack | `kpi_maker/kpi/library/general.yaml` | done — 19 KPIs, every sector runs |
 | More sectors (M2) | `kpi_maker/datagen/`, `kpi_maker/kpi/library/` | partial — 2 of 10 have their own archetype and pack; the other 8 run on the nearest archetype and the cross-sector pack, and say so |
 | AI Builder (M7) | `kpi_maker/ai/` | partial — planner, narrator and the number check ship; the conversational front door does not |
@@ -95,9 +95,10 @@ front end, the user's own machine is the engine, and their data never leaves it.
 Three constraints shaped the design:
 
 - **One front end.** `tools/static_shim.js` patches `fetch` rather than forking
-  the UI, so `ui/app.js` is byte-identical in all three contexts. A hosted copy
-  and a local copy would have drifted within a release.
-- **Detection never blocks.** `app.js` loads immediately and the probe catches
+  the UI, so the same `web/` source serves all three contexts — the demo build
+  differs only in its base path. A hosted copy and a local copy would have
+  drifted within a release.
+- **Detection never blocks.** The app renders immediately and the probe catches
   up behind it. Blocking on it cost 6s of dead page whenever nobody was running
   anything locally, which is the common case.
 - **No silent switching mid-session.** A pre-built run's id exists only in the
@@ -108,6 +109,7 @@ Three constraints shaped the design:
 Build it locally exactly as CI does:
 
 ```bash
+npm --prefix web ci && npm --prefix web run build:pages
 ./.venv/Scripts/python.exe -m tools.build_pages --out site
 ```
 
@@ -253,14 +255,14 @@ out/
   data/*.csv         six normalized fact tables
 ```
 
-## The front end, and the rewrite in progress
+## The front end
 
-What a user gets today is `ui/` — one 2,000-line `app.js`, no build step, and
-no URL for anything: every screen change flips a `hidden` attribute, so Back
-leaves the app and no run can be linked to.
+`web/` is Vite, TypeScript and Preact, with real URL routing — every screen has
+an address and every run is a link you can send someone. It replaced a single
+2,000-line `app.js` with no build step and no URL for anything: every screen
+change flipped a `hidden` attribute, so Back left the app entirely.
 
-`web/` is the replacement, and it is **what the server now serves**: Vite,
-TypeScript and Preact, with real routing. Every screen is ported — home,
+Every screen lives here — home,
 samples, survey, Bring-your-data, running, results, the history drawer and all
 eight Studio panels, including the flows inside them (adopting an upload, the
 cleaning-step and calculated-column editors, the add-a-KPI formula editor,
@@ -271,12 +273,11 @@ npm --prefix web ci && npm --prefix web run build   # → kpi_maker/ui_dist/
 python -m uvicorn kpi_maker.api.server:app
 ```
 
-`ui/` has not been deleted, and not as a fallback anyone should rely on: the
-GitHub Pages demo is still built from it by `tools/build_pages.py`, which
-patches its `index.html` and serves `app.js` behind `static_shim.js`. Deleting
-it today would take the hosted demo with it, so it goes when the Pages bundle is
-built from `web/` instead. `MASTERBI_UI=legacy` selects it meanwhile, and it is
-also what serves a checkout where the bundle was never built.
+There is one front end. The GitHub Pages demo is the same source built a second
+time — `npm --prefix web run build:pages` — differing only in its base, because
+the site is served from a repository sub-path rather than a domain root. Pages
+has no rewrite rule, so `tools/build_pages.py` also writes the shell as
+`404.html`; that is what makes a shared run URL resolve instead of 404.
 
 Nothing at runtime needs Node: the build produces static files that FastAPI
 serves and that the packaged executable will bundle. `web/src/lib/api.ts`

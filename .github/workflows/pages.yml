@@ -39,10 +39,24 @@ jobs:
           python-version: '3.11'
           cache: pip
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      # The demo and the local app are the same front end, built twice: this
+      # target differs only in its base, because the site is served from a
+      # repository sub-path rather than a domain root.
+      - name: Build the front end for the sub-path
+        run: |
+          npm --prefix web ci
+          npm --prefix web run build:pages
 
       - name: Build the static site
         run: python -m tools.build_pages --out site
@@ -50,10 +64,16 @@ jobs:
       - name: Check the build produced what the front end expects
         run: |
           set -e
-          for f in index.html app.js styles.css static_shim.js \
+          for f in index.html 404.html static_shim.js \
                    data/samples.json data/survey.json data/runs.json; do
             test -s "site/$f" || { echo "missing or empty: $f"; exit 1; }
           done
+          # A deep link is served by 404.html, so it has to be the app shell —
+          # not a stub, and not GitHub's own page.
+          grep -q 'type="module"' site/404.html \
+            || { echo "404.html is not the app shell — deep links will not work"; exit 1; }
+          ls site/assets/*.js >/dev/null 2>&1 \
+            || { echo "no bundle in site/assets"; exit 1; }
           # .nojekyll is deliberately zero bytes — its existence is the signal,
           # so -f rather than -s.
           test -f site/.nojekyll || { echo "missing: .nojekyll"; exit 1; }

@@ -18,6 +18,19 @@
  */
 export const filesBase = (): string => window.KPI_FILES_BASE ?? '';
 
+/** An artifact's address, wherever this build is running.
+ *
+ *  The server hands out `/files/<run>/report.pdf` and serves it from the root.
+ *  The frozen demo hands out `files/<run>/report.pdf` — relative, because the
+ *  site lives under a repository sub-path — and the shim supplies the root to
+ *  resolve it against. Joining those by concatenation produced
+ *  `/MasterBIfiles/...`, so the slash is handled once, here. */
+export function fileUrl(url: string): string {
+  const base = filesBase();
+  if (!base) return url;
+  return `${base.replace(/\/$/, '')}/${url.replace(/^\//, '')}`;
+}
+
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
     super(message);

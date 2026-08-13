@@ -62,9 +62,9 @@ def test_readme_survey_question_count() -> None:
     from kpi_maker.survey.questions import CORE_QUESTIONS, QUESTIONS
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    index = (ROOT / "ui" / "index.html").read_text(encoding="utf-8")
+    home = (ROOT / "web" / "src" / "views" / "Home.tsx").read_text(encoding="utf-8")
 
-    for text, where in ((readme, "README.md"), (index, "ui/index.html")):
+    for text, where in ((readme, "README.md"), (home, "web/src/views/Home.tsx")):
         for stated in re.findall(r"(\d+)[- ]question survey", text) + \
                       re.findall(r"Answer (\d+) questions", text):
             assert int(stated) in (len(CORE_QUESTIONS), len(QUESTIONS)), (
@@ -141,7 +141,7 @@ def test_ci_matrix_matches_the_declared_python_range() -> None:
 def test_no_shipped_capability_is_described_as_missing() -> None:
     """The UI must not tell users a feature is absent when it ships.
 
-    `ui/index.html` carried "the Claude agents that plan and narrate a run are
+    The old `ui/index.html` carried "the Claude agents that plan and narrate a run are
     *not connected in this build*" for months after `ai/planner.py`,
     `ai/narrator.py` and `ai/verify.py` landed and were covered by tests — so
     the product was actively under-selling its best work while stranding the
@@ -149,8 +149,10 @@ def test_no_shipped_capability_is_described_as_missing() -> None:
     """
     from kpi_maker.ai import narrator, planner, verify  # noqa: F401
 
-    for name in ("ui/index.html", "ui/app.js", "kpi_maker/api/server.py"):
-        text = (ROOT / name).read_text(encoding="utf-8")
+    sources = [ROOT / "kpi_maker" / "api" / "server.py"]
+    sources += sorted((ROOT / "web" / "src").rglob("*.tsx"))
+    for path in sources:
+        name, text = path.relative_to(ROOT), path.read_text(encoding="utf-8")
         assert "not connected in this build" not in text, (
             f"{name} still claims a shipped capability is missing")
 
@@ -169,9 +171,13 @@ def test_the_legacy_upload_route_is_gone() -> None:
     assert "/api/upload" not in paths, "the superseded upload route is still registered"
     assert "/api/ingest/profile" in paths
 
-    for name in ("ui/app.js", "tools/static_shim.js"):
-        text = (ROOT / name).read_text(encoding="utf-8")
-        assert "/api/upload" not in text, f"{name} still calls the deleted route"
+    sources = [ROOT / "tools" / "static_shim.js"]
+    sources += sorted((ROOT / "web" / "src").rglob("*.ts"))
+    sources += sorted((ROOT / "web" / "src").rglob("*.tsx"))
+    for path in sources:
+        text = path.read_text(encoding="utf-8")
+        assert "/api/upload" not in text, (
+            f"{path.relative_to(ROOT)} still calls the deleted route")
 
 
 def test_every_chart_tab_has_a_label() -> None:
@@ -203,7 +209,7 @@ def test_static_shim_only_uses_defined_css_variables() -> None:
     same page as `styles.css`, so its variables have to come from there.
     """
     shim = (ROOT / "tools" / "static_shim.js").read_text(encoding="utf-8")
-    styles = (ROOT / "ui" / "styles.css").read_text(encoding="utf-8")
+    styles = (ROOT / "web" / "src" / "styles.css").read_text(encoding="utf-8")
 
     defined = set(re.findall(r"^\s+(--[a-z-]+):", styles, re.MULTILINE))
     used = set(re.findall(r"var\((--[a-z-]+)", shim))
@@ -269,7 +275,7 @@ def test_the_ui_holds_no_copy_of_the_engines_stage_names() -> None:
     # The rewritten front end is included: a port is exactly when a deleted
     # hardcoded list gets helpfully retyped into the new code.
     sources = [ROOT / rel for rel in
-               ("ui/app.js", "tools/build_pages.py", "tools/static_shim.js")]
+               ("tools/build_pages.py", "tools/static_shim.js")]
     sources += sorted((ROOT / "web" / "src").rglob("*.ts"))
     sources += sorted((ROOT / "web" / "src").rglob("*.tsx"))
 
@@ -289,15 +295,18 @@ def test_the_running_screen_can_actually_cancel() -> None:
     the poll handles the status it produces. Asserting only one of the three
     is how a working-looking Cancel came to do nothing for so long.
     """
-    app_js = (ROOT / "ui" / "app.js").read_text(encoding="utf-8")
     server = (ROOT / "kpi_maker" / "api" / "server.py").read_text(encoding="utf-8")
+    client = (ROOT / "web" / "src" / "lib" / "api.ts").read_text(encoding="utf-8")
+    running = (ROOT / "web" / "src" / "views" / "Running.tsx").read_text(encoding="utf-8")
+    run_view = (ROOT / "web" / "src" / "views" / "RunView.tsx").read_text(encoding="utf-8")
 
-    assert "/cancel`, { method: 'POST' }" in app_js, \
-        "the Cancel button does not call the cancel endpoint"
+    assert "/cancel`, { method: 'POST' }" in client, \
+        "the client does not call the cancel endpoint"
     assert '@app.post("/api/runs/{run_id}/cancel")' in server, \
         "there is no cancel endpoint to call"
-    assert "'cancelled'" in app_js, \
-        "the poll does not handle a cancelled run"
+    assert "cancelRun" in running, "the Cancel button does not call it"
+    assert "'cancelled'" in run_view, \
+        "the screen does not handle a cancelled run"
     assert 'status="cancelled"' in server, \
         "the server never reports a run as cancelled"
 
@@ -343,11 +352,12 @@ def test_the_history_drawer_can_resume_what_it_lists() -> None:
     working-looking button comes to do nothing — which is what `test_the_
     running_screen_can_actually_cancel` above exists to remember.
     """
-    app_js = (ROOT / "ui" / "app.js").read_text(encoding="utf-8")
     server = (ROOT / "kpi_maker" / "api" / "server.py").read_text(encoding="utf-8")
+    drawer = (ROOT / "web" / "src" / "components" / "HistoryDrawer.tsx").read_text(
+        encoding="utf-8")
 
-    assert "data-resume-run" in app_js, "the drawer offers no way to resume a run"
-    assert "r.resumable" in app_js, \
+    assert "data-resume-run" in drawer, "the drawer offers no way to resume a run"
+    assert "run.resumable" in drawer, \
         "the drawer offers Resume without checking the run can be resumed"
     assert '"resumable"' in server, "the server never says whether a run is resumable"
     assert '@app.post("/api/runs/{run_id}/rerun")' in server, \
@@ -416,35 +426,74 @@ def test_the_readme_counts_the_sector_packs_correctly() -> None:
             f"the status table says {stated} of 10; there are {n}")
 
 
-def test_the_rewrite_is_what_a_user_gets() -> None:
-    """The port reached parity, so the flag inverted: legacy is now the opt-in.
+def test_there_is_one_front_end() -> None:
+    """`ui/` is gone, and nothing may quietly reintroduce a second copy.
 
-    Every screen and every Studio flow is ported, so serving the old front end
-    by default would mean shipping the version nobody is developing. The
-    preview banner is gone with the list it enumerated — a test held it honest
-    while the list had entries, and this replaces it.
+    The Pages demo used to be built by copying `ui/app.js` and patching
+    `ui/index.html` by regex, which is why two front ends existed at all. Both
+    targets now come from `web/`, so the hosted demo and the local app cannot
+    drift — the property `static_shim.js` claimed in its header comment for a
+    year while a second copy sat next to it.
     """
+    assert not (ROOT / "ui").exists(), "the legacy front end is back"
+
     server = (ROOT / "kpi_maker" / "api" / "server.py").read_text(encoding="utf-8")
-    app = (ROOT / "web" / "src" / "app.tsx").read_text(encoding="utf-8")
+    assert "UI_DIR" not in server, "the server still references the deleted ui/"
 
-    assert 'SERVE_LEGACY_UI = os.environ.get("MASTERBI_UI") == "legacy"' in server, \
-        "the rewrite is not the default front end"
-    assert "if not SERVE_LEGACY_UI and UI_DIST_DIR.exists():" in server, \
-        "the server does not prefer the built bundle"
-    assert "Rewrite preview" not in app, \
-        "the preview banner outlived the list of things it said were missing"
+    builder = (ROOT / "tools" / "build_pages.py").read_text(encoding="utf-8")
+    assert "web/dist-pages" in builder or "dist-pages" in builder, \
+        "the Pages build no longer ships the Vite bundle"
+
+    package = json.loads((ROOT / "web" / "package.json").read_text(encoding="utf-8"))
+    assert "build:pages" in package["scripts"], \
+        "there is no Pages target to build the demo from"
 
 
-def test_the_legacy_front_end_is_kept_only_for_the_pages_demo() -> None:
-    """`ui/` cannot be deleted yet, and the reason has to stay written down.
+def test_the_pages_build_serves_deep_links() -> None:
+    """A shared run URL has to resolve on a host with no rewrite rule.
 
-    `tools/build_pages.py` reads `ui/index.html`, patches it, and ships
-    `app.js` behind `static_shim.js`; deleting the directory would take the
-    hosted demo with it. 1.2 builds the Pages bundle from `web/` instead, and
-    that is when `ui/` goes. Until then the smoke suite keeps testing both.
+    GitHub Pages answers an unknown path with 404.html, so that file has to be
+    the app shell. Without it every link into the demo except the root — which
+    is every link anyone would actually send — lands on a 404 page.
     """
     builder = (ROOT / "tools" / "build_pages.py").read_text(encoding="utf-8")
-    assert "UI_DIR" in builder, (
-        "build_pages.py no longer reads ui/ — if the Pages bundle now comes "
-        "from web/, delete ui/ and this test with it")
-    assert (ROOT / "ui" / "app.js").exists()
+    assert '"404.html"' in builder, \
+        "the Pages build writes no 404.html, so deep links 404"
+
+
+def test_artifact_urls_are_joined_not_concatenated() -> None:
+    """The download links have to work on both hosts, and they differ.
+
+    The server hands out `/files/<run>/report.pdf` and serves it from the root;
+    the frozen demo hands out `files/<run>/report.pdf` and supplies the site
+    root separately, because it lives under a repository sub-path. Adding the
+    two together produced `/MasterBIfiles/...` — a 404 on every download card
+    in the hosted demo, and invisible from the server, where the base is empty.
+    """
+    client = (ROOT / "web" / "src" / "lib" / "api.ts").read_text(encoding="utf-8")
+    results = (ROOT / "web" / "src" / "views" / "Results.tsx").read_text(encoding="utf-8")
+
+    assert "export function fileUrl" in client, "the join helper is gone"
+    assert "filesBase() +" not in results, \
+        "Results.tsx is concatenating a base and a path again"
+    assert results.count("fileUrl(") >= 2, \
+        "the dashboard link and the download cards must both use it"
+
+
+def test_the_shim_resolves_against_the_deployment_root() -> None:
+    """Deep links are served by 404.html from directories that do not exist.
+
+    `new URL('.', location.href)` on `/MasterBI/runs/abc` yields
+    `/MasterBI/runs/`, so the shim would look for its own assets and the frozen
+    JSON one directory too deep — on exactly the URLs people share. The build
+    stamps the real root in as `window.KPI_BASE`.
+    """
+    shim = (ROOT / "tools" / "static_shim.js").read_text(encoding="utf-8")
+    builder = (ROOT / "tools" / "build_pages.py").read_text(encoding="utf-8")
+
+    assert "window.KPI_BASE" in shim, "the shim ignores the deployment root"
+    # Resolved against the page: `new URL(rel, base)` rejects a base that is
+    # not absolute, and the stamped value is a root-relative path.
+    assert "new URL(window.KPI_BASE || '.', window.location.href)" in shim, \
+        "a root-relative base must be resolved before it is used as a URL base"
+    assert "window.KPI_BASE =" in builder, "the build stamps no deployment root"

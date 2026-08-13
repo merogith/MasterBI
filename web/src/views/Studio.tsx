@@ -3,7 +3,7 @@ import {
   getAiStatus, getSpec, listCatalogKpis, listTables, getOptions, putSpec, rerunRun,
   type AiStatus, type CatalogKpi, type CatalogOptions, type PlanReport, type Spec,
 } from '../lib/api';
-import { navigate } from '../lib/router';
+import { href, navigate } from '../lib/router';
 import {
   AiPanel, AnalysisPanel, CleanPanel, DesignPanel, KpiPanel, ModelPanel,
   OutputsPanel, SourcePanel,
@@ -110,7 +110,7 @@ export function Studio({ runId }: { runId: string }) {
   return (
     <section class="view" id="view-studio">
       <div class="view-head">
-        <a class="back" href={`/runs/${runId}`}
+        <a class="back" href={href(`/runs/${runId}`)}
            onClick={(e) => { e.preventDefault(); navigate(`/runs/${runId}`); }}>
           ← Results
         </a>

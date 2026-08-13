@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
 import { profileUpload, type UploadProfile } from '../lib/api';
-import { navigate } from '../lib/router';
+import { href, navigate } from '../lib/router';
 
 /* Bring your data.
  *
@@ -47,7 +47,7 @@ export function Builder() {
   return (
     <section class="view" id="view-builder">
       <div class="view-head">
-        <a class="back" href="/" onClick={(e) => { e.preventDefault(); navigate('/'); }}>
+        <a class="back" href={href('/')} onClick={(e) => { e.preventDefault(); navigate('/'); }}>
           ← Back
         </a>
         <h1>Bring your data</h1>

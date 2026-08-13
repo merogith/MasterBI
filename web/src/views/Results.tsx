@@ -1,6 +1,7 @@
-import { filesBase, type Summary } from '../lib/api';
+import { fileUrl, type Summary } from '../lib/api';
 import { fmtBytes, fmtValue, SEVERITY_LABEL, STATUS_GLYPH, STATUS_LABEL } from '../lib/format';
-import { navigate } from '../lib/router';
+import { href, navigate } from '../lib/router';
+import { useIsStatic } from '../lib/useStatic';
 
 function StatusChip({ status }: { status: string | null }) {
   const key = status ?? 'unknown';
@@ -12,6 +13,7 @@ function StatusChip({ status }: { status: string | null }) {
 }
 
 export function Results({ summary }: { summary: Summary }) {
+  const isStatic = useIsStatic();
   const currency = summary.currency ?? 'USD';
   const dashboard = summary.artifacts.find((a) => a.name === 'dashboard.html');
 
@@ -26,16 +28,23 @@ export function Results({ summary }: { summary: Summary }) {
           </p>
         </div>
         <div class="res-actions">
-          <a class="back" href="/" onClick={(e) => { e.preventDefault(); navigate('/'); }}>
+          <a class="back" href={href('/')} onClick={(e) => { e.preventDefault(); navigate('/'); }}>
             ← Home
           </a>
-          <button class="ghost" id="res-adjust"
+          {/* The frozen demo has no spec or catalog endpoints behind it, so
+              the Studio would open onto an error. Say why rather than
+              offering a button that leads nowhere — 1.2b freezes the
+              stand-ins and makes this a read-only Studio instead. */}
+          <button class="ghost" id="res-adjust" disabled={isStatic}
+                  title={isStatic
+                    ? 'Run the app locally to adjust this run'
+                    : undefined}
                   onClick={() => navigate(`/runs/${summary.run_id}/studio`)}>
             Adjust in Studio
           </button>
           {dashboard && (
             <a class="primary" id="res-open-dashboard" target="_blank" rel="noopener"
-               href={filesBase() + dashboard.url}>
+               href={fileUrl(dashboard.url)}>
               Open dashboard ↗
             </a>
           )}
@@ -72,7 +81,7 @@ export function Results({ summary }: { summary: Summary }) {
       <div class="download-grid" id="res-downloads">
         {summary.artifacts.map((artifact) => (
           <a class="dl-card" key={artifact.name} download
-             href={filesBase() + artifact.url}>
+             href={fileUrl(artifact.url)}>
             <span class="dl-kind">{artifact.kind}</span>
             <span class="dl-label">{artifact.label}</span>
             <span class="dl-blurb">{artifact.blurb}</span>

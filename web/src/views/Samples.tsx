@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { createRun, listSamples, type Sample } from '../lib/api';
-import { navigate } from '../lib/router';
+import { href, navigate } from '../lib/router';
 
 export function Samples() {
   const [samples, setSamples] = useState<Sample[] | null>(null);
@@ -27,7 +27,7 @@ export function Samples() {
   return (
     <section class="view" id="view-samples">
       <div class="view-head">
-        <a class="back" href="/" onClick={(e) => { e.preventDefault(); navigate('/'); }}>
+        <a class="back" href={href('/')} onClick={(e) => { e.preventDefault(); navigate('/'); }}>
           ← Back
         </a>
         <h1>Sample companies</h1>

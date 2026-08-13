@@ -15,6 +15,12 @@
  */
 import { useEffect, useState } from 'preact/hooks';
 
+/* Where this build is mounted. '' when FastAPI serves it from the domain root;
+   '/MasterBI' for the GitHub Pages build, which lives under a repository
+   sub-path. Every path the app deals with is written without it, and it is
+   added back only at the two edges — the URL bar, and an `href`. */
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
+
 export interface Match {
   readonly name: string;
   readonly params: Readonly<Record<string, string>>;
@@ -30,10 +36,21 @@ const ROUTES: ReadonlyArray<readonly [pattern: string, name: string]> = [
   ['/runs/:runId/studio', 'studio'],
 ];
 
-/** Trailing slashes are the same page; the root is the one exception. */
+/** Trailing slashes are the same page; the root is the one exception. The
+ *  mount point is stripped, so routes match the same in both builds. */
 function normalise(pathname: string): string {
-  const trimmed = pathname.replace(/\/+$/, '');
+  let path = pathname;
+  if (BASE && (path === BASE || path.startsWith(BASE + '/'))) {
+    path = path.slice(BASE.length);
+  }
+  const trimmed = path.replace(/\/+$/, '');
   return trimmed === '' ? '/' : trimmed;
+}
+
+/** An app path as the browser should see it. Use for every `href`, so
+ *  middle-click and copy-link produce a URL that actually resolves. */
+export function href(to: string): string {
+  return BASE + to;
 }
 
 function capture(pattern: string, path: string): Record<string, string> | null {
@@ -68,7 +85,7 @@ const listeners = new Set<() => void>();
 
 export function navigate(to: string, { replace = false } = {}): void {
   if (normalise(to) === normalise(location.pathname)) return;
-  history[replace ? 'replaceState' : 'pushState'](null, '', to);
+  history[replace ? 'replaceState' : 'pushState'](null, '', href(to));
   listeners.forEach((notify) => notify());
 }
 

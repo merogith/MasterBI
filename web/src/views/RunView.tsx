@@ -16,6 +16,15 @@ export function RunView({ runId }: { runId: string }) {
   const [cancelling, setCancelling] = useState(false);
   const timer = useRef<number | undefined>(undefined);
 
+  /* The hosted demo needs to know a pre-built run is on screen. Its ids exist
+     only in the frozen build, so switching to a newly-found local server would
+     404 on a page that looks fine; the shim offers the switch instead of
+     taking it. See `tools/static_shim.js`. */
+  useEffect(() => {
+    window.KPI_RUN_OPEN = true;
+    return () => { window.KPI_RUN_OPEN = false; };
+  }, []);
+
   useEffect(() => {
     let live = true;
     let wait = POLL_FIRST_MS;

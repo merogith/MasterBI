@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { HistoryDrawer } from './components/HistoryDrawer';
-import { navigate, useRoute } from './lib/router';
+import { href, navigate, useRoute } from './lib/router';
 import { Builder } from './views/Builder';
 import { Home } from './views/Home';
 import { RunView } from './views/RunView';
@@ -23,7 +23,7 @@ export function App() {
   return (
     <>
       <header class="topbar">
-        <a class="brand" href="/" onClick={(e) => { e.preventDefault(); navigate('/'); }}>
+        <a class="brand" href={href('/')} onClick={(e) => { e.preventDefault(); navigate('/'); }}>
           <span class="brand-mark" aria-hidden="true" />
           <span class="brand-name">KPI Dashboard Maker</span>
         </a>
