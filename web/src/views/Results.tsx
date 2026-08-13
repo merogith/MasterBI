@@ -31,16 +31,11 @@ export function Results({ summary }: { summary: Summary }) {
           <a class="back" href={href('/')} onClick={(e) => { e.preventDefault(); navigate('/'); }}>
             ← Home
           </a>
-          {/* The frozen demo has no spec or catalog endpoints behind it, so
-              the Studio would open onto an error. Say why rather than
-              offering a button that leads nowhere — 1.2b freezes the
-              stand-ins and makes this a read-only Studio instead. */}
-          <button class="ghost" id="res-adjust" disabled={isStatic}
-                  title={isStatic
-                    ? 'Run the app locally to adjust this run'
-                    : undefined}
+          {/* Reachable on the demo too: the Studio opens read-only there,
+              showing what the run was built from. */}
+          <button class="ghost" id="res-adjust"
                   onClick={() => navigate(`/runs/${summary.run_id}/studio`)}>
-            Adjust in Studio
+            {isStatic ? 'Inspect in Studio' : 'Adjust in Studio'}
           </button>
           {dashboard && (
             <a class="primary" id="res-open-dashboard" target="_blank" rel="noopener"

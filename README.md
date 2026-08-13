@@ -78,10 +78,12 @@ Results open in a workspace with five tabs: Overview (findings), Dashboard
 
 | | Nothing running locally | Local server running |
 |---|---|---|
-| Three sample companies | yes, pre-rendered | yes |
+| Four sample companies | yes, pre-rendered | yes |
+| The Studio | read-only — every panel shows what the run was built from | fully editable |
 | Build your own · Bring your data · Surprise me | explained, not offered | yes |
 | Where runs are stored | nowhere — read only | your `runs/` folder |
 | Past runs | — | Recent runs, across restarts |
+| Shared links | every screen and run has one | same |
 
 The page probes `127.0.0.1` on ports 8000, 8001 and 8080 at startup. Finding a
 server, it proxies every call there and the header pill turns green; finding
@@ -115,19 +117,30 @@ npm --prefix web ci && npm --prefix web run build:pages
 
 ## Deploy a live instance
 
-`render.yaml` is a Render blueprint. Connect the repo once (render.com → New →
-Blueprint → `merogith/MasterBI` → Apply) and every push to `main` redeploys
-automatically. It serves the same FastAPI app, so the hosted URL behaves
-exactly like `serve` does locally.
+`render.yaml` is a Render blueprint pointing at the `Dockerfile`. Connect the
+repo once (render.com → New → Blueprint → `merogith/MasterBI` → Apply) and every
+push to `main` redeploys automatically. It serves the same FastAPI app, so the
+hosted URL behaves exactly like `serve` does locally.
+
+It is a Docker service rather than Render's native Python runtime for one
+reason: the front end is compiled. `web/` builds to `kpi_maker/ui_dist/`, which
+is a build artifact and not committed, so a `pip install` build deployed a
+server with nothing behind it — `/` answered 500. The Dockerfile builds the
+front end in a stage of its own, and CI builds the same image on every push, so
+that path is exercised rather than assumed.
 
 Two free-tier facts worth knowing: the service sleeps after 15 minutes idle
 (~30s to wake), and the disk is ephemeral — `runs/` is wiped on each deploy, so
 past runs vanish. Both are fine for testing; neither is acceptable for
 production storage.
 
-The equivalent command by hand, on any host:
+The equivalent by hand, on any host:
 
 ```bash
+docker build -t masterbi . && docker run -p 8000:8000 masterbi
+
+# or, without Docker — the build step is not optional
+npm --prefix web ci && npm --prefix web run build
 uvicorn kpi_maker.api.server:app --host 0.0.0.0 --port $PORT
 ```
 

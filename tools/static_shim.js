@@ -99,6 +99,19 @@
       return Promise.resolve(json({ status: 'idle' }));
     }
 
+    if (path === '/api/catalog/options') return prebuilt('data/catalog/options.json');
+    if (path === '/api/catalog/kpis')    return prebuilt('data/catalog/kpis.json');
+    if (path === '/api/ai/status')       return prebuilt('data/ai/status.json');
+
+    const spec = path.match(/^\/api\/runs\/([^/]+)\/spec$/);
+    // GET only. A PUT would be the user editing a run this host cannot re-run,
+    // and the Studio does not offer it here — but say why rather than 404 if
+    // something ever tries.
+    if (spec && method === 'GET') return prebuilt(`data/runs/${spec[1]}/spec.json`);
+    if (spec) {
+      return Promise.resolve(fail('Changing a run means re-running it. ' + OFFLINE_NOTE));
+    }
+
     const table = path.match(/^\/api\/runs\/([^/]+)\/table\/([^/]+)$/);
     if (table) return prebuilt(`data/runs/${table[1]}/table/${table[2]}.json`);
 

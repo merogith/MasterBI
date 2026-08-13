@@ -4,6 +4,7 @@ import {
   type AiStatus, type CatalogKpi, type CatalogOptions, type PlanReport, type Spec,
 } from '../lib/api';
 import { href, navigate } from '../lib/router';
+import { useIsStatic } from '../lib/useStatic';
 import {
   AiPanel, AnalysisPanel, CleanPanel, DesignPanel, KpiPanel, ModelPanel,
   OutputsPanel, SourcePanel,
@@ -30,6 +31,9 @@ export function Studio({ runId }: { runId: string }) {
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stage, setStage] = useState<string>('source');
+  // The hosted demo can show a run's spec but never re-run it, so the
+  // Studio opens read-only there rather than not opening at all.
+  const readOnly = useIsStatic();
   const timer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
@@ -130,7 +134,21 @@ export function Studio({ runId }: { runId: string }) {
         </aside>
 
         <div class="studio-panels">
-          <div class="studio-panel active" data-panel={stage}>
+          {readOnly && (
+            <div class="notice" role="status">
+              <strong>Read-only.</strong> This is a pre-built run on the hosted
+              demo — every panel shows what it was actually built from, and
+              nothing here can be changed, because changing it means re-running
+              the pipeline. Start the app on your own machine and this page
+              connects to it; then all of this becomes editable.
+            </div>
+          )}
+          {/* One `disabled` fieldset rather than a prop threaded through eight
+              panels: it disables every control inside it, so a panel cannot
+              forget to honour it — and a control added later is covered the
+              day it lands. */}
+          <fieldset class="studio-panel active" data-panel={stage}
+                    disabled={readOnly}>
             {stage === 'source' && <SourcePanel {...shared} />}
             {stage === 'clean' && <CleanPanel {...shared} />}
             {stage === 'model' && <ModelPanel {...shared} />}
@@ -140,7 +158,7 @@ export function Studio({ runId }: { runId: string }) {
             {stage === 'outputs' && <OutputsPanel {...shared} />}
             {stage === 'ai' && <AiPanel {...shared} status={ai} runId={runId}
                                        onApplied={reload} />}
-          </div>
+          </fieldset>
         </div>
       </div>
 
@@ -151,7 +169,8 @@ export function Studio({ runId }: { runId: string }) {
             : checking
               ? 'Checking…'
               : plan === null
-                ? 'No changes yet.'
+                ? (readOnly ? 'Showing what this run was built from.'
+                            : 'No changes yet.')
                 : dirty.length === 0
                   ? 'Everything is up to date.'
                   : (
@@ -163,10 +182,12 @@ export function Studio({ runId }: { runId: string }) {
                   )}
         </div>
         <div>
-          <button class="ghost" id="studio-revert" onClick={revert}>
+          <button class="ghost" id="studio-revert" disabled={readOnly}
+                  onClick={revert}>
             Revert changes
           </button>
-          <button class="primary" id="studio-rerun" disabled={dirty.length === 0}
+          <button class="primary" id="studio-rerun"
+                  disabled={readOnly || dirty.length === 0}
                   onClick={() => void rerun()}>
             Re-run
           </button>

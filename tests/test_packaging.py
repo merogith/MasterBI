@@ -602,3 +602,62 @@ def test_the_shipped_series_are_no_less_visible_than_they_are_today() -> None:
     )
     assert worst >= 2.74, (
         f"a chart series became less visible than it was ({worst:.2f}:1)")
+
+
+def test_the_demo_freezes_what_the_studio_needs() -> None:
+    """The Studio is reachable on the hosted demo, so it has to work there.
+
+    `/runs/:id/studio` is a real route: a visitor gets to it from the results
+    screen, and before these stand-ins existed it opened onto an error. Four
+    endpoints back that screen and every one has to be frozen at build time —
+    the shim answers from files, and a missing file is a 404 in front of a
+    visitor rather than a failure here.
+    """
+    builder = (ROOT / "tools" / "build_pages.py").read_text(encoding="utf-8")
+    shim = (ROOT / "tools" / "static_shim.js").read_text(encoding="utf-8")
+
+    for frozen in ("catalog/options.json", "catalog/kpis.json", "ai/status.json"):
+        stem = frozen.rsplit(".", 1)[0]
+        assert stem.replace("/", '" / "') in builder or frozen in builder, (
+            f"build_pages.py does not freeze {frozen}")
+        assert f"data/{frozen}" in shim, f"the shim has no stand-in for {frozen}"
+
+    assert '"spec.json"' in builder, "build_pages.py freezes no run spec"
+    assert "data/runs/${spec[1]}/spec.json" in shim, \
+        "the shim cannot answer a spec request"
+
+
+def test_the_demos_studio_cannot_be_edited() -> None:
+    """Read-only, and enforced structurally rather than per control.
+
+    A static host cannot re-run a pipeline, so an editable Studio there would
+    collect changes it can never apply. One `disabled` fieldset covers every
+    control including ones added later; a prop threaded through eight panels
+    would be forgotten by the ninth.
+    """
+    studio = (ROOT / "web" / "src" / "views" / "Studio.tsx").read_text(encoding="utf-8")
+
+    assert "useIsStatic" in studio, "the Studio does not know it is on the demo"
+    assert "disabled={readOnly}" in studio, \
+        "the panels are not disabled where nothing can be re-run"
+    assert "disabled={readOnly || dirty.length === 0}" in studio, \
+        "Re-run is offered where there is nothing to re-run with"
+
+
+def test_the_deploy_builds_the_front_end_it_serves() -> None:
+    """`render.yaml` shipped a server with nothing behind it.
+
+    `kpi_maker/ui_dist/` is a build artifact and not committed, so a
+    `pip install` build produced a deploy whose `/` answered 500. The image
+    builds the front end in a stage of its own, and CI builds the image.
+    """
+    render = (ROOT / "render.yaml").read_text(encoding="utf-8")
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert "runtime: docker" in render, \
+        "the blueprint is back to a runtime that cannot build the front end"
+    assert "npm --prefix web run build" in dockerfile, \
+        "the image does not build the front end"
+    assert "ui_dist" in dockerfile, "the image never copies the built bundle in"
+    assert "docker build" in ci, "nothing builds the deployable image"

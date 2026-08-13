@@ -146,6 +146,35 @@ jobs:
         # either a browser or Node.
         run: python -m pytest tests/test_smoke_ui.py -q -p no:cacheprovider
 
+  image:
+    # The deploy path, built rather than assumed. `render.yaml` points at this
+    # Dockerfile, and the thing it exists to prevent — a server shipped with no
+    # front end behind it, answering 500 at `/` — is invisible until someone
+    # opens the hosted URL. Building here catches it at the push instead.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the deployable image
+        run: docker build -t masterbi:ci .
+
+      - name: It serves the front end it was built with
+        run: |
+          set -e
+          docker run -d --name masterbi -p 8000:8000 masterbi:ci
+          for _ in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8000/api/health >/dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8000/api/health
+          # The bundle, not the "no front end" 500 that a pip-only build gave.
+          curl -fsS http://127.0.0.1:8000/ | grep -q 'type="module"' \
+            || { echo "the image serves no front end"; docker logs masterbi; exit 1; }
+          # Client-side routes have to reach the shell, same as locally.
+          curl -fsS http://127.0.0.1:8000/samples | grep -q 'type="module"' \
+            || { echo "deep links do not resolve"; exit 1; }
+          docker rm -f masterbi
+
   artifacts:
     # The end-to-end check: does a run still produce all nine deliverables?
     # Separate from `test` because it is the slowest job and because a failure

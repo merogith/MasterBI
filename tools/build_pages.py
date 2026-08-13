@@ -62,6 +62,22 @@ def build(out_dir: Path) -> int:
     write_json(site / "data" / "samples.json", api.list_samples())
     write_json(site / "data" / "survey.json", api.get_survey())
 
+    # What the Studio needs to render. Without these the most differentiated
+    # screen in the product 404s for everyone who clicks the public link — it
+    # was reachable and broken, so the button had to be disabled. Frozen here,
+    # it opens read-only instead.
+    write_json(site / "data" / "catalog" / "options.json", api.catalog_options())
+    write_json(site / "data" / "catalog" / "kpis.json", api.list_kpis())
+    # Not the build machine's AI status: CI may hold a key, and a demo that
+    # advertised a working planner it cannot run would be the same lie in a new
+    # place. The static site can never call a model, so it says so.
+    write_json(site / "data" / "ai" / "status.json", {
+        "available": False,
+        "reason": "The hosted demo cannot call a model. Run the app locally "
+                  "with an API key to use the planner and the narrator.",
+        "narratable_sections": [],
+    })
+
     index: List[Dict[str, Any]] = []
 
     for entry in gallery:
@@ -83,6 +99,11 @@ def build(out_dir: Path) -> int:
         for table in tables:
             table["url"] = relativise(table["url"])
         write_json(site / "data" / "runs" / run_id / "tables.json", tables)
+
+        # The spec that produced this run, so the Studio can show what it was
+        # built from even where nothing can be changed.
+        write_json(site / "data" / "runs" / run_id / "spec.json",
+                   api.get_spec(run_id))
 
         for table in tables:
             write_json(site / "data" / "runs" / run_id / "table" / f"{table['name']}.json",
