@@ -32,7 +32,15 @@ TOKENS: Dict[str, Dict[str, str]] = {
         "border": "rgba(11,11,11,0.10)",
         "series_1": "#2a78d6",
         "series_2": "#eb6834",
-        "series_3": "#1baf7a",
+        # Darkened from #1baf7a, which sat at 2.74:1 against the surface —
+        # below the 3:1 graphical floor `design/palette.derive_tokens` imposes
+        # on a *user's* brand colour. That floor was only ever applied to slot
+        # 1, so the shipped companions were never held to it: a user supplying
+        # the old green would have had it moved with "too close to the page to
+        # see as a line" while this one stayed. Produced by `ensure_readable`
+        # itself, so the correction is the same one a user would get. 3.03:1,
+        # same hue, and ΔE separation from the other two is unchanged.
+        "series_3": "#1aa674",
         "deemphasis": "#c3c2b7",
         "good": "#0ca30c",
         "warning": "#fab219",

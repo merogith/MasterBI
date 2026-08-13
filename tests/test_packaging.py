@@ -541,15 +541,19 @@ def test_the_stylesheet_does_not_redefine_engine_tokens() -> None:
 
 
 def test_the_shipped_palette_meets_its_own_thresholds() -> None:
-    """The palette the app and the charts share, checked with the engine's own
-    validator rather than a second copy of the maths.
+    """The palette holds itself to the bar it holds users to.
 
-    Scoped to what `derive_tokens` actually enforces. It applies the graphical
-    floor to slot 1 — the brand colour a user supplies — and ΔE separation to
-    the companions it chooses; it takes the shipped `series_2` and `series_3`
-    as given. Asserting a bar the engine never claimed would be inventing a
-    contract, so this asserts the real one. The gap that leaves is measured in
-    the next test rather than ignored.
+    Checked with the engine's own validator rather than a second copy of the
+    maths — a second one would eventually disagree with the one gating user
+    input, and then a brand colour would be refused for failing a bar the
+    shipped palette quietly did not clear.
+
+    Which is not hypothetical: `series_3` was `#1baf7a` at 2.74:1, below the
+    3:1 floor `derive_tokens` imposes on a user's brand colour. The floor was
+    applied to slot 1 only, so the shipped companions were never held to it.
+    It has since been darkened by `ensure_readable` — the same correction a
+    user would have got — so every slot can now be asserted, which is what
+    makes this test worth having rather than a restatement of the status quo.
     """
     from kpi_maker.design.contrast import (
         AA_TEXT,
@@ -568,40 +572,17 @@ def test_the_shipped_palette_meets_its_own_thresholds() -> None:
         assert ratio(tokens["text_secondary"], page) >= AA_TEXT, (
             f"{mode}: secondary text fails AA against the page")
 
-        assert ratio(tokens["series_1"], surface) >= GRAPHICAL, (
-            f"{mode}: series_1 is below the floor the derivation enforces on a "
-            "user's own brand colour")
+        series = [tokens[f"series_{i}"] for i in range(1, MAX_CATEGORICAL_SERIES + 1)]
+        for index, colour in enumerate(series, start=1):
+            assert ratio(colour, surface) >= GRAPHICAL, (
+                f"{mode}: series_{index} is below the floor a user's own brand "
+                f"colour would be corrected to meet ({ratio(colour, surface):.2f}:1)")
 
         # Including under colour vision deficiency, which is what
         # `distinguishable` simulates — three categorical series separated only
         # by hue are three series a deuteranope reads as one.
-        series = [tokens[f"series_{i}"] for i in range(1, MAX_CATEGORICAL_SERIES + 1)]
         report = distinguishable(series, MIN_DELTA_E)
         assert report["ok"], f"{mode}: series are not distinguishable — {report}"
-
-
-def test_the_shipped_series_are_no_less_visible_than_they_are_today() -> None:
-    """A measured floor, not an aspiration — and a gap written down.
-
-    `series_3` in light mode is `#1baf7a` at **2.74:1** against the surface,
-    below the 3:1 graphical floor `derive_tokens` imposes on a user's brand
-    colour. A user supplying that green would have it moved with the note "too
-    close to the page to see as a line"; the shipped one is not. That is a real
-    inconsistency and this test does not pretend otherwise — it pins the
-    current values so they cannot quietly get worse while the question of
-    whether to move slot 3 is decided. Raising the bound is the fix; lowering
-    it needs a reason.
-    """
-    from kpi_maker.design.contrast import ratio
-    from kpi_maker.viz.theme import MAX_CATEGORICAL_SERIES, TOKENS
-
-    worst = min(
-        ratio(tokens[f"series_{i}"], tokens["surface"])
-        for tokens in TOKENS.values()
-        for i in range(1, MAX_CATEGORICAL_SERIES + 1)
-    )
-    assert worst >= 2.74, (
-        f"a chart series became less visible than it was ({worst:.2f}:1)")
 
 
 def test_the_demo_freezes_what_the_studio_needs() -> None:

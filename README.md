@@ -23,7 +23,7 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 | Synthetic data + reconciliation gate | `kpi_maker/datagen/` | done — SaaS |
 | Metrics engine + facts table | `kpi_maker/metrics/` | done — 24 implemented |
 | Deterministic insight detectors | `kpi_maker/insight/` | done — 8 detectors |
-| Charts (validated palette) | `kpi_maker/viz/` | done — 9 forms, light + dark |
+| Charts (validated palette) | `kpi_maker/viz/` | done — 9 forms, light + dark, every series ≥ 3:1 |
 | Dashboard / workbook / CSV | `kpi_maker/render/` | done |
 | PDF report / PPTX deck / DOCX | `kpi_maker/render/` | done — M1 |
 | Survey + benchmark priors | `kpi_maker/survey/` | done — M3/M4 (SaaS) |
