@@ -15,7 +15,7 @@ audience are judgements about intent, and no export contains them.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 

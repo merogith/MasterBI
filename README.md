@@ -15,7 +15,7 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 | Profile schema + cross-block validation | `kpi_maker/profile/` | done |
 | RunSpec contract + staged, cacheable pipeline | `kpi_maker/spec/`, `kpi_maker/pipeline/` | done |
 | Formula engine (KPIs + calculated columns) | `kpi_maker/formula/`, `kpi_maker/prep/` | done |
-| Studio — adjust any stage, re-run what changed | `ui/` | done |
+| Studio — adjust any stage, re-run what changed | `web/` | done |
 | Two-tier reconciliation gate + pandera contract | `kpi_maker/contract/` | done |
 | Cleaning ops + lineage log | `kpi_maker/prep/` | done — 19 ops |
 | Real-data ingestion (5 shapes) | `kpi_maker/ingest/` | done |
@@ -27,11 +27,12 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 | Dashboard / workbook / CSV | `kpi_maker/render/` | done |
 | PDF report / PPTX deck / DOCX | `kpi_maker/render/` | done — M1 |
 | Survey + benchmark priors | `kpi_maker/survey/` | done — M3/M4 (SaaS) |
-| Sample gallery (Mode 1) | `samples/` | done — M5, 3 companies |
+| Sample gallery (Mode 1) | `samples/` | done — M5, 4 companies |
 | HTTP API | `kpi_maker/api/` | done |
-| Web UI | `ui/` | done — M8 (vanilla JS, no build step) |
-| More sectors (M2) | — | not started |
-| AI Builder (M7) | — | not started |
+| Web UI | `web/` | done — M8 (Vite + TypeScript + Preact, URL routing) |
+| Cross-sector fallback pack | `kpi_maker/kpi/library/general.yaml` | done — 19 KPIs, every sector runs |
+| More sectors (M2) | `kpi_maker/datagen/`, `kpi_maker/kpi/library/` | partial — 2 of 10 have their own archetype and pack; the other 8 run on the nearest archetype and the cross-sector pack, and say so |
+| AI Builder (M7) | `kpi_maker/ai/` | partial — planner, narrator and the number check ship; the conversational front door does not |
 
 ## Run it
 
@@ -41,7 +42,7 @@ the dependencies, starts the server and opens your browser — and on a network
 that intercepts TLS it retries pip with the trusted-host flags rather than
 dying on a certificate error. Only the first run is slow.
 
-Needs Python 3.9 or newer. If it is missing, the launcher says so and where to
+Needs Python 3.11 or newer. If it is missing, the launcher says so and where to
 get it.
 
 <details>
@@ -63,8 +64,8 @@ Three modes on the home screen:
 
 | Mode | State | Cost |
 |---|---|---|
-| **1 · Try a sample** | Working — 3 curated companies | Free |
-| **2 · Build your own** | Working — 14-question survey | Free |
+| **1 · Try a sample** | Working — 4 curated companies | Free |
+| **2 · Build your own** | Working — 14 core questions, 5 optional | Free |
 | **3 · Bring your data** | Working — read, profile, clean, map, run | Free |
 | **Surprise me** | Working — random self-consistent company | Free |
 
@@ -77,10 +78,12 @@ Results open in a workspace with five tabs: Overview (findings), Dashboard
 
 | | Nothing running locally | Local server running |
 |---|---|---|
-| Three sample companies | yes, pre-rendered | yes |
+| Four sample companies | yes, pre-rendered | yes |
+| The Studio | read-only — every panel shows what the run was built from | fully editable |
 | Build your own · Bring your data · Surprise me | explained, not offered | yes |
 | Where runs are stored | nowhere — read only | your `runs/` folder |
 | Past runs | — | Recent runs, across restarts |
+| Shared links | every screen and run has one | same |
 
 The page probes `127.0.0.1` on ports 8000, 8001 and 8080 at startup. Finding a
 server, it proxies every call there and the header pill turns green; finding
@@ -94,9 +97,10 @@ front end, the user's own machine is the engine, and their data never leaves it.
 Three constraints shaped the design:
 
 - **One front end.** `tools/static_shim.js` patches `fetch` rather than forking
-  the UI, so `ui/app.js` is byte-identical in all three contexts. A hosted copy
-  and a local copy would have drifted within a release.
-- **Detection never blocks.** `app.js` loads immediately and the probe catches
+  the UI, so the same `web/` source serves all three contexts — the demo build
+  differs only in its base path. A hosted copy and a local copy would have
+  drifted within a release.
+- **Detection never blocks.** The app renders immediately and the probe catches
   up behind it. Blocking on it cost 6s of dead page whenever nobody was running
   anything locally, which is the common case.
 - **No silent switching mid-session.** A pre-built run's id exists only in the
@@ -107,24 +111,36 @@ Three constraints shaped the design:
 Build it locally exactly as CI does:
 
 ```bash
+npm --prefix web ci && npm --prefix web run build:pages
 ./.venv/Scripts/python.exe -m tools.build_pages --out site
 ```
 
 ## Deploy a live instance
 
-`render.yaml` is a Render blueprint. Connect the repo once (render.com → New →
-Blueprint → `merogith/MasterBI` → Apply) and every push to `main` redeploys
-automatically. It serves the same FastAPI app, so the hosted URL behaves
-exactly like `serve` does locally.
+`render.yaml` is a Render blueprint pointing at the `Dockerfile`. Connect the
+repo once (render.com → New → Blueprint → `merogith/MasterBI` → Apply) and every
+push to `main` redeploys automatically. It serves the same FastAPI app, so the
+hosted URL behaves exactly like `serve` does locally.
+
+It is a Docker service rather than Render's native Python runtime for one
+reason: the front end is compiled. `web/` builds to `kpi_maker/ui_dist/`, which
+is a build artifact and not committed, so a `pip install` build deployed a
+server with nothing behind it — `/` answered 500. The Dockerfile builds the
+front end in a stage of its own, and CI builds the same image on every push, so
+that path is exercised rather than assumed.
 
 Two free-tier facts worth knowing: the service sleeps after 15 minutes idle
 (~30s to wake), and the disk is ephemeral — `runs/` is wiped on each deploy, so
 past runs vanish. Both are fine for testing; neither is acceptable for
 production storage.
 
-The equivalent command by hand, on any host:
+The equivalent by hand, on any host:
 
 ```bash
+docker build -t masterbi . && docker run -p 8000:8000 masterbi
+
+# or, without Docker — the build step is not optional
+npm --prefix web ci && npm --prefix web run build
 uvicorn kpi_maker.api.server:app --host 0.0.0.0 --port $PORT
 ```
 
@@ -252,6 +268,46 @@ out/
   data/*.csv         six normalized fact tables
 ```
 
+## The front end
+
+`web/` is Vite, TypeScript and Preact, with real URL routing — every screen has
+an address and every run is a link you can send someone. It replaced a single
+2,000-line `app.js` with no build step and no URL for anything: every screen
+change flipped a `hidden` attribute, so Back left the app entirely.
+
+Every screen lives here — home,
+samples, survey, Bring-your-data, running, results, the history drawer and all
+eight Studio panels, including the flows inside them (adopting an upload, the
+cleaning-step and calculated-column editors, the add-a-KPI formula editor,
+per-KPI targets, the live brand preview, and the AI estimate and plan review).
+
+```bash
+npm --prefix web ci && npm --prefix web run build   # → kpi_maker/ui_dist/
+python -m uvicorn kpi_maker.api.server:app
+```
+
+There is one front end. The GitHub Pages demo is the same source built a second
+time — `npm --prefix web run build:pages` — differing only in its base, because
+the site is served from a repository sub-path rather than a domain root. Pages
+has no rewrite rule, so `tools/build_pages.py` also writes the shell as
+`404.html`; that is what makes a shared run URL resolve instead of 404.
+
+The colour tokens are **generated**, not restated: `web/src/tokens.css` comes
+from `kpi_maker/viz/theme.TOKENS` — the same palette the charts, the PDF and the
+deck are drawn with — via `python -m tools.gen_tokens`. CI fails on a stale copy,
+so the app chrome and the artifacts inside it cannot drift apart. `styles.css`
+keeps only what the engine has no opinion about: radii, shadows, chrome-only
+surfaces.
+
+Nothing at runtime needs Node: the build produces static files that FastAPI
+serves and that the packaged executable will bundle. `web/src/lib/api.ts`
+deliberately leaves API paths bare, because `tools/static_shim.js` replaces
+`window.fetch` on the hosted demo — only artifact `href`s resolve against
+`window.KPI_FILES_BASE`.
+
+Both front ends are graded by the same browser tests, which is what makes this
+a port rather than a second product.
+
 ## Testing
 
 ```bash
@@ -264,6 +320,28 @@ out/
 ./.venv/Scripts/python.exe -m tests.sector          # archetypes and the vacuity guard
 ./.venv/Scripts/python.exe -m tests.ai              # the AI layer, entirely offline
 ```
+
+All of them, plus the pytest-native suites, run under one command — this is
+what CI runs on every push:
+
+```bash
+python -m pytest -q
+```
+
+`tests/test_smoke_ui.py` is the only test that opens the product in a browser.
+It drives Chromium through the path that has to keep working — pick a sample,
+watch it run, land on results, edit the spec in the Studio, re-run it, then find
+and reopen the run in history — and fails on any uncaught JS error, which is
+otherwise reported nowhere. It needs a browser:
+
+```bash
+pip install playwright && python -m playwright install chromium
+```
+
+Without those it skips rather than fails, so the three-OS matrix does not need
+one. It runs the real server as a subprocess against a throwaway run directory,
+via `MASTERBI_RUNS_DIR` — the same environment override the desktop build uses
+to keep runs in a user data folder instead of beside the executable.
 
 `tests/ai.py` needs no API key and makes no network call — the client is
 swapped for a transcript player at one module seam. A gate nobody can run is
@@ -338,5 +416,8 @@ cannot pass the gate on an empty set.
 - `nps`, `employee_enps` and support metrics need survey/helpdesk feeds the
   generator does not fabricate, so they drop out at selection with a recorded
   reason instead of showing invented scores.
-- Only the SaaS pack exists. Adding a sector is a YAML file plus a generator
-  archetype (ROADMAP M2).
+- **Two sectors have their own KPI pack** — SaaS and e-commerce. The other
+  eight run on the cross-sector `general` pack and the nearest generator
+  archetype, and every run says so in its own output rather than presenting a
+  borrowed scorecard as a native one. Adding a sector is a YAML file plus a
+  generator archetype (ROADMAP M2).

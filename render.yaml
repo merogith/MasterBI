@@ -11,26 +11,28 @@
 # Free-tier caveats, both fine for testing:
 #   - The service sleeps after 15 min with no traffic; next request takes
 #     ~30s to wake it. Upgrade to Starter ($7/mo) to remove this.
-#   - Disk is ephemeral. `runs/` is wiped on every deploy and on wake from
+#   - Disk is ephemeral. Runs are wiped on every deploy and on wake from
 #     sleep, so past runs disappear. The app regenerates them on demand, so
-#     nothing breaks — but don't treat a hosted run as durable storage.
+#     nothing breaks — but don't treat a hosted run as durable storage. The
+#     container writes them to MASTERBI_RUNS_DIR, off the read-only source tree.
 
 services:
   - type: web
     name: masterbi
-    runtime: python
+    # Docker rather than the native Python runtime, because the app has a
+    # compiled front end. `web/` builds to `kpi_maker/ui_dist/`, which is a
+    # build artifact and not committed — a `pip install` build shipped a server
+    # with nothing to serve, answering 500 at `/`. A native runtime cannot fix
+    # that without assuming Node is present in an image nobody controls, so the
+    # Dockerfile states the requirement in two stages instead. CI builds the
+    # same file on every push, so this path is exercised rather than trusted.
+    runtime: docker
+    dockerfilePath: ./Dockerfile
     plan: free
     region: frankfurt
     branch: main
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    # $PORT is injected by Render. 0.0.0.0 is required — 127.0.0.1 would only
-    # be reachable from inside the container.
-    startCommand: uvicorn kpi_maker.api.server:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     envVars:
-      # 3.11 per requirements.txt ("3.11+ recommended for anything new").
-      - key: PYTHON_VERSION
-        value: "3.11.9"
       # Unbuffered stdout, so print() shows up in Render's live log tail.
       - key: PYTHONUNBUFFERED
         value: "1"

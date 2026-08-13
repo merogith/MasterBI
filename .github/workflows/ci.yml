@@ -1,0 +1,238 @@
+# Run the tests.
+#
+# Until this file existed, nothing did. `tests/` holds ~3,600 lines of
+# deliberately adversarial checks — the sandbox-escape suite, the vacuity
+# guard, the two-tier gate split, the warm-re-run-equals-cold-run equivalence —
+# and every one of them ran only when a human typed `python -m tests.<name>`.
+# The Pages workflow built the static gallery and greped for output files,
+# which catches a crash and nothing else.
+#
+# The matrix is three operating systems on purpose. The two portability
+# failures this project has actually hit were both platform-specific: kaleido's
+# native subprocess mangling non-ASCII paths on Windows, and Debian shipping
+# DejaVu without an Oblique face, which made fpdf2 raise "Undefined font"
+# rather than substituting. Neither is visible on one OS.
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install ruff mypy
+      - name: ruff
+        run: ruff check .
+      # `ruff format --check` is deliberately not run. It would reformat 79 of
+      # 95 files and rewrite 12,305 lines — the existing hand-formatting is
+      # consistent and the aligned comment blocks carry meaning. Adopting a
+      # formatter is a decision worth taking on its own, not a side effect of
+      # turning on CI.
+      - name: Generated design tokens are current
+        # `web/src/tokens.css` is derived from `kpi_maker/viz/theme.TOKENS`.
+        # The app chrome and the charts drawn inside it have to agree, and the
+        # only way that stays true is for a stale copy to fail here.
+        run: |
+          pip install -r requirements.txt
+          python -m tools.gen_tokens --check
+
+      - name: mypy
+        # Scoped to the spec, the KPI schema and the formula sandbox — the
+        # three places a type error is a correctness bug. Advisory for now:
+        # the engine predates any annotation discipline, and a wall of red on
+        # the first run would train everyone to ignore the job.
+        run: mypy || true
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # 3.13 is deliberately absent: `numpy<2` has no cp313 wheels, so pip
+        # builds it from source and the result crashes the interpreter on
+        # Windows. See the ceiling comment in pyproject.toml — this matrix
+        # tests what the project actually supports.
+        python: ['3.11', '3.12']
+    runs-on: ${{ matrix.os }}
+    # A hang is not a failure GitHub notices: the default job limit is six
+    # hours. Both Windows jobs on the two previous runs sat in the Test step
+    # for 22+ minutes and were only stopped because the next push cancelled
+    # them — which is how "Windows has never passed" went unnoticed while the
+    # runs looked merely cancelled. Ubuntu and macOS finish the suite in ~40s,
+    # so twelve minutes is generous even for a slow Windows runner.
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pypdf
+
+      - name: Test
+        # `faulthandler_timeout` in pyproject.toml turns a hang into a stack
+        # dump on stderr, which is the only way to find one on a runner you
+        # cannot attach to. `-p no:cacheprovider` keeps the runner's read-only
+        # checkout from being written to.
+        run: python -m pytest -q -p no:cacheprovider
+
+  smoke:
+    # The only test that opens the product in a browser. Everything else in
+    # `tests/` checks the engine, the API, or a string in a file, so until this
+    # job existed a front-end mistake failed in front of a user rather than in
+    # CI — which is how both bugs 0.7 shipped were found by hand instead.
+    #
+    # Ubuntu only, deliberately. It asserts that the front end and the server
+    # agree, and neither is platform-specific; this project's two real
+    # portability failures were kaleido's subprocess and a missing font face,
+    # both covered on three OSes by `test` and `artifacts`. Paying a browser
+    # download on macOS and Windows to re-run identical assertions is not worth
+    # the minutes.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest playwright
+
+      # Not in the step above: this fetches the browser binary and its system
+      # libraries, which `pip install playwright` does not.
+      - run: python -m playwright install --with-deps chromium
+
+      # `npm run build` runs `tsc --noEmit` first, so this type-checks the
+      # front end as well as producing the bundle the smoke test drives.
+      # Nothing else in CI requires Node, and nothing at runtime does either.
+      - name: Build the front end
+        run: |
+          npm --prefix web ci
+          npm --prefix web run build
+
+      - name: Browser smoke test
+        # Skipped rather than failed anywhere playwright or the bundle is
+        # absent, which is what keeps the three-OS `test` matrix from needing
+        # either a browser or Node.
+        run: python -m pytest tests/test_smoke_ui.py -q -p no:cacheprovider
+
+  image:
+    # The deploy path, built rather than assumed. `render.yaml` points at this
+    # Dockerfile, and the thing it exists to prevent — a server shipped with no
+    # front end behind it, answering 500 at `/` — is invisible until someone
+    # opens the hosted URL. Building here catches it at the push instead.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the deployable image
+        run: docker build -t masterbi:ci .
+
+      - name: It serves the front end it was built with
+        run: |
+          set -e
+          docker run -d --name masterbi -p 8000:8000 masterbi:ci
+          for _ in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8000/api/health >/dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8000/api/health
+          # The bundle, not the "no front end" 500 that a pip-only build gave.
+          curl -fsS http://127.0.0.1:8000/ | grep -q 'type="module"' \
+            || { echo "the image serves no front end"; docker logs masterbi; exit 1; }
+          # Client-side routes have to reach the shell, same as locally.
+          curl -fsS http://127.0.0.1:8000/samples | grep -q 'type="module"' \
+            || { echo "deep links do not resolve"; exit 1; }
+          docker rm -f masterbi
+
+  artifacts:
+    # The end-to-end check: does a run still produce all nine deliverables?
+    # Separate from `test` because it is the slowest job and because a failure
+    # here means something different — the suites pass on data the renderers
+    # then choke on.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Every sample produces every artifact
+        run: |
+          set -e
+          for profile in samples/*.json; do
+            name=$(basename "$profile" .json)
+            [ "$name" = "gallery" ] && continue
+            python -m kpi_maker run --profile "$profile" --out "out/$name" --quiet
+            for f in dashboard.html report.pdf deck.pptx report.docx \
+                     workbook.xlsx facts.csv findings.json profile.json kpi_set.json; do
+              test -s "out/$name/$f" || { echo "$name: missing or empty $f"; exit 1; }
+            done
+            # kaleido's static export is the fragile step and the one most
+            # likely to differ off Windows. Assert it actually ran.
+            count=$(ls "out/$name"/charts/*.png 2>/dev/null | wc -l)
+            test "$count" -gt 0 || { echo "$name: no chart PNGs — kaleido failed"; exit 1; }
+            echo "$name: 9 artifacts, $count charts"
+          done
+
+      - name: Every declared sector runs
+        # The check that would have caught eight of ten business models raising
+        # FileNotFoundError out of the selection engine.
+        run: |
+          python - <<'PY'
+          import json, sys
+          from pathlib import Path
+          from kpi_maker.profile.schema import BusinessModel, CompanyProfile
+          from kpi_maker.kpi.selection import select
+          from kpi_maker.spec.schema import RunSpec
+
+          base = json.loads(Path("samples/northwind_saas.json").read_text())
+          failed = []
+          for model in (m.value for m in BusinessModel):
+              raw = json.loads(json.dumps(base))
+              raw["business_model"]["type"] = model
+              try:
+                  profile = CompanyProfile(**raw)
+                  kpis = select(profile)
+                  assert len(kpis.kpis) >= 8, f"only {len(kpis.kpis)} KPIs"
+                  assert RunSpec.for_profile(profile).resolve_archetype()
+                  print(f"  {model:15s} ok — {len(kpis.kpis)} KPIs")
+              except Exception as exc:
+                  failed.append(f"{model}: {type(exc).__name__}: {exc}")
+                  print(f"  {model:15s} FAILED — {exc}")
+          sys.exit(1 if failed else 0)
+          PY

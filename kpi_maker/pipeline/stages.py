@@ -18,12 +18,13 @@ from typing import Any, Dict, List
 
 import pandas as pd
 
-from ..datagen import GENERATORS, available as _archetypes
+from ..datagen import GENERATORS
+from ..datagen import available as _archetypes
+from ..design.logo import load_logo
+from ..design.palette import derive_tokens
 from ..insight.detectors import detect_all
 from ..kpi.selection import select
 from ..metrics.engine import compute, facts_table
-from ..design.logo import load_logo
-from ..design.palette import derive_tokens
 from ..render.dashboard import render_dashboard
 from ..render.deck import render_deck
 from ..render.doc import render_doc
@@ -61,6 +62,14 @@ def _source(ctx) -> Any:
             f"No data generator for business model {archetype!r}. "
             f"Available: {', '.join(_archetypes())}."
         )
+    # A sector simulated by a neighbouring archetype produces figures that
+    # reconcile but are not a model of its economics. That belongs in the same
+    # place as every other caveat the run carries, not in a log line nobody
+    # reads.
+    note = ctx.spec.archetype_note()
+    if note is not None:
+        ctx.gate_warnings.append(note)
+        ctx.say(f"  WARNING   {note}")
     profile = ctx.get("resolve")
     # Seed and history live on the profile, so a spec override is applied by
     # handing the generator an adjusted copy rather than by threading two more
@@ -77,6 +86,7 @@ def _source(ctx) -> Any:
 def _source_from_uploads(ctx) -> Any:
     """Read the user's files instead of generating a company."""
     from pathlib import Path
+
     from ..ingest.pipeline import build_from_uploads
 
     uploads = ctx.spec.source.uploads
@@ -136,8 +146,9 @@ def _model(ctx) -> Dict[str, pd.DataFrame]:
         # Uploaded data meets the contract here, once it is canonical. Tier 1
         # still raises; Tier 2 becomes warnings the appendix reports.
         from ..ingest.pipeline import gate_uploaded
-        ctx.gate_warnings = gate_uploaded(tables, ctx.get("resolve"))
-        for warning in ctx.gate_warnings:
+        uploaded_warnings = gate_uploaded(tables, ctx.get("resolve"))
+        ctx.gate_warnings.extend(uploaded_warnings)
+        for warning in uploaded_warnings:
             ctx.say(f"  WARNING   {warning}")
 
     return tables
@@ -161,7 +172,7 @@ def _metrics(ctx) -> List[Any]:
        label="Detecting findings")
 def _analyse(ctx) -> List[Any]:
     return detect_all(ctx.get("metrics"), ctx.get("model"), ctx.get("resolve"),
-                      spec=ctx.spec.analysis)
+                      spec=ctx.spec.analysis, locale=ctx.spec.resolve_locale())
 
 
 @stage("narrate", needs=("analyse", "select", "metrics"),
@@ -197,9 +208,10 @@ def _narrate(ctx) -> Dict[str, Any]:
     # Imported here, not at module scope. The AI package is the only part of
     # the pipeline with an optional third-party dependency behind it, and a run
     # that never enables it should never touch the import.
-    from ..render.sections import SectionContext, build as build_sections
     from ..ai.meter import Meter
     from ..ai.narrator import narrate
+    from ..render.sections import SectionContext
+    from ..render.sections import build as build_sections
 
     section_ctx = SectionContext(
         profile=ctx.get("resolve"), kpi_set=ctx.get("select"),
@@ -217,7 +229,8 @@ def _narrate(ctx) -> Dict[str, Any]:
     try:
         narrative, meter = narrate(
             ctx.get("resolve"), ctx.get("metrics"), ctx.get("analyse"),
-            contents, ctx.period, spec=ai, meter=meter)
+            contents, ctx.period, spec=ai, meter=meter,
+            locale=ctx.spec.resolve_locale())
     except Exception as exc:                     # noqa: BLE001
         # The pipeline must ALWAYS produce a deliverable (ARCHITECTURE §5).
         # An unexpected failure in the one non-deterministic stage is exactly
@@ -247,6 +260,25 @@ def _logo(ctx):
         cached = load_logo(ctx.spec.design.brand.logo_path, ctx.uploads_dir)
         object.__setattr__(ctx, "_logo_cache", cached)
     return cached
+
+
+def _caveats(ctx) -> List[str]:
+    """Everything this run had to approximate, for the appendix.
+
+    Two sources, deliberately merged here rather than at either one: the source
+    stage records a sector simulated by a neighbouring archetype and a Tier 2
+    identity miss on uploaded data, while the selection engine records a
+    scorecard built on the cross-sector pack. A reader needs both or neither,
+    and every print renderer needs the same list.
+    """
+    notes = list(ctx.gate_warnings)
+    try:
+        rationale = ctx.get("select").rationale
+    except KeyError:
+        return notes
+    notes.extend(rationale[k] for k in sorted(rationale)
+                 if k.endswith("_warning") and rationale[k] not in notes)
+    return notes
 
 
 def _narration(ctx) -> Dict[str, Any]:
@@ -290,13 +322,14 @@ def _visualise(ctx) -> Dict[str, List[Any]]:
     results, tables = ctx.get("metrics"), ctx.get("model")
     currency = ctx.spec.resolve_currency()
     palette, design = _palettes(ctx), ctx.spec.design
+    locale = ctx.spec.resolve_locale()
     return {
         "light": build_all(results, tables, mode="light", currency=currency,
                            tokens=palette["light"], exhibits=design.exhibits,
-                           widths=design.exhibit_widths),
+                           widths=design.exhibit_widths, locale=locale),
         "dark": build_all(results, tables, mode="dark", currency=currency,
                           tokens=palette["dark"], exhibits=design.exhibits,
-                          widths=design.exhibit_widths),
+                          widths=design.exhibit_widths, locale=locale),
     }
 
 
@@ -327,6 +360,7 @@ def _dashboard(ctx):
             tokens_light=_palettes(ctx)["light"],
             tokens_dark=_palettes(ctx)["dark"], logo=_logo(ctx),
             narrative=_narration(ctx).get("sections"),
+            locale=ctx.spec.resolve_locale(),
         ),
         encoding="utf-8",
     )
@@ -358,7 +392,12 @@ def _report_pdf(ctx):
                   section_order=ctx.spec.design.sections, logo=_logo(ctx),
                   origins=ctx.origins,
                   narrative=_narration(ctx).get("sections"),
-                  ai_notes=_narration(ctx).get("notes"))
+                  ai_notes=_narration(ctx).get("notes"),
+                  caveats=_caveats(ctx),
+                  page_size=ctx.spec.resolve_page_size(),
+                  font_stack=ctx.spec.resolve_font_stack(),
+                  footer_text=ctx.spec.resolve_footer_text(),
+                  locale=ctx.spec.resolve_locale())
     return path
 
 
@@ -373,7 +412,11 @@ def _deck_pptx(ctx):
                 ctx.get("visualise")["light"], ctx.period,
                 tokens=_palettes(ctx)["light"],
                 section_order=ctx.spec.design.sections, logo=_logo(ctx),
-                narrative=_narration(ctx).get("sections"))
+                narrative=_narration(ctx).get("sections"),
+                caveats=_caveats(ctx),
+                font_stack=ctx.spec.resolve_font_stack(),
+                footer_text=ctx.spec.resolve_footer_text(),
+                locale=ctx.spec.resolve_locale())
     return path
 
 
@@ -391,7 +434,11 @@ def _doc_docx(ctx):
                section_order=ctx.spec.design.sections, logo=_logo(ctx),
                origins=ctx.origins,
                narrative=_narration(ctx).get("sections"),
-               ai_notes=_narration(ctx).get("notes"))
+               ai_notes=_narration(ctx).get("notes"),
+               caveats=_caveats(ctx),
+               font_stack=ctx.spec.resolve_font_stack(),
+               footer_text=ctx.spec.resolve_footer_text(),
+               locale=ctx.spec.resolve_locale())
     return path
 
 

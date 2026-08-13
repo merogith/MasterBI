@@ -22,7 +22,7 @@ from ..profile.schema import CompanyProfile
 # LTV/CAC ratio becomes fiction. See the `pitfalls` note on ltv_cac_ratio.
 LTV_HORIZON_MONTHS = 36
 
-_REGISTRY: Dict[str, Callable[["MetricContext"], Optional[pd.Series]]] = {}
+_REGISTRY: Dict[str, Callable[[MetricContext], Optional[pd.Series]]] = {}
 
 
 def metric(kpi_id: str):
@@ -592,6 +592,42 @@ def _last_valid(series: pd.Series, offset: int = 0) -> Optional[float]:
     return None if pd.isna(value) else float(value)
 
 
+def _year_ago(series: pd.Series) -> Optional[float]:
+    """The value twelve months before the latest one, by date not by position.
+
+    This was `series.iloc[-13]`, which is the same thing only when the index
+    has no gaps and the series does not end in nulls. Neither is guaranteed:
+    `current` comes from `_last_valid`, which skips trailing NaNs, so a series
+    whose final two months are empty compared a real `current` against a point
+    fourteen months before it and reported the gap as year-on-year change.
+
+    Uploaded data is where this bites — a month missing from the middle of a
+    export shifts every comparison before it by one.
+    """
+    s = series.dropna()
+    if s.empty:
+        return None
+
+    index = s.index
+    if isinstance(index, (pd.PeriodIndex, pd.DatetimeIndex)):
+        try:
+            # A PeriodIndex subtracts whole periods; a DatetimeIndex needs a
+            # calendar offset, so that Feb 29 lands on Feb 28 rather than 366
+            # days earlier.
+            target = (index[-1] - 12 if isinstance(index, pd.PeriodIndex)
+                      else index[-1] - pd.DateOffset(months=12))
+            value = s.get(target)
+        except (TypeError, ValueError):
+            value = None
+        if value is None or (hasattr(value, "__len__") and len(value) != 1):
+            return None
+        return None if pd.isna(value) else float(value)
+
+    # No date index to reason with — fall back to position, which is what the
+    # whole codebase assumed before this helper existed.
+    return float(s.iloc[-13]) if len(s) >= 13 and not pd.isna(s.iloc[-13]) else None
+
+
 class _Evaluator:
     """Computes a KPI's series, resolving formula references on demand.
 
@@ -609,7 +645,7 @@ class _Evaluator:
     computed quietly rather than erroring.
     """
 
-    def __init__(self, ctx: "MetricContext", universe: Dict[str, KPI]) -> None:
+    def __init__(self, ctx: MetricContext, universe: Dict[str, KPI]) -> None:
         self.ctx = ctx
         self.universe = universe
         self._cache: Dict[str, Optional[pd.Series]] = {}
@@ -744,7 +780,7 @@ def compute(kpi_set: KPISet, tables: Dict[str, pd.DataFrame],
         series = series.astype(float)
         current = _last_valid(series)
         prior_month = _last_valid(series, offset=1)
-        prior_year = float(series.iloc[-13]) if len(series) >= 13 and not pd.isna(series.iloc[-13]) else None
+        prior_year = _year_ago(series)
 
         used = evaluator.tables_used(kpi.id)
         results.append(MetricResult(

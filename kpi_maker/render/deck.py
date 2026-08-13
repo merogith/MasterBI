@@ -21,10 +21,13 @@ from ..insight.detectors import Finding
 from ..kpi.schema import KPISet
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
-from .sections import SectionContext, build as build_sections
 from ..viz.theme import TOKENS
+from .sections import SectionContext
+from .sections import build as build_sections
 
-FONT = "Segoe UI"
+# The default only. `brand.font_stack` overrides it per run — PPTX stores a
+# font name and lets PowerPoint resolve it, so there is no file to find.
+DEFAULT_FONT = "Segoe UI"
 
 SLIDE_W = Inches(13.333)
 SLIDE_H = Inches(7.5)
@@ -38,8 +41,14 @@ def _rgb(hex_color: str) -> RGBColor:
 
 class Deck:
     def __init__(self, profile: CompanyProfile,
-                 tokens: Optional[Dict[str, str]] = None):
+                 tokens: Optional[Dict[str, str]] = None,
+                 font: Optional[str] = None,
+                 footer_text: Optional[str] = None,
+                 locale: Optional[str] = None):
         self.t = dict(tokens or TOKENS["light"])
+        self.font = font or DEFAULT_FONT
+        self.footer_text = footer_text
+        self.locale = locale
         self.logo = None
         self.prs = Presentation()
         self.prs.slide_width = SLIDE_W
@@ -79,7 +88,7 @@ class Deck:
         run.text = text
         run.font.size = Pt(size)
         run.font.bold = bold
-        run.font.name = FONT
+        run.font.name = self.font
         run.font.color.rgb = _rgb(self.t[color])
         return box
 
@@ -121,11 +130,13 @@ class Deck:
         if north:
             self._text(s, north.kpi.name.upper(), MARGIN, Inches(4.9),
                        Inches(8), Inches(0.3), size=10, color="muted")
-            self._text(s, fmt_value(north.current, north.kpi.unit, p.identity.currency),
+            self._text(s, fmt_value(north.current, north.kpi.unit,
+                                    p.identity.currency, locale=self.locale),
                        MARGIN, Inches(5.2), Inches(8), Inches(0.9), size=34,
                        bold=True, color="series_1")
-        self._footer(s, f"Prepared for the {p.intent.audience.value} · "
-                        f"benchmarks are illustrative — see appendix")
+        self._footer(s, self.footer_text or
+                     f"Prepared for the {p.intent.audience.value} · "
+                     f"benchmarks are illustrative — see appendix")
 
     def bullets_slide(self, message: str, items: List[str], kicker: str = ""):
         s = self._slide()
@@ -140,7 +151,7 @@ class Deck:
             run = p.add_run()
             run.text = item
             run.font.size = Pt(14)
-            run.font.name = FONT
+            run.font.name = self.font
             run.font.color.rgb = _rgb(self.t["text_secondary"])
             p.space_after = Pt(11)
         return s
@@ -186,7 +197,7 @@ class Deck:
             para = cell.text_frame.paragraphs[0]
             para.runs[0].font.size = Pt(10)
             para.runs[0].font.bold = True
-            para.runs[0].font.name = FONT
+            para.runs[0].font.name = self.font
             para.runs[0].font.color.rgb = _rgb(self.t["text_primary"])
 
         for r, row in enumerate(rows, start=1):
@@ -195,7 +206,7 @@ class Deck:
                 cell.text = str(val)
                 para = cell.text_frame.paragraphs[0]
                 para.runs[0].font.size = Pt(10)
-                para.runs[0].font.name = FONT
+                para.runs[0].font.name = self.font
                 para.runs[0].font.color.rgb = _rgb(
                     self.t["text_primary"] if c == 0 else self.t["text_secondary"])
         return s
@@ -250,9 +261,9 @@ def _scorecard_slide(deck: Deck, results: List[MetricResult], cur: str) -> None:
         f"{n_red} KPI{'' if n_red == 1 else 's'} off track, {n_amber} on watch",
         ["KPI", "Current", "12mo ago", "Target", "Status"],
         [[r.kpi.short_name or r.kpi.name,
-          fmt_value(r.current, r.kpi.unit, cur),
-          fmt_value(r.prior_year, r.kpi.unit, cur),
-          fmt_value(r.target, r.kpi.unit, cur),
+          fmt_value(r.current, r.kpi.unit, cur, locale=deck.locale),
+          fmt_value(r.prior_year, r.kpi.unit, cur, locale=deck.locale),
+          fmt_value(r.target, r.kpi.unit, cur, locale=deck.locale),
           STATUS_WORD.get(r.status, "—")] for r in top],
         kicker="Scorecard",
         col_widths=[0.36, 0.16, 0.16, 0.16, 0.16],
@@ -274,7 +285,8 @@ def _exhibit_slides(deck: Deck, kpi_set: KPISet, results: List[MetricResult],
     fallbacks: Dict[str, str] = {}
     north, growth = computed.get(kpi_set.north_star), computed.get("arr_growth_yoy")
     if north and north.current is not None:
-        headline = f"{north.kpi.name} reached {fmt_value(north.current, north.kpi.unit, cur)}"
+        headline = (f"{north.kpi.name} reached "
+                    f"{fmt_value(north.current, north.kpi.unit, cur, locale=deck.locale)}")
         if growth and growth.current is not None:
             headline += f", up {growth.current:.0%} year on year"
         fallbacks["arr_trend"] = headline
@@ -304,15 +316,21 @@ def render_deck(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                 tokens: Optional[Dict[str, str]] = None,
                 section_order: Optional[List[str]] = None,
                 logo=None,
-                narrative: Optional[Dict[str, List[str]]] = None) -> Path:
-    deck = Deck(profile, tokens)
+                narrative: Optional[Dict[str, List[str]]] = None,
+                caveats: Optional[List[str]] = None,
+                font_stack: Optional[List[str]] = None,
+                footer_text: Optional[str] = None,
+                locale: Optional[str] = None) -> Path:
+    deck = Deck(profile, tokens, font=(font_stack or [None])[0],
+                footer_text=footer_text, locale=locale)
     deck.logo = logo
     cur = profile.identity.currency
 
     ctx = SectionContext(
         profile=profile, kpi_set=kpi_set, results=results, findings=findings,
         images=images, specs=specs, period=period,
-        narrated=sorted(narrative or {}))
+        narrated=sorted(narrative or {}), caveats=list(caveats or []),
+        locale=locale)
     contents = build_sections(ctx, section_order, limits=DECK_LIMITS,
                               narrative=narrative)
     enabled = {c.id for c in contents}

@@ -180,6 +180,14 @@ class SectionContext:
     # Sentences from the AI layer about what it could not do: a dropped
     # narrative, a refusal, a missing key. Reported rather than swallowed.
     ai_notes: List[str] = field(default_factory=list)
+    # Caveats about the run itself: a sector simulated by a neighbouring
+    # archetype, a scorecard built on the cross-sector pack, a Tier 2 identity
+    # miss on uploaded data. These belong in the emailed PDF, not only in the
+    # console — a reader who cannot see them cannot weigh the numbers.
+    caveats: List[str] = field(default_factory=list)
+    # Separator convention for every number this report prints. `None` means
+    # English, which is what every call site did before the field existed.
+    locale: Optional[str] = None
 
     @property
     def currency(self) -> str:
@@ -190,7 +198,8 @@ class SectionContext:
         return [r for r in self.results if r.computed]
 
     def value(self, result: MetricResult, which: str = "current") -> str:
-        return fmt_value(getattr(result, which), result.kpi.unit, self.currency)
+        return fmt_value(getattr(result, which), result.kpi.unit, self.currency,
+                         locale=self.locale)
 
 
 # --------------------------------------------------------------------------
@@ -346,7 +355,7 @@ def _scorecard(ctx: SectionContext) -> SectionContent:
             rows.append([
                 k.short_name or k.name,
                 ctx.value(r), ctx.value(r, "prior_year"), ctx.value(r, "target"),
-                fmt_value(k.benchmark.p50, k.unit, ctx.currency) if k.benchmark else "—",
+                fmt_value(k.benchmark.p50, k.unit, ctx.currency, locale=ctx.locale) if k.benchmark else "—",
                 STATUS_WORD.get(r.status, "—"),
             ])
             tints.append(tint.get(r.status, "muted"))
@@ -435,9 +444,9 @@ def _benchmarks(ctx: SectionContext) -> SectionContent:
             continue
         rows.append([
             r.kpi.short_name or r.kpi.name, ctx.value(r),
-            fmt_value(b.p25, r.kpi.unit, ctx.currency),
-            fmt_value(b.p50, r.kpi.unit, ctx.currency),
-            fmt_value(b.p75, r.kpi.unit, ctx.currency),
+            fmt_value(b.p25, r.kpi.unit, ctx.currency, locale=ctx.locale),
+            fmt_value(b.p50, r.kpi.unit, ctx.currency, locale=ctx.locale),
+            fmt_value(b.p75, r.kpi.unit, ctx.currency, locale=ctx.locale),
             (r.benchmark_position or "—").replace("_", " "),
         ])
     if rows:
@@ -600,6 +609,17 @@ def _appendix(ctx: SectionContext) -> SectionContent:
         "this report is computed by deterministic code from the underlying "
         "fact tables; no number in this document was produced by a language "
         "model.")))
+
+    # Immediately after methodology, before anything reassuring. A caveat that
+    # changes how the whole report should be read cannot sit below sixty KPI
+    # definitions.
+    if ctx.caveats:
+        content.blocks.append(Block(
+            title="Scope and limitations",
+            intro="This run had to approximate part of its content. What "
+                  "follows is accurate for what was modelled; these are the "
+                  "limits of what that was.",
+            tinted=[(c, "serious") for c in ctx.caveats]))
 
     defaulted = [f"{path} — {src}" for path, src in sorted(p.provenance.items())
                  if src.startswith("benchmark_default")]

@@ -4,9 +4,10 @@ Importing this package registers every shipped generator, so `GENERATORS` is
 populated by the time anything asks. A new sector is a new module plus one
 line here — the pipeline does not change.
 """
-from .base import (GENERATORS, Anomaly, GeneratedData,  # noqa: F401
-                   available, generator)
-from . import ecommerce                                 # noqa: F401  (registers "ecommerce")
-from . import subscription                              # noqa: F401  (registers "saas")
+from . import (
+                   ecommerce,  # noqa: F401  (registers "ecommerce")
+                   subscription,  # noqa: F401  (registers "saas")
+)
+from .base import GENERATORS, Anomaly, GeneratedData, available, generator  # noqa: F401
 
 __all__ = ["GENERATORS", "Anomaly", "GeneratedData", "available", "generator"]

@@ -1,0 +1,119 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kpi-maker"
+version = "0.1.0"
+description = "Profile-driven KPI selection, synthetic data, dashboards and reports."
+readme = "README.md"
+# Floor 3.11: the code contorted for 3.9 — `typing.Optional` over PEP 604
+# unions, noted in spec/schema.py — and 3.9 is EOL-adjacent. The desktop build
+# bundles its own interpreter, so the floor costs nothing.
+#
+# Ceiling 3.13: `numpy<2` publishes no cp313 wheels at all (support starts at
+# numpy 2.1), so pip builds 1.26.4 from source there. CI caught what that
+# produces — a seven-minute install on Windows followed by a hard interpreter
+# crash on `import`, not a Python exception. Raising this ceiling means
+# migrating off `numpy<2`, which is a real compatibility exercise: the pin sits
+# with `pandas<2.3`, `plotly<6` and `kaleido==0.2.1`, which were chosen
+# together. Until then 3.13 is not a supported target and the matrix must not
+# claim otherwise.
+requires-python = ">=3.11,<3.13"
+
+# Kept in sync with requirements.txt by `test_requirements_match_pyproject`
+# in tests/test_packaging.py. Two files exist because the double-click
+# launchers pip-install from requirements.txt and must not need this one.
+dependencies = [
+    "pandas>=1.5,<2.3",
+    "numpy<2",
+    "pydantic>=2,<3",
+    "PyYAML>=6.0",
+    "plotly>=5.18,<6",
+    "kaleido==0.2.1",
+    "pandera>=0.20,<1",
+    "XlsxWriter>=3.1",
+    "openpyxl>=3.1",
+    "fpdf2>=2.7",
+    "python-pptx>=0.6.23",
+    "python-docx>=1.1",
+    "Jinja2>=3.1",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+ai = ["anthropic>=0.40"]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "pypdf>=4", "playwright>=1.40"]
+
+[project.scripts]
+kpi-maker = "kpi_maker.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["kpi_maker"]
+
+# The KPI library and the AI prompts are data the engine reads at runtime, not
+# importable modules — without this they are absent from a built wheel and the
+# selection engine raises `KPI pack not found` against an installed package.
+[tool.hatch.build.targets.wheel.force-include]
+"kpi_maker/kpi/library" = "kpi_maker/kpi/library"
+"kpi_maker/ai/prompts" = "kpi_maker/ai/prompts"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The harnesses are modules with side effects at import; only the adapter and
+# the packaging checks are collectable.
+python_files = ["test_*.py"]
+addopts = "-ra --strict-markers"
+# Dump every thread's stack for any test still running after two minutes.
+# Both Windows jobs on the two previous CI runs sat in the Test step for 22+
+# minutes and were only stopped because the next push cancelled them, so the
+# runs read as "cancelled" and nobody noticed Windows had never passed. A
+# killed job says nothing; this says which line. The slowest test here is a
+# full four-artifact render at roughly twenty seconds, so two minutes only
+# fires on a genuine hang. Dump, do not exit — the job's `timeout-minutes`
+# ends the run, and one dump per stuck test is more useful than the first.
+faulthandler_timeout = 120
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+extend-exclude = [".venv", "site", "out", "runs"]
+
+[tool.ruff.lint]
+# `UP` (pyupgrade) is deliberately absent. The engine was written to run on
+# 3.9 — `typing.Dict`, `typing.Optional`, no PEP 604 unions — and enabling UP
+# flags 1,172 of those. Retiring that style is a real change worth making, but
+# it is a mechanical 1,200-line diff that would bury everything else in the
+# commit that introduces CI. It is a follow-up, not a prerequisite.
+select = ["E", "F", "W", "I", "B", "C4", "SIM"]
+ignore = [
+    "E501",    # long lines: the prose comments are deliberate and readable
+    "B008",    # FastAPI's Depends()/File() in defaults is the documented idiom
+    "SIM108",  # a ternary is not always clearer than an if/else
+    # The four below are real findings held back so the gate starts green. A
+    # linter that is red on the day it lands teaches everyone to ignore it; one
+    # that is green catches the next regression on the day it appears. Each is
+    # a tracked follow-up, not a permanent exemption.
+    "C408",    # 63x dict(...) over {...} — cosmetic
+    "B904",    # 18x raise inside except without `from` — worth fixing, all in api/
+    "B905",    # 15x zip() without strict= — needs a per-call judgement
+    "E402",    # 2x deliberate late import after a sys.path insert in tests/
+    "SIM102",  # 1x nested if that reads better than the collapsed form
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The harnesses import for side effects and shadow builtins freely; they are
+# scripts, and holding them to library rules would be noise.
+"tests/*" = ["E402", "F401", "B011"]
+
+[tool.mypy]
+python_version = "3.11"
+# Scoped to the three modules where a type error is a correctness bug rather
+# than a nuisance: the spec is the contract every stage hashes, the KPI schema
+# is the record-sheet format, and the formula package is the security boundary.
+files = ["kpi_maker/spec", "kpi_maker/kpi", "kpi_maker/formula"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true

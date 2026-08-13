@@ -22,11 +22,23 @@ import pandas as pd
 from ..contract.gate import ReconciliationError, run_gate
 from ..profile.schema import CompanyProfile
 from ..spec.schema import GeneratorParams
-from .base import (STAGE_GROWTH, WARMUP_MONTHS, Anomaly,  # noqa: F401
-                   Attempt, GeneratedData, apply_amplitude, calibrate,
-                   calibration_tolerance, generator, month_range,
-                   monthly_growth as _monthly_growth, to_reported, trim_warmup,
-                   volatile, yoy_growth)
+from .base import (  # noqa: F401
+    STAGE_GROWTH,
+    WARMUP_MONTHS,
+    Anomaly,
+    Attempt,
+    GeneratedData,
+    apply_amplitude,
+    calibrate,
+    calibration_tolerance,
+    generator,
+    month_range,
+    to_reported,
+    trim_warmup,
+    volatile,
+    yoy_growth,
+)
+from .base import monthly_growth as _monthly_growth
 
 # B2B software seasonality: Q4 push, summer trough, January restart.
 B2B_SEASONALITY = np.array([
@@ -201,7 +213,6 @@ def _calibrated_book(profile, months, segments, growth, anomalies, params):
 def _simulate_book(profile, rng, months, segments, growth, anomalies,
                    base_new=12.0, amplitude: float = 1.0):
     """Month-by-month customer acquisition, expansion, contraction and churn."""
-    n_total = len(months)
     seasonality = (apply_amplitude(B2B_SEASONALITY, amplitude)
                    if profile.market.seasonality != "none" else np.ones(12))
 

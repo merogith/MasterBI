@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from ..contract.schemas import FACT_SCHEMAS, REQUIRED_TABLES
-from .shapes import SHAPES, shape_for_table
+from .shapes import shape_for_table
 
 
 @dataclass

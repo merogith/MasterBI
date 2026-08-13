@@ -16,21 +16,30 @@ matters for a tool meant to run on a laptop rather than a build server.
 """
 from __future__ import annotations
 
-from pathlib import Path
 import io
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
+from ..design.palette import heading_accent
 from ..insight.detectors import Finding
 from ..kpi.schema import KPISet
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
-from .sections import (DIAGNOSTIC_EXHIBITS, SectionContent, SectionContext,  # noqa: F401
-                       build as build_sections)
-from ..design.palette import heading_accent
 from ..viz.theme import TOKENS
+from .sections import DIAGNOSTIC_EXHIBITS, SectionContent, SectionContext  # noqa: F401
+from .sections import build as build_sections
+
+# Where a requested font might live. Checked in order; a directory that does
+# not exist on this platform is skipped.
+_FONT_DIRS = [
+    "C:/Windows/Fonts",
+    "/usr/share/fonts/truetype", "/usr/share/fonts", "/usr/local/share/fonts",
+    "/Library/Fonts", "/System/Library/Fonts",
+    str(Path.home() / ".fonts"), str(Path.home() / "Library/Fonts"),
+]
 
 FONT_CANDIDATES = [
     ("Segoe UI", "C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/segoeuib.ttf",
@@ -49,9 +58,18 @@ def _rgb(hex_color: str) -> Tuple[int, int, int]:
 
 class PDFReport(FPDF):
     def __init__(self, profile: CompanyProfile,
-                 tokens: Optional[Dict[str, str]] = None):
-        super().__init__(orientation="P", unit="mm", format="A4")
+                 tokens: Optional[Dict[str, str]] = None,
+                 page_size: str = "A4",
+                 font_stack: Optional[List[str]] = None,
+                 footer_text: Optional[str] = None):
+        super().__init__(orientation="P", unit="mm", format=page_size)
         self.profile = profile
+        # A preferred font is a *preference*: the PDF embeds a real TTF, so a
+        # name with no file on this machine has to fall through rather than
+        # fail. `_load_font` walks the user's names first and the shipped
+        # candidates after.
+        self.font_stack = list(font_stack or [])
+        self.footer_text = footer_text
         # Every drawing call reads `self.t`. It used to read a module constant
         # bound to the light palette at import, which meant no per-run brand
         # could ever reach the page. Defaulting to that same palette is what
@@ -80,7 +98,7 @@ class PDFReport(FPDF):
         does exist costs the slant on a few captions; not aliasing it costs the
         whole report.
         """
-        for name, regular, bold, italic in FONT_CANDIDATES:
+        for name, regular, bold, italic in self._font_candidates():
             if not Path(regular).exists():
                 continue
             try:
@@ -93,12 +111,48 @@ class PDFReport(FPDF):
             except Exception:                          # noqa: BLE001
                 continue
 
+    def _font_candidates(self):
+        """The user's fonts first, then the shipped fallbacks.
+
+        Each requested name is looked for in the usual system font
+        directories under a few filename spellings, because "Segoe UI" lives
+        at `segoeui.ttf` and "Inter" at `Inter-Regular.ttf`. A name we cannot
+        find a file for is skipped silently — the point of a stack is that the
+        next one gets a turn.
+        """
+        found = []
+        for name in self.font_stack:
+            slug = name.replace(" ", "").lower()
+            for directory in _FONT_DIRS:
+                base = Path(directory)
+                if not base.is_dir():
+                    continue
+                regular = next(
+                    (c for c in (base / f"{slug}.ttf", base / f"{name}.ttf",
+                                 base / f"{name}-Regular.ttf",
+                                 base / f"{slug}-regular.ttf")
+                     if c.exists()), None)
+                if regular is None:
+                    continue
+                bold = next((c for c in (base / f"{slug}bd.ttf",
+                                         base / f"{name}-Bold.ttf")
+                             if c.exists()), regular)
+                italic = next((c for c in (base / f"{slug}i.ttf",
+                                           base / f"{name}-Italic.ttf")
+                               if c.exists()), regular)
+                found.append((name, str(regular), str(bold), str(italic)))
+                break
+        return found + FONT_CANDIDATES
+
     def clean(self, text: Optional[str]) -> str:
         text = "" if text is None else str(text)
         if self.unicode:
             return text
         replacements = {"—": "-", "–": "-", "’": "'", "‘": "'", "“": '"',
                         "”": '"', "…": "...", "×": "x", "≥": ">=", "≤": "<=",
+                        # French grouping uses a narrow no-break space; without
+                        # this a core-font PDF prints "1?234,50".
+                        "\u202f": " ", "\u00a0": " ",
                         "€": "EUR ", "£": "GBP ", "₺": "TRY ", "•": "-", "→": "->"}
         for bad, good in replacements.items():
             text = text.replace(bad, good)
@@ -129,8 +183,12 @@ class PDFReport(FPDF):
         self.set_font(self.family, "", 7.5)
         self.set_text_color(*_rgb(self.t["muted"]))
         half = (self.w - 36) / 2
+        # The default carries the illustrative-benchmark caveat. Replacing it
+        # is the user's call and does not bury the caveat: every benchmarked
+        # KPI still prints its source in the appendix, which is not overridable.
         self.cell(half, 4, self.clean(
-            "Benchmarks are illustrative — see appendix"), align="L")
+            self.footer_text or "Benchmarks are illustrative — see appendix"),
+            align="L")
         self.cell(half, 4, f"{self.page_no()}", align="R")
 
     # -- typography -------------------------------------------------------
@@ -446,6 +504,16 @@ def _draw_appendix(pdf: PDFReport, c: SectionContent) -> None:
                 pdf.body(block.intro)
             for line in block.lines:
                 pdf.bullet(line, marker=block.marker)
+            # `tinted` used to be read only by the KPI-definition branch below,
+            # so a section-level block that set it lost the text with no error —
+            # the DOCX printed it and the PDF did not. A field the registry
+            # offers has to mean the same thing in every renderer.
+            for line, tint in block.tinted:
+                pdf.set_text_color(*_rgb(pdf.t[tint]))
+                pdf.multi_cell(0, 4.6, pdf.clean(line))
+                pdf.set_text_color(*_rgb(pdf.t["text_primary"]))
+            if block.tinted:
+                pdf.ln(2)
             continue
 
         # A KPI definition. Keep the whole entry on one page where it fits.
@@ -485,9 +553,15 @@ def render_report(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                   section_order: Optional[List[str]] = None,
                   logo=None, origins: Optional[Dict[str, str]] = None,
                   narrative: Optional[Dict[str, List[str]]] = None,
-                  ai_notes: Optional[List[str]] = None) -> Path:
+                  ai_notes: Optional[List[str]] = None,
+                  caveats: Optional[List[str]] = None,
+                  page_size: str = "A4",
+                  font_stack: Optional[List[str]] = None,
+                  footer_text: Optional[str] = None,
+                  locale: Optional[str] = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    pdf = PDFReport(profile, tokens)
+    pdf = PDFReport(profile, tokens, page_size=page_size,
+                    font_stack=font_stack, footer_text=footer_text)
     pdf.images = images
     pdf.logo = logo
 
@@ -495,7 +569,8 @@ def render_report(path: Path, profile: CompanyProfile, kpi_set: KPISet,
         profile=profile, kpi_set=kpi_set, results=results, findings=findings,
         images=images, specs=specs, checks=checks,
         anomaly_notes=anomaly_notes, period=period, origins=origins or {},
-        narrated=sorted(narrative or {}), ai_notes=list(ai_notes or []))
+        narrated=sorted(narrative or {}), ai_notes=list(ai_notes or []),
+        caveats=list(caveats or []), locale=locale)
     for content in build_sections(ctx, section_order, narrative=narrative):
         DRAW[content.id](pdf, content)
 

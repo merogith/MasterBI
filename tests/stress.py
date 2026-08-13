@@ -369,7 +369,6 @@ def check_case(case: Case) -> List[Issue]:
 
     # --- Metrics -----------------------------------------------------------
     results = compute(kpi_set, tables, p)
-    facts = facts_table(results)
 
     not_computed = [r.kpi.id for r in results if not r.computed]
     # Some are legitimately not computable (a profitable company has no burn

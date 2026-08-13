@@ -29,10 +29,21 @@ import pandas as pd
 from ..contract.gate import ReconciliationError, run_gate
 from ..profile.schema import CompanyProfile
 from ..spec.schema import GeneratorParams
-from .base import (WARMUP_MONTHS, Anomaly, Attempt, GeneratedData,
-                   apply_amplitude, calibrate, generator, month_range,
-                   monthly_growth, to_reported, trim_warmup, volatile,
-                   yoy_growth)
+from .base import (
+    WARMUP_MONTHS,
+    Anomaly,
+    Attempt,
+    GeneratedData,
+    apply_amplitude,
+    calibrate,
+    generator,
+    month_range,
+    monthly_growth,
+    to_reported,
+    trim_warmup,
+    volatile,
+    yoy_growth,
+)
 
 # Retail seasonality, which is nothing like B2B software's. The year is built
 # around the fourth quarter: Black Friday and Christmas carry it, January is

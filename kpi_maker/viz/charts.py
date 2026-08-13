@@ -18,6 +18,7 @@ theme toggle can restyle without re-rendering.
 """
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -29,7 +30,11 @@ from ..fmt import fmt_value
 from ..metrics.engine import MetricResult
 from .theme import FONT_STACK, TOKENS
 
-_CURRENCY = "USD"
+# ContextVar, not a module global: the API runs two pipelines concurrently, so
+# a plain global meant the second run's currency could reach the first run's
+# axis labels. Same fix as `insight/detectors.py`, same reason.
+_CURRENCY: ContextVar[str] = ContextVar("chart_currency", default="USD")
+_LOCALE: ContextVar[Optional[str]] = ContextVar("chart_locale", default=None)
 
 # The ACTIVE palette. Mutated in place by `set_mode`, so every builder below
 # reads the current mode's tokens at call time. Dark mode is therefore a real
@@ -158,15 +163,15 @@ def _months(index) -> List[str]:
     return [str(p) for p in index]
 
 
-def set_currency(currency: str) -> None:
-    global _CURRENCY
-    _CURRENCY = currency
+def set_currency(currency: str, locale: Optional[str] = None) -> None:
+    _CURRENCY.set(currency)
+    _LOCALE.set(locale)
 
 
 def _money(v: float) -> str:
     """Delegates to the shared formatter so a figure reads identically on the
     chart, in the report prose and in the workbook."""
-    return fmt_value(v, "currency", _CURRENCY)
+    return fmt_value(v, "currency", _CURRENCY.get(), locale=_LOCALE.get())
 
 
 # --------------------------------------------------------------------------
@@ -553,9 +558,10 @@ def build_all(results: List[MetricResult],
               currency: str = "USD",
               tokens: Optional[Dict[str, str]] = None,
               exhibits: Optional[Sequence[str]] = None,
-              widths: Optional[Dict[str, str]] = None) -> List[ChartSpec]:
+              widths: Optional[Dict[str, str]] = None,
+              locale: Optional[str] = None) -> List[ChartSpec]:
     set_mode(mode, tokens)
-    set_currency(currency)
+    set_currency(currency, locale)
     widths = widths or {}
     inputs = {"results": results, "tables": tables}
 

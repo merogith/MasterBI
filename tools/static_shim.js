@@ -14,13 +14,15 @@
  * http://127.0.0.1 is not mixed content. Chrome's Private Network Access rules
  * additionally want a header on the preflight, which the server sends.
  *
- * ui/app.js is untouched by all of this: it calls the same six endpoints and
- * never learns which side answered. That is the point — one front end, not a
- * hosted copy and a local copy drifting apart.
+ * The app is untouched by all of this: it calls the same endpoints and never
+ * learns which side answered. That is the point — one front end, not a hosted
+ * copy and a local copy drifting apart. This file is a classic script and the
+ * app's bundle is a module, so `window.fetch` is already replaced by the time
+ * the app runs, without either file coordinating with the other.
  *
- * The probe never blocks startup. app.js loads immediately in demo mode and
+ * The probe never blocks startup. The app renders immediately in demo mode and
  * the detection runs behind it; if a local server turns up, the switch is a
- * variable assignment, because app.js resolves both the API target and the
+ * variable assignment, because the app resolves both the API target and the
  * file base at call time. Blocking on the probe cost six seconds of dead page
  * for the common case of nobody running anything locally. */
 
@@ -32,7 +34,14 @@
   const STORE_KEY = 'kpiBridgePort';
 
   const realFetch = window.fetch.bind(window);
-  const BASE = new URL('.', window.location.href).href;
+  // Where the site is deployed, not where the current page happens to sit.
+  // Deep links are served by 404.html — at `/MasterBI/runs/abc` the page's own
+  // directory is `/MasterBI/runs/`, so resolving assets and file URLs against
+  // it would 404 on every link anyone actually shares. The build stamps the
+  // real root in; the fallback keeps this file usable on its own.
+  // Resolved against the page, because the build stamps in a root-relative
+  // path and `new URL(rel, base)` rejects a base that is not absolute.
+  const BASE = new URL(window.KPI_BASE || '.', window.location.href).href;
   const asset = (rel) => new URL(rel, BASE).href;
 
   let live = null;                     // e.g. 'http://127.0.0.1:8000'
@@ -83,6 +92,26 @@
       });
     }
 
+    // A pre-built run is already finished, so there is never anything to stop.
+    // Answering as the server would beats a 404 toast if someone reaches the
+    // running screen's Cancel in the moment before the first poll lands.
+    if (/^\/api\/runs\/[^/]+\/cancel$/.test(path) && method === 'POST') {
+      return Promise.resolve(json({ status: 'idle' }));
+    }
+
+    if (path === '/api/catalog/options') return prebuilt('data/catalog/options.json');
+    if (path === '/api/catalog/kpis')    return prebuilt('data/catalog/kpis.json');
+    if (path === '/api/ai/status')       return prebuilt('data/ai/status.json');
+
+    const spec = path.match(/^\/api\/runs\/([^/]+)\/spec$/);
+    // GET only. A PUT would be the user editing a run this host cannot re-run,
+    // and the Studio does not offer it here — but say why rather than 404 if
+    // something ever tries.
+    if (spec && method === 'GET') return prebuilt(`data/runs/${spec[1]}/spec.json`);
+    if (spec) {
+      return Promise.resolve(fail('Changing a run means re-running it. ' + OFFLINE_NOTE));
+    }
+
     const table = path.match(/^\/api\/runs\/([^/]+)\/table\/([^/]+)$/);
     if (table) return prebuilt(`data/runs/${table[1]}/table/${table[2]}.json`);
 
@@ -92,8 +121,8 @@
     const run = path.match(/^\/api\/runs\/([^/]+)$/);
     if (run) return prebuilt(`data/runs/${run[1]}/summary.json`);
 
-    if (path === '/api/upload') {
-      return Promise.resolve(fail('Profiling a spreadsheet reads it with pandas. ' + OFFLINE_NOTE));
+    if (path === '/api/ingest/profile') {
+      return Promise.resolve(fail('Reading and profiling a spreadsheet needs pandas. ' + OFFLINE_NOTE));
     }
     return Promise.resolve(fail(`No static stand-in for ${path}`, 404));
   }
@@ -177,12 +206,25 @@
       window.KPI_STATIC = false;
       window.KPI_FILES_BASE = live;
       try { localStorage.setItem(STORE_KEY, String(port)); } catch (_) {}
+      announce();
       return true;
     }
     live = null;
     window.KPI_STATIC = true;
     window.KPI_FILES_BASE = BASE.replace(/\/$/, '');
+    announce();
     return false;
+  }
+
+  /* The app renders the demo-mode notice itself, because whether this is a
+     frozen demo or a live local server is a fact about the product, not about
+     the page chrome. The probe settles after the app has already mounted, so
+     tell it rather than expecting it to poll. */
+  function announce() {
+    try {
+      window.dispatchEvent(new CustomEvent('kpi-static-change',
+                                           { detail: window.KPI_STATIC }));
+    } catch (_) {}
   }
 
   /* ------------------------------------------------------------ status UI */
@@ -209,30 +251,30 @@
   function injectStyles() {
     const css = document.createElement('style');
     css.textContent = `
-      .bridge-pill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line,#d8d8d2);
-        background:var(--card,#fff);color:var(--ink,#1a1a18);border-radius:999px;padding:6px 13px;
+      .bridge-pill{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--border,#d8d8d2);
+        background:var(--surface,#fff);color:var(--text-primary,#1a1a18);border-radius:999px;padding:6px 13px;
         font:inherit;font-size:13px;cursor:pointer}
-      .bridge-pill:hover{border-color:var(--ink,#1a1a18)}
+      .bridge-pill:hover{border-color:var(--text-primary,#1a1a18)}
       .bridge-dot{width:8px;height:8px;border-radius:50%;background:var(--muted,#8a8a82);flex:none}
       .bridge-pill.on .bridge-dot{background:var(--good,#2e7d5b);box-shadow:0 0 0 3px rgba(46,125,91,.18)}
-      .bridge-pill.pending{border-color:var(--warn,#b8860b)}
-      .bridge-pill.pending .bridge-dot{background:var(--warn,#b8860b);animation:bridge-blink 1.4s ease-in-out infinite}
+      .bridge-pill.pending{border-color:var(--warning,#b8860b)}
+      .bridge-pill.pending .bridge-dot{background:var(--warning,#b8860b);animation:bridge-blink 1.4s ease-in-out infinite}
       @keyframes bridge-blink{50%{opacity:.35}}
       .bridge-sheet{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;
         justify-content:center;z-index:60;padding:20px}
-      .bridge-box{background:var(--card,#fff);color:var(--ink,#1a1a18);border:1px solid var(--line,#d8d8d2);
+      .bridge-box{background:var(--surface,#fff);color:var(--text-primary,#1a1a18);border:1px solid var(--border,#d8d8d2);
         border-radius:14px;max-width:620px;width:100%;padding:26px 28px;max-height:88vh;overflow:auto}
       .bridge-box h2{margin:0 0 6px;font-size:20px}
       .bridge-box p{margin:0 0 14px;color:var(--muted,#6b6b64);line-height:1.55;font-size:14px}
       .bridge-box ol{margin:0 0 16px;padding-left:20px}
       .bridge-box li{margin-bottom:9px;font-size:14px}
-      .bridge-box code{display:block;background:var(--bg,#f7f7f4);border:1px solid var(--line,#e4e4de);
+      .bridge-box code{display:block;background:var(--page,#f7f7f4);border:1px solid var(--border,#e4e4de);
         border-radius:7px;padding:9px 11px;font-size:12.5px;overflow-x:auto;white-space:pre;margin-top:5px}
       .bridge-easy li{margin-bottom:14px}
       .bridge-easy b{font-weight:600}
       .bridge-detail{color:var(--muted,#6b6b64);font-size:13.5px;line-height:1.5;margin-top:3px}
       .bridge-need{font-size:13px;margin-top:2px}
-      .bridge-alt{margin-top:4px;border-top:1px solid var(--line,#e4e4de);padding-top:12px}
+      .bridge-alt{margin-top:4px;border-top:1px solid var(--border,#e4e4de);padding-top:12px}
       .bridge-alt summary{cursor:pointer;font-size:13.5px;color:var(--muted,#6b6b64)}
       .bridge-alt ol{margin-top:12px}
       .bridge-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}`;
@@ -321,11 +363,7 @@
   injectStyles();
   renderPill('off');
 
-  // Load the app first; detection catches up behind it.
-  const tag = document.createElement('script');
-  tag.src = asset('app.js');
-  document.body.appendChild(tag);
-
+  // The app is already rendering; detection catches up behind it.
   connect().then((found) => {
     if (!found) { renderPill('off'); return; }
 
@@ -333,8 +371,11 @@
     // data. Once a pre-built run is open, its id exists only in this build —
     // routing the next call to the local server would 404 on a page that looks
     // fine. Offer the switch instead of performing it.
-    let busy = false;
-    try { busy = typeof state !== 'undefined' && state.runId !== null; } catch (_) {}
+    // `window.KPI_RUN_OPEN` is set by the app while a run's screen is mounted.
+    // It replaced a read of `app.js`'s module-global `state.runId`, which a
+    // bundled module no longer exposes — left as it was, this check would have
+    // silently become "never busy" and upgraded out from under an open demo.
+    const busy = window.KPI_RUN_OPEN === true;
     if (busy) {
       live = null;                       // stay on demo data until they choose
       window.KPI_STATIC = true;

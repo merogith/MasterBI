@@ -13,7 +13,8 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from threading import Event
+from typing import Callable, Dict, List, Optional
 
 from .pipeline.runner import execute, plan_rerun
 from .profile.schema import CompanyProfile
@@ -25,13 +26,20 @@ class PipelineResult(dict):
 
 
 def run_pipeline(profile: CompanyProfile, out_dir: Path,
-                 quiet: bool = False, spec: Optional[RunSpec] = None) -> PipelineResult:
+                 quiet: bool = False, spec: Optional[RunSpec] = None,
+                 on_progress: Optional[Callable[[Dict], None]] = None,
+                 cancel: Optional[Event] = None) -> PipelineResult:
     """Run the pipeline for a profile.
 
     Signature preserved from before the stage graph existed: the API server and
     the static site builder both call this, and neither should have to know how
     the work is scheduled. Pass a `spec` to adjust any stage; omit it and the
     defaults reproduce the original behaviour exactly.
+
+    `on_progress` and `cancel` are forwarded to the runner unchanged. They live
+    here rather than only on `execute` because the server calls this function,
+    not that one, and a progress bar that the server cannot reach is the bug
+    this pair exists to fix.
     """
     def say(msg: str) -> None:
         if not quiet:
@@ -40,16 +48,19 @@ def run_pipeline(profile: CompanyProfile, out_dir: Path,
     if spec is None:
         spec = RunSpec.for_profile(profile)
 
-    result = execute(spec, out_dir, say=say)
+    result = execute(spec, out_dir, say=say, on_progress=on_progress,
+                     cancel=cancel)
     values = result.values
 
     kpi_set = values.get("select")
     if kpi_set is not None:
         say(f"  KPIs      {len(kpi_set.kpis)} selected, {len(kpi_set.dropped)} excluded "
             f"(north star: {kpi_set.north_star}, {kpi_set.leading_share:.0%} leading)")
-        for key in ("_coverage_warning", "_leading_warning"):
-            if key in kpi_set.rationale:
-                say(f"  WARNING   {kpi_set.rationale[key]}")
+        # Any `_*_warning` key, not a fixed list of two: a new warning added to
+        # the selection engine should reach the console without also having to
+        # be added here, which is how `_sector_warning` would have been missed.
+        for key in sorted(k for k in kpi_set.rationale if k.endswith("_warning")):
+            say(f"  WARNING   {kpi_set.rationale[key]}")
 
     data = values.get("source")
     tables = values.get("model", {})
@@ -94,7 +105,7 @@ def run_pipeline(profile: CompanyProfile, out_dir: Path,
         results=results, findings=findings, tables=tables,
         checks=data.checks if data is not None else [],
         spec=spec, ran=result.ran, skipped=result.skipped,
-        seconds=result.seconds,
+        seconds=result.seconds, warnings=result.warnings,
     )
 
 

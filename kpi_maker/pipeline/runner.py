@@ -8,10 +8,11 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Event
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from ..spec.schema import RunSpec
-from . import stages as _stages       # noqa: F401  (registers every stage)
+from . import stages as _stages  # noqa: F401  (registers every stage)
 from .cache import STORE, read_hashes, stage_hash, write_hashes
 from .graph import STAGES, required_stages
 
@@ -40,8 +41,12 @@ class RunContext:
     # Set by the source stage for uploads: {table: measured|modelled}. Read by
     # `metrics` to decide each result's basis.
     origins: Any = None
-    # Tier 2 identity misses on uploaded data — reported, never fatal.
-    gate_warnings: Any = None
+    # Caveats this run carries: Tier 2 identity misses on uploaded data, and a
+    # sector simulated by a neighbouring archetype. Never fatal, always
+    # reported. A list rather than None so any stage can append without first
+    # checking whether an earlier one already did — it used to be assigned
+    # rather than appended to, so a second writer would have clobbered the first.
+    gate_warnings: List[str] = field(default_factory=list)
     # Where `source.uploads` names are resolved from. Uploads are shared
     # across runs — the same file can drive several — so they live beside the
     # run directories rather than inside one. Defaulting here rather than in
@@ -131,18 +136,49 @@ class RunResult:
     skipped: List[str]
     timings: Dict[str, float]
     out_dir: Path
+    # Caveats collected during the run. Carried here rather than left on the
+    # context so a caller that only holds the result can still report them.
+    warnings: List[str] = field(default_factory=list)
 
     @property
     def seconds(self) -> float:
         return round(sum(self.timings.values()), 3)
 
 
+class RunCancelled(Exception):
+    """Raised when the caller's cancel event was set between two stages.
+
+    Deliberately not a subclass of anything the pipeline already catches: a
+    cancelled run is not a failed run, and the two must not end up looking the
+    same to the user. Carries the stage the run stopped before, because "we
+    stopped at Rendering the PDF report" is the only useful thing to say.
+    """
+
+    def __init__(self, stage: str, done: int, total: int) -> None:
+        super().__init__(f"cancelled before {stage} ({done} of {total} stages done)")
+        self.stage = stage
+        self.done = done
+        self.total = total
+
+
 def execute(spec: RunSpec, out_dir: Path, *,
             artifacts: Optional[Sequence[str]] = None,
             say: Optional[Callable[[str], None]] = None,
             uploads_dir: Optional[Path] = None,
-            force: bool = False) -> RunResult:
-    """Run every stage that needs running, in dependency order."""
+            force: bool = False,
+            on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,
+            cancel: Optional[Event] = None) -> RunResult:
+    """Run every stage that needs running, in dependency order.
+
+    `on_progress` is called before and after every stage — including reused
+    ones, because distinguishing "rebuilt" from "reused" is the informative
+    part of a warm re-run. `cancel` is a `threading.Event` checked between
+    stages; a stage is never interrupted part-way, so the worst-case latency is
+    one stage (`charts_png`, at roughly two seconds).
+
+    Both are optional and neither can change what the run produces: the
+    callback only observes, and the event only stops the loop.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     speak = say or (lambda msg: None)
     ctx = RunContext(spec=spec, out_dir=out_dir, say=speak,
@@ -154,31 +190,74 @@ def execute(spec: RunSpec, out_dir: Path, *,
     skipped: List[str] = []
     timings: Dict[str, float] = {}
 
-    for item in plan:
-        st = STAGES[item.name]
-        cached = None if force else STORE.get(item.name, item.digest)
+    total = len(plan)
+    began = time.perf_counter()
+    # What the run still has to build, in seconds. Only the dirty stages count:
+    # a warm re-run that reuses fourteen of seventeen stages should not quote
+    # the cold-start number. Decremented as each dirty stage finishes so the
+    # estimate falls monotonically instead of being recomputed from a guess.
+    remaining = sum(COST_HINT.get(p.name, 0.1) for p in plan if p.dirty)
 
-        # A clean stage still has to produce its value if it is not in the
-        # store, because something downstream may be about to read it. Skipping
-        # on "unchanged" alone would hand the next stage a hole.
-        if cached is not None and not item.dirty:
-            ctx.values[item.name] = cached
-            skipped.append(item.name)
+    def emit(item: StagePlan, index: int, state: str) -> None:
+        if on_progress is None:
+            return
+        on_progress({
+            "stage": item.name,
+            "label": STAGES[item.name].label,
+            "index": index,
+            "total": total,
+            "state": state,
+            "elapsed": round(time.perf_counter() - began, 2),
+            "eta_seconds": round(max(remaining, 0.0), 1),
+        })
+
+    try:
+        for position, item in enumerate(plan):
+            if cancel is not None and cancel.is_set():
+                raise RunCancelled(item.name, position, total)
+
+            st = STAGES[item.name]
+            cached = None if force else STORE.get(item.name, item.digest)
+
+            # A clean stage still has to produce its value if it is not in the
+            # store, because something downstream may be about to read it.
+            # Skipping on "unchanged" alone would hand the next stage a hole.
+            reuse = cached is not None and not item.dirty
+            emit(item, position + 1, "running")
+
+            if reuse:
+                ctx.values[item.name] = cached
+                skipped.append(item.name)
+                hashes[item.name] = item.digest
+                emit(item, position + 1, "reused")
+                continue
+
+            started = time.perf_counter()
+            value = st.fn(ctx)
+            timings[item.name] = time.perf_counter() - started
+
+            ctx.values[item.name] = value
+            STORE.put(item.name, item.digest, value)
             hashes[item.name] = item.digest
-            continue
-
-        started = time.perf_counter()
-        value = st.fn(ctx)
-        timings[item.name] = time.perf_counter() - started
-
-        ctx.values[item.name] = value
-        STORE.put(item.name, item.digest, value)
-        hashes[item.name] = item.digest
-        ran.append(item.name)
-
-    write_hashes(out_dir, hashes)
-    (out_dir / "spec.json").write_text(
-        spec.model_dump_json(indent=2), encoding="utf-8")
+            ran.append(item.name)
+            remaining -= COST_HINT.get(item.name, 0.1)
+            emit(item, position + 1, "done")
+    finally:
+        # A cancelled run's finished stages are genuinely finished — a stage
+        # either ran to completion or it did not — so recording their hashes
+        # lets the next attempt resume instead of starting over. This must
+        # still happen exactly once on the success path, or the warm-partial
+        # equals cold-full guarantee breaks.
+        #
+        # `spec.json` goes with them: it is the run's input contract, and it is
+        # what the server reads to re-run a directory. Written only on success,
+        # the hashes above would be unreachable — the kept work would exist and
+        # nothing could ask for it. Neither file is an artifact, which is why
+        # `tests/spine.py` excludes both from its byte comparison.
+        write_hashes(out_dir, hashes)
+        (out_dir / "spec.json").write_text(
+            spec.model_dump_json(indent=2), encoding="utf-8")
 
     return RunResult(values=ctx.values, ran=ran, skipped=skipped,
-                     timings=timings, out_dir=out_dir)
+                     timings=timings, out_dir=out_dir,
+                     warnings=list(ctx.gate_warnings))

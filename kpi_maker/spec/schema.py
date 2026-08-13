@@ -28,6 +28,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .. import fmt
+from ..profile import sectors
 from ..profile.schema import CompanyProfile
 
 SPEC_VERSION = 1
@@ -190,11 +192,24 @@ class BrandSpec(SpecModel):
     footer_text: Optional[str] = None
 
 
+class PageSize(str, Enum):
+    """Print page sizes the PDF renderer supports.
+
+    An enum rather than a free string because `page_size` used to be one and
+    was read by nothing: any value round-tripped happily and none of them did
+    anything. Now a typo is refused at the boundary instead of silently
+    producing an A4 document.
+    """
+    a4 = "A4"
+    letter = "Letter"
+    legal = "Legal"
+
+
 class DesignSpec(SpecModel):
     theme: ThemeMode = ThemeMode.light
     brand: BrandSpec = Field(default_factory=BrandSpec)
     locale: Optional[str] = None                       # None -> identity.language
-    page_size: str = "A4"
+    page_size: PageSize = PageSize.a4
     sections: Optional[List[str]] = None               # None -> the fixed 8
     exhibits: Optional[List[str]] = None               # None -> every chart that builds
     # id -> "half" | "full". Selection and order live in `exhibits`; this only
@@ -303,7 +318,7 @@ class RunSpec(SpecModel):
     # -- derivation: the one place a None default becomes a real value -----
 
     @classmethod
-    def for_profile(cls, profile: CompanyProfile) -> "RunSpec":
+    def for_profile(cls, profile: CompanyProfile) -> RunSpec:
         """The spec that reproduces the pre-RunSpec pipeline exactly."""
         return cls(profile=profile)
 
@@ -317,14 +332,82 @@ class RunSpec(SpecModel):
 
     def resolve_archetype(self) -> str:
         archetype = self.source.generator.archetype
-        return self.profile.business_model.type.value if archetype is None else archetype
+        if archetype is not None:
+            return archetype
+        # Not simply `business_model.type`: eight of the ten declared sectors
+        # have no generator of their own, and returning their name here is what
+        # used to raise `No data generator for business model 'retail'` one
+        # stage later. `sectors` maps every sector to something runnable and
+        # says when it had to approximate.
+        return sectors.resolve_archetype(self.profile.business_model.type.value).value
 
     def resolve_packs(self) -> List[str]:
         packs = self.metrics.packs
-        return [self.profile.business_model.type.value] if packs is None else list(packs)
+        if packs is not None:
+            return list(packs)
+        return list(sectors.resolve_packs(self.profile.business_model.type.value).value)
+
+    def archetype_note(self) -> Optional[str]:
+        """Why this run's data was simulated by a neighbouring archetype.
+
+        None when the sector has its own generator, or when the spec named an
+        archetype explicitly — an explicit choice is not an approximation.
+
+        Deliberately narrower than "every sector caveat": the pack half of the
+        same question is reported by the selection engine, which is what owns
+        it. Reporting both here as well printed each one twice.
+        """
+        if self.source.generator.archetype is not None:
+            return None
+        return sectors.resolve_archetype(self.profile.business_model.type.value).note
 
     def resolve_currency(self) -> str:
         return self.profile.identity.currency
+
+    def resolve_locale(self) -> str:
+        """Which separator convention the numbers are written in.
+
+        Three sources in decreasing order of how deliberate they are: the
+        design spec, the profile's language, and finally the country — a
+        German company that never set a language still expects `1.234,50`.
+        Anything unrecognised reads as English, which is a safe default rather
+        than a guess.
+        """
+        if self.design.locale:
+            return self.design.locale
+        identity = self.profile.identity
+        if getattr(identity, "language", None):
+            return identity.language
+        return fmt.family_for_country(identity.country) or fmt.DEFAULT_LOCALE
+
+    def resolve_page_size(self) -> str:
+        return self.design.page_size.value
+
+    def resolve_font_stack(self) -> List[str]:
+        """Preferred font names, most preferred first.
+
+        A list rather than a name because the three print renderers need
+        different things from it: PPTX and DOCX write a font *name* into the
+        file and let the reader's machine resolve it, while the PDF has to find
+        an actual TTF on this machine and falls through the list until one
+        exists. One field, honoured as far as each format allows.
+        """
+        stack = (self.design.brand.font_stack or "").strip()
+        if not stack:
+            return []
+        return [name.strip().strip("'\"") for name in stack.split(",")
+                if name.strip().strip("'\"")]
+
+    def resolve_footer_text(self) -> Optional[str]:
+        """Replacement footer, or None to keep the default.
+
+        The default footer carries the illustrative-benchmark caveat. Replacing
+        it is allowed — it is the user's document — and the caveat survives
+        either way, because every benchmarked KPI prints its source in the
+        appendix and that is not overridable.
+        """
+        text = (self.design.brand.footer_text or "").strip()
+        return text or None
 
     def resolve_theme(self) -> str:
         # "auto" is a browser-side concept; anything rendered server-side has to

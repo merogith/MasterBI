@@ -12,7 +12,6 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-
 # --------------------------------------------------------------------------
 # Controlled vocabularies. These are the values that BRANCH the pipeline —
 # a KPI's `applies_when` expression is evaluated against them, so adding a
@@ -170,7 +169,7 @@ class Size(BaseModel):
     ownership: Ownership = Ownership.vc_backed
 
     @model_validator(mode="after")
-    def _functions_reconcile(self) -> "Size":
+    def _functions_reconcile(self) -> Size:
         # A soft gate: the function split must not contradict the total. This is
         # the earliest place inconsistent input can be caught, and catching it
         # here saves a confusing "revenue per FTE" number 4 stages downstream.
@@ -201,7 +200,7 @@ class Market(BaseModel):
     seasonality: str = "none"
 
     @model_validator(mode="after")
-    def _shares_sum(self) -> "Market":
+    def _shares_sum(self) -> Market:
         for label, values in (
             ("segments", [s.share for s in self.segments]),
             ("geographies", list(self.geographies.values())),
@@ -273,7 +272,7 @@ class CompanyProfile(BaseModel):
     history_months: int = 36
 
     @model_validator(mode="after")
-    def _revenue_ties_to_the_book(self) -> "CompanyProfile":
+    def _revenue_ties_to_the_book(self) -> CompanyProfile:
         """Cross-block identity: customers x blended ACV must approximate revenue.
 
         These three numbers are usually collected independently (different

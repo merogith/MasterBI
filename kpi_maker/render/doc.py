@@ -21,7 +21,8 @@ from ..kpi.schema import KPISet
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
 from ..viz.theme import TOKENS
-from .sections import SectionContent, SectionContext, build as build_sections
+from .sections import SectionContent, SectionContext
+from .sections import build as build_sections
 
 # Where the reader should turn a page. A property of this format: the deck has
 # no pages, and the PDF decides from its own y cursor.
@@ -37,9 +38,9 @@ def _rgb(hex_color: str) -> RGBColor:
     return RGBColor(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
 
 
-def _style(doc: Document) -> None:
+def _style(doc: Document, font: str = "Segoe UI") -> None:
     normal = doc.styles["Normal"]
-    normal.font.name = "Segoe UI"
+    normal.font.name = font
     normal.font.size = Pt(10)
     normal.paragraph_format.space_after = Pt(6)
     for name, size, color in (("Heading 1", 18, "text_primary"),
@@ -49,7 +50,7 @@ def _style(doc: Document) -> None:
             st = doc.styles[name]
         except KeyError:
             continue
-        st.font.name = "Segoe UI"
+        st.font.name = font
         st.font.size = Pt(size)
         st.font.bold = True
         st.font.color.rgb = _rgb(doc.t[color])
@@ -182,6 +183,20 @@ def _draw_section(doc: Document, c: SectionContent,
         doc.add_paragraph(c.empty)
 
 
+def _footer(doc: Document, text: str) -> None:
+    """Put the brand footer on every page.
+
+    The editable report had no footer at all, so `brand.footer_text` had
+    nowhere to land here even once the PDF honoured it. python-docx exposes the
+    default section's footer paragraph directly; one paragraph is enough.
+    """
+    paragraph = doc.sections[0].footer.paragraphs[0]
+    paragraph.text = text
+    for run in paragraph.runs:
+        run.font.size = Pt(8)
+        run.font.color.rgb = _rgb(doc.t["muted"])
+
+
 def render_doc(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                results: List[MetricResult], findings: List[Finding],
                images: Dict[str, bytes], specs: List, checks: List[str],
@@ -190,7 +205,11 @@ def render_doc(path: Path, profile: CompanyProfile, kpi_set: KPISet,
                section_order: Optional[List[str]] = None,
                logo=None, origins: Optional[Dict[str, str]] = None,
                narrative: Optional[Dict[str, List[str]]] = None,
-               ai_notes: Optional[List[str]] = None) -> Path:
+               ai_notes: Optional[List[str]] = None,
+               caveats: Optional[List[str]] = None,
+               font_stack: Optional[List[str]] = None,
+               footer_text: Optional[str] = None,
+               locale: Optional[str] = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     doc = Document()
     doc.logo = logo
@@ -198,13 +217,18 @@ def render_doc(path: Path, profile: CompanyProfile, kpi_set: KPISet,
     # other two renderers. Threading it through `_muted`'s call sites would say
     # the same thing many more times.
     doc.t = dict(tokens or TOKENS["light"])
-    _style(doc)
+    # DOCX stores a font *name* and lets Word resolve it, so unlike the PDF
+    # there is no file to find — the first name in the stack is simply used.
+    _style(doc, (font_stack or ["Segoe UI"])[0])
+    if footer_text:
+        _footer(doc, footer_text)
 
     ctx = SectionContext(
         profile=profile, kpi_set=kpi_set, results=results, findings=findings,
         images=images, specs=specs, checks=checks,
         anomaly_notes=anomaly_notes, period=period, origins=origins or {},
-        narrated=sorted(narrative or {}), ai_notes=list(ai_notes or []))
+        narrated=sorted(narrative or {}), ai_notes=list(ai_notes or []),
+        caveats=list(caveats or []), locale=locale)
 
     for content in build_sections(ctx, section_order, narrative=narrative):
         if content.id == "cover":

@@ -62,7 +62,8 @@ def catalog(profile: Any) -> Dict[str, Any]:
     """
     from ..insight.detectors import DETECTOR_NAMES
     from ..kpi.selection import candidates_for
-    from ..render.sections import REGISTRY as SECTIONS, default_order
+    from ..render.sections import REGISTRY as SECTIONS
+    from ..render.sections import default_order
     from ..viz.charts import default_exhibits
 
     kpis = []

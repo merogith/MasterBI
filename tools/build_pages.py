@@ -27,21 +27,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from kpi_maker.api import server as api          # noqa: E402
+from kpi_maker.api import server as api  # noqa: E402
 from kpi_maker.cli import load_profile, run_pipeline  # noqa: E402
-
-# The banner the static site shows under the hero. The live app never sees it.
-STATIC_NOTICE = """
-    <div class="notice static-notice" style="margin:0 0 28px">
-      <strong>Demo mode.</strong> The three companies below are pre-rendered and
-      fully explorable — dashboard, scorecard, every fact table, every download.
-      Building your own, uploading a spreadsheet and <em>Surprise me</em> run a
-      Python pipeline, which a static host cannot do. Start the app on your own
-      machine and <strong>this page connects to it automatically</strong>: every
-      mode unlocks and your runs are saved in your own <code>runs/</code> folder.
-      Press <em>Run locally</em> in the header for the commands.
-    </div>
-"""
 
 
 def write_json(path: Path, payload: Any) -> None:
@@ -75,6 +62,22 @@ def build(out_dir: Path) -> int:
     write_json(site / "data" / "samples.json", api.list_samples())
     write_json(site / "data" / "survey.json", api.get_survey())
 
+    # What the Studio needs to render. Without these the most differentiated
+    # screen in the product 404s for everyone who clicks the public link — it
+    # was reachable and broken, so the button had to be disabled. Frozen here,
+    # it opens read-only instead.
+    write_json(site / "data" / "catalog" / "options.json", api.catalog_options())
+    write_json(site / "data" / "catalog" / "kpis.json", api.list_kpis())
+    # Not the build machine's AI status: CI may hold a key, and a demo that
+    # advertised a working planner it cannot run would be the same lie in a new
+    # place. The static site can never call a model, so it says so.
+    write_json(site / "data" / "ai" / "status.json", {
+        "available": False,
+        "reason": "The hosted demo cannot call a model. Run the app locally "
+                  "with an API key to use the planner and the narrator.",
+        "narratable_sections": [],
+    })
+
     index: List[Dict[str, Any]] = []
 
     for entry in gallery:
@@ -85,13 +88,6 @@ def build(out_dir: Path) -> int:
         run_pipeline(profile, run_dir, quiet=True)
 
         summary = api._build_summary(run_id, run_dir, profile)
-        summary["steps"] = [
-            "Validating profile",
-            "Selecting KPIs from the library",
-            "Generating data and reconciling",
-            "Computing metrics and detecting findings",
-            "Rendering dashboard, report, deck and workbook",
-        ]
         for artifact in summary.get("artifacts", []):
             artifact["url"] = relativise(artifact["url"])
 
@@ -104,6 +100,11 @@ def build(out_dir: Path) -> int:
             table["url"] = relativise(table["url"])
         write_json(site / "data" / "runs" / run_id / "tables.json", tables)
 
+        # The spec that produced this run, so the Studio can show what it was
+        # built from even where nothing can be changed.
+        write_json(site / "data" / "runs" / run_id / "spec.json",
+                   api.get_spec(run_id))
+
         for table in tables:
             write_json(site / "data" / "runs" / run_id / "table" / f"{table['name']}.json",
                        api.get_table(run_id, table["name"]))
@@ -114,22 +115,43 @@ def build(out_dir: Path) -> int:
 
     write_json(site / "data" / "runs.json", index)
 
-    # Front end, verbatim, plus the shim.
-    for name in ("app.js", "styles.css"):
-        shutil.copy2(api.UI_DIR / name, site / name)
+    # Front end: the Vite bundle built for this sub-path, plus the shim.
+    dist = ROOT / "web" / "dist-pages"
+    if not (dist / "index.html").exists():
+        raise SystemExit(
+            "no Pages bundle — run `npm --prefix web ci && "
+            "npm --prefix web run build:pages` first")
+    shutil.copytree(dist / "assets", site / "assets")
 
-    html = (api.UI_DIR / "index.html").read_text(encoding="utf-8")
-    # The shim loads app.js itself once it knows whether a local server is
-    # there, so app.js sees a settled KPI_FILES_BASE rather than one that
-    # changes after it has already read it.
-    marker = '<script src="app.js"></script>'
+    html = (dist / "index.html").read_text(encoding="utf-8")
+
+    # The deployment root, taken from what Vite actually emitted rather than
+    # restated here — one fact, one place. Everything the page loads has to be
+    # absolute against it, because 404.html serves deep links from directories
+    # that do not exist.
+    asset = re.search(r'src="([^"]*/assets/[^"]+\.js)"', html)
+    if asset is None:
+        raise SystemExit("the Vite bundle's index.html has no module script")
+    base = asset.group(1).split("assets/")[0]
+
+    # The shim has to replace `window.fetch` before the app issues a request.
+    # A classic script runs the moment it is parsed and a module script is
+    # deferred to after parsing, so this ordering is guaranteed by the spec —
+    # no coordination between the two files required.
+    marker = "</head>"
     if marker not in html:
-        raise SystemExit("index.html no longer loads app.js the expected way")
-    html = html.replace(marker, '<script src="static_shim.js"></script>')
-    # Anchor the banner to the hero block rather than a line number.
-    html = re.sub(r'(<div class="mode-grid">)', STATIC_NOTICE.strip() + r"\n\n    \1",
-                  html, count=1)
+        raise SystemExit("the Vite bundle's index.html has no <head> to patch")
+    html = html.replace(marker, (
+        f'  <script>window.KPI_BASE = "{base}";</script>\n'
+        f'  <script src="{base}static_shim.js"></script>\n' + marker), 1)
     (site / "index.html").write_text(html, encoding="utf-8")
+
+    # GitHub Pages has no rewrite rule, so a deep link — `/MasterBI/samples`, or
+    # any run URL someone shares — is a 404 from a static host. Serving the same
+    # shell as the 404 page is the standard answer: the app boots and reads
+    # `location.pathname` itself, so the link resolves to the screen it names.
+    (site / "404.html").write_text(html, encoding="utf-8")
+
     shutil.copy2(Path(__file__).parent / "static_shim.js", site / "static_shim.js")
 
     # Without this, Jekyll reprocesses the tree and drops anything it does not

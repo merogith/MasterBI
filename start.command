@@ -20,12 +20,15 @@ PYCMD=""
 for candidate in python3 python; do
   if command -v "$candidate" >/dev/null 2>&1; then
     # macOS ships a python3 stub that only prompts to install the tools.
-    if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3,9) else 1)' >/dev/null 2>&1; then
+    if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)' >/dev/null 2>&1; then
       PYCMD="$candidate"; break
     fi
   fi
 done
-[ -n "$PYCMD" ] || die "Python 3.9 or newer is not installed. Get it from https://www.python.org/downloads/ then double-click this file again."
+# 3.11 is the floor in pyproject.toml, and this gate has to agree with it: on
+# 3.9 the launcher used to build a venv, run pip, and fail somewhere inside a
+# dependency resolution the user cannot read. Refusing up front says why.
+[ -n "$PYCMD" ] || die "Python 3.11 or newer is not installed. Get it from https://www.python.org/downloads/ then double-click this file again."
 
 # ---- private environment --------------------------------------------------
 if [ ! -x ".venv/bin/python" ]; then

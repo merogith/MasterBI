@@ -11,59 +11,77 @@ rather than re-parsing artifacts on every poll.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ..cli import load_profile, run_pipeline
-from ..insight.detectors import DETECTOR_NAMES
-from ..formula import FormulaError, describe_functions, evaluate, validate
-from ..formula.evaluate import RowResolver, SeriesResolver
-from ..kpi.schema import user_kpi
-from ..kpi.selection import load_library, unknown_kpi_ids
-from ..kpi.user_library import delete_user_kpi, save_user_kpi, user_kpi_ids
-from ..ingest import detect_shape, profile_table, read_any, shape_catalog
-from ..ingest.derive import derive_profile_fields
-from ..ingest.quality import build_report
-from ..prep import describe_ops
-from ..prep.model import preview_column
-from ..prep.recipe import preview_recipe
-from ..pipeline.runner import plan_rerun
-from ..profile.schema import CompanyProfile
 from ..contract.schemas import FACT_SCHEMAS
 from ..design.contrast import AA_TEXT, GRAPHICAL, MIN_DELTA_E, ColourError, ratio
 from ..design.logo import LogoError, load_logo
 from ..design.palette import derive_tokens
-from ..render.sections import REGISTRY as SECTION_REGISTRY, default_order
-from ..viz.charts import CHARTS, default_exhibits
+from ..formula import FormulaError, describe_functions, evaluate, validate
+from ..formula.evaluate import RowResolver, SeriesResolver
+from ..ingest import detect_shape, profile_table, read_any, shape_catalog
+from ..ingest.derive import derive_profile_fields
+from ..ingest.quality import build_report
+from ..insight.detectors import DETECTOR_NAMES
+from ..kpi.schema import user_kpi
+from ..kpi.selection import load_library, unknown_kpi_ids
+from ..kpi.user_library import delete_user_kpi, save_user_kpi, user_kpi_ids
+from ..pipeline.runner import RunCancelled, plan_rerun
+from ..prep import describe_ops
+from ..prep.model import preview_column
+from ..prep.recipe import preview_recipe
+from ..profile.schema import CompanyProfile
+from ..render.sections import REGISTRY as SECTION_REGISTRY
+from ..render.sections import default_order
 from ..spec.schema import ALL_ARTIFACTS, PATCHABLE_SECTIONS, RunSpec
+from ..store import COLUMNS as STORE_COLUMNS
+from ..store import store as _open_store
 from ..survey import as_json as survey_json
 from ..survey import build_profile, surprise_profile
+from ..viz.charts import default_exhibits
 
 ROOT = Path(__file__).resolve().parents[2]
 SAMPLES_DIR = ROOT / "samples"
-RUNS_DIR = ROOT / "runs"
-UI_DIR = ROOT / "ui"
+# Overridable by environment so a test can point the *real* server at a
+# throwaway tree — the browser smoke test drives the same process a user would,
+# and must not write into the developer's own history. The desktop build needs
+# the same hook for a different reason: runs belong in a user data directory,
+# not beside a read-only executable.
+RUNS_DIR = Path(os.environ.get("MASTERBI_RUNS_DIR") or ROOT / "runs")
+# The front end: Vite build output, inside the package because that is what
+# ships — no Node at runtime, and 1.3's one-file executable bundles it. There is
+# no second copy any more; the Pages demo is built from the same source by
+# `tools/build_pages.py`.
+UI_DIST_DIR = Path(__file__).resolve().parents[1] / "ui_dist"
 UPLOADS_DIR = RUNS_DIR / "_uploads"
 
 RUNS_DIR.mkdir(exist_ok=True)
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
-# In-flight state. Completed runs are recovered from disk on restart, so this
-# is a cache of live progress rather than the source of truth.
+# In-flight state: live progress, the current summary, tracebacks. The durable
+# facts about a run — its mode, timings and outcome — are written through to the
+# store, so this is a cache in front of it rather than the source of truth.
 _STATE: Dict[str, Dict[str, Any]] = {}
+# One cancel event per in-flight run, added by `_execute` before the pipeline
+# starts and removed when it stops however it stops. Absent means "nothing to
+# cancel" rather than "cancel failed", which is why the endpoint treats a
+# missing id as a no-op on an already-finished run.
+_CANCEL: Dict[str, Event] = {}
 _LOCK = Lock()
 _POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pipeline")
 
@@ -157,10 +175,26 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _store():
+    """The run index for the *current* `RUNS_DIR`.
+
+    Resolved per call, never captured at import: `tools/build_pages.py` rebinds
+    `RUNS_DIR` to the site tree and the tests rebind it to a tmp directory. A
+    module-level handle would put a `runs.db` in whichever of those ran first.
+    """
+    return _open_store(RUNS_DIR)
+
+
 def _set(run_id: str, **fields) -> None:
     with _LOCK:
         _STATE.setdefault(run_id, {})
         _STATE[run_id].update(fields)
+    # Write through whatever the index has a column for. Progress events carry
+    # none — they set `progress` alone — so the several-times-a-second stage
+    # reports never reach SQLite, and the four lifecycle transitions all do.
+    durable = {k: v for k, v in fields.items() if k in STORE_COLUMNS}
+    if durable:
+        _store().upsert(run_id, **durable)
 
 
 def _get(run_id: str) -> Optional[Dict[str, Any]]:
@@ -239,33 +273,76 @@ def _build_summary(run_id: str, run_dir: Path, profile: CompanyProfile) -> Dict[
     }
 
 
-def _execute(run_id: str, spec: RunSpec) -> None:
-    run_dir = RUNS_DIR / run_id
-    steps: List[str] = []
+def _submit(run_id: str, spec: RunSpec) -> None:
+    """Queue a run, with its cancel event registered *before* it is queued.
 
-    def note(msg: str) -> None:
-        steps.append(msg)
-        _set(run_id, steps=list(steps))
+    The pool has two workers, so a third run waits. Creating the event inside
+    `_execute` would leave that waiting run uncancellable — the user would
+    press Cancel, get told there was nothing to cancel, and then watch it start.
+    """
+    # A new attempt has no outcome yet. Without this, re-running a cancelled run
+    # leaves it labelled with the stage it stopped at long after it finished —
+    # a row reading "done" beside "cancelled at charts_png". Half a stale fact
+    # is worse than none, and the same applies to a previous run's error.
+    _set(run_id, error=None, cancelled_stage=None, finished_at=None,
+         traceback=None)
+
+    cancel = Event()
+    with _LOCK:
+        _CANCEL[run_id] = cancel
+    _POOL.submit(_execute, run_id, spec, cancel)
+
+
+def _execute(run_id: str, spec: RunSpec, cancel: Event) -> None:
+    run_dir = RUNS_DIR / run_id
+    # Every stage the run has reported on, newest state per stage, in the order
+    # the engine reached them. A dict rather than a list because a stage
+    # reports twice — running, then done or reused — and the second report
+    # replaces the first rather than appending to it.
+    stages: Dict[str, Dict[str, Any]] = {}
+
+    def progress(event: Dict[str, Any]) -> None:
+        stages[event["stage"]] = event
+        _set(run_id, progress={
+            "current": event,
+            "stages": list(stages.values()),
+            "done": sum(1 for e in stages.values() if e["state"] != "running"),
+            "total": event["total"],
+            "eta_seconds": event["eta_seconds"],
+            "elapsed": event["elapsed"],
+        })
 
     try:
-        _set(run_id, status="running", steps=["Validating profile"])
-        note("Selecting KPIs from the library")
-        result = run_pipeline(spec.profile, run_dir, quiet=True, spec=spec)
-        note("Generating data and reconciling")
-        note("Computing metrics and detecting findings")
-        note("Rendering dashboard, report, deck and workbook")
+        _set(run_id, status="running", progress=None)
+        result = run_pipeline(spec.profile, run_dir, quiet=True, spec=spec,
+                              on_progress=progress, cancel=cancel)
 
         summary = _build_summary(run_id, run_dir, spec.profile)
-        summary["steps"] = steps
         summary["stages_ran"] = result.get("ran", [])
         summary["stages_reused"] = result.get("skipped", [])
         summary["seconds"] = result.get("seconds")
         (run_dir / "summary.json").write_text(
             json.dumps(summary, indent=2, default=str), encoding="utf-8")
-        _set(run_id, status="done", finished_at=_now(), summary=summary)
+        _set(run_id, status="done", finished_at=_now(), summary=summary,
+             seconds=summary["seconds"], stages_ran=summary["stages_ran"],
+             stages_reused=summary["stages_reused"])
+    except RunCancelled as stop:
+        # Still no summary.json: that file is what makes a run look *finished*,
+        # to the results screen and to the reconcile pass alike. A cancelled run
+        # is not a short run. It is the index, not the artifact directory, that
+        # remembers it — which is why cancelling one no longer erases it.
+        _set(run_id, status="cancelled", cancelled_stage=stop.stage,
+             error=str(stop), finished_at=_now())
     except Exception as exc:                             # noqa: BLE001
         _set(run_id, status="error", error=str(exc),
              traceback=traceback.format_exc(limit=6), finished_at=_now())
+    finally:
+        with _LOCK:
+            # Only retire our own event. A re-run of the same id queued while
+            # this one was finishing has already registered its own, and
+            # popping that would make the new run uncancellable.
+            if _CANCEL.get(run_id) is cancel:
+                del _CANCEL[run_id]
 
 
 # --------------------------------------------------------------------------
@@ -341,8 +418,10 @@ def create_run(req: RunRequest) -> Dict[str, Any]:
     # `run_id` is the positional key of _set — passing it again as a field
     # collides with it.
     _set(run_id, status="queued", mode=req.mode,
-         company=profile.identity.name, started_at=_now(), steps=[])
-    _POOL.submit(_execute, run_id, spec)
+         company=profile.identity.name, started_at=_now(), progress=None)
+    _store().add_version(run_id, json.loads(spec.model_dump_json()),
+                         author="user", message=f"created from {req.mode}")
+    _submit(run_id, spec)
     return {"run_id": run_id, "status": "queued", "company": profile.identity.name}
 
 
@@ -379,6 +458,24 @@ def put_spec(run_id: str, spec: Dict[str, Any]) -> Dict[str, Any]:
     return plan_rerun(validated, run_dir)
 
 
+@app.get("/api/runs/{run_id}/spec/versions")
+def list_spec_versions(run_id: str) -> List[Dict[str, Any]]:
+    """Every spec this run has actually built from, oldest first.
+
+    Metadata only. The specs themselves are large and the caller usually wants
+    the list — one version is `?seq=` below.
+    """
+    return _store().versions(run_id)
+
+
+@app.get("/api/runs/{run_id}/spec/versions/{seq}")
+def get_spec_version(run_id: str, seq: int) -> Dict[str, Any]:
+    version = _store().version(run_id, seq)
+    if version is None:
+        raise HTTPException(404, f"No version {seq} for run {run_id}")
+    return version
+
+
 @app.patch("/api/runs/{run_id}/spec")
 def patch_spec(run_id: str, body: SpecPatch) -> Dict[str, Any]:
     """Deep-merge a partial spec. The studio's per-field edits land here."""
@@ -403,8 +500,18 @@ def rerun(run_id: str) -> Dict[str, Any]:
     spec = _load_spec(run_id)
     report = plan_rerun(spec, RUNS_DIR / run_id)
     _set(run_id, status="queued", mode="rerun",
-         company=spec.profile.identity.name, started_at=_now(), steps=[])
-    _POOL.submit(_execute, run_id, spec)
+         company=spec.profile.identity.name, started_at=_now(), progress=None)
+    # The re-run is about to overwrite the artifacts the previous spec produced,
+    # and `spec.json` was overwritten by whatever edit prompted it. Without this
+    # row nothing can say what the outgoing dashboard was built from. A re-run
+    # with nothing dirty rebuilds nothing, so it replaces nothing and is not a
+    # version — otherwise leaning on the button fills the history with rows that
+    # each produced the same artifacts as the one before.
+    if report["dirty"]:
+        _store().add_version(
+            run_id, json.loads(spec.model_dump_json()), author="user",
+            message=f"re-run, rebuilding {len(report['dirty'])} stages")
+    _submit(run_id, spec)
     return {"run_id": run_id, "status": "queued", **report}
 
 
@@ -579,9 +686,8 @@ def preview_formula(req: FormulaRequest) -> Dict[str, Any]:
 
         # Series scope: evaluate for real, which means computing any KPI the
         # formula references.
-        from ..datagen.saas import GeneratedData
-        from ..metrics.engine import MetricContext, _Evaluator
         from ..kpi.selection import load_all_known
+        from ..metrics.engine import MetricContext, _Evaluator
 
         ctx = MetricContext(profile=spec.profile, tables=tables)
         evaluator = _Evaluator(ctx, {k.id: k for k in load_all_known()})
@@ -621,10 +727,9 @@ def list_ops() -> Dict[str, Any]:
 async def ingest_profile(file: UploadFile = File(...)) -> Dict[str, Any]:
     """Read, profile and shape-match an upload. Nothing is applied.
 
-    Replaces the old /api/upload, which profiled columns inside the route and
-    stopped there. This returns everything the Source panel needs to show the
-    user what they have and what it could become — and every suggestion is an
-    offer, not a change.
+    This is the only upload route. It returns everything the Source panel and
+    the "Bring your data" screen need to show the user what they have and what
+    it could become — and every suggestion is an offer, not a change.
     """
     suffix = Path(file.filename or "upload").suffix.lower()
     stored = UPLOADS_DIR / f"{uuid.uuid4().hex[:8]}{suffix}"
@@ -695,7 +800,6 @@ def clean_preview(run_id: str, body: RecipeRequest) -> Dict[str, Any]:
 @app.get("/api/runs/{run_id}/lineage")
 def get_lineage(run_id: str) -> Dict[str, Any]:
     """What was done to this run's data. Reads the recipe from the stored spec."""
-    from ..spec.schema import CleaningRecipe
     spec = _load_spec(run_id)
     tables = _load_run_tables(run_id)
     if not spec.cleaning.active:
@@ -718,7 +822,7 @@ def get_quality(run_id: str) -> Dict[str, Any]:
     """
     spec = _load_spec(run_id)
     tables = _load_run_tables(run_id)
-    origins = {t: "modelled" for t in spec.source.fill_gaps}
+    origins = dict.fromkeys(spec.source.fill_gaps, "modelled")
     return build_report(tables, spec.profile, origins=origins).as_dict()
 
 
@@ -801,7 +905,8 @@ def ai_estimate(run_id: str) -> Dict[str, Any]:
     from ..ai.client import AIUnavailable, build_client
     from ..ai.meter import estimate
     from ..ai.narrator import build_request as narrator_request
-    from ..ai.planner import build_request as planner_request, catalog
+    from ..ai.planner import build_request as planner_request
+    from ..ai.planner import catalog
 
     spec = _load_spec(run_id)
     # Built first, deliberately. Assembling the prompts means re-running the
@@ -871,7 +976,15 @@ def ai_apply(run_id: str, body: ApplyRequest) -> Dict[str, Any]:
         merged = apply_changes(current, changes)
     except Exception as exc:                             # noqa: BLE001
         raise HTTPException(422, str(exc))
-    return put_spec(run_id, json.loads(merged.model_dump_json()))
+    payload = json.loads(merged.model_dump_json())
+    result = put_spec(run_id, payload)
+    # Recorded here rather than in `put_spec`, which the studio also calls on
+    # every debounced keystroke. What makes this one worth keeping is that the
+    # author was the planner: the paths are the only record of what the model
+    # changed once `spec.json` has been overwritten.
+    _store().add_version(run_id, payload, author="planner",
+                         message=", ".join(c.path for c in changes))
+    return result
 
 
 @app.get("/api/ai/usage/{run_id}")
@@ -894,7 +1007,8 @@ def _run_inputs(run_id: str, spec: RunSpec) -> Dict[str, Any]:
     the request that will actually be sent.
     """
     from ..pipeline.runner import execute
-    from ..render.sections import SectionContext, build as build_sections
+    from ..render.sections import SectionContext
+    from ..render.sections import build as build_sections
 
     run_dir = RUNS_DIR / run_id
     if not run_dir.exists():
@@ -956,40 +1070,95 @@ def preview_design(req: BrandRequest) -> Dict[str, Any]:
 
 @app.get("/api/runs")
 def list_runs() -> List[Dict[str, Any]]:
-    out = []
+    """Every run this installation knows about, newest first.
+
+    The index is the source, not a glob of `summary.json`: that scan could only
+    see runs that finished, so it reported every recovered run as mode
+    "restored" with no start time, and dropped cancelled and failed runs
+    entirely along with the work 0.6 kept on disk for them.
+    """
+    index = _store()
+    # Picks up directories this server did not create — a CLI run, or a
+    # `runs.db` that was deleted while the artifacts stayed.
+    index.reconcile(RUNS_DIR)
     with _LOCK:
         live = {k: dict(v) for k, v in _STATE.items()}
+
+    out: List[Dict[str, Any]] = []
+    for row in index.list():
+        run_id = row["run_id"]
+        state = live.pop(run_id, None)
+        if state is not None:
+            # Only ahead of the index inside a single write, but prefer it so a
+            # run cannot read as queued while its first stage is running.
+            row = {**row, **{k: v for k, v in state.items()
+                             if k in STORE_COLUMNS}}
+        elif not (RUNS_DIR / run_id).exists():
+            # The artifacts were deleted from underneath the index. Say so; a
+            # run that quietly vanishes from history is the bug being fixed.
+            row["status"] = "missing"
+        out.append(_run_row(run_id, row))
+
+    # A run that reached `_STATE` but not yet the index cannot normally exist,
+    # since `_set` writes through before returning. Carried anyway so a future
+    # write-through failure loses durability, not the run.
     for run_id, state in live.items():
-        out.append({
-            "run_id": run_id, "status": state.get("status"),
-            "company": state.get("company"), "mode": state.get("mode"),
-            "started_at": state.get("started_at"),
-        })
-    # Recover completed runs from earlier server sessions.
-    for path in sorted(RUNS_DIR.glob("*/summary.json")):
-        run_id = path.parent.name
-        if run_id in live:
-            continue
-        try:
-            summary = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:                                # noqa: BLE001
-            continue
-        out.append({"run_id": run_id, "status": "done",
-                    "company": summary.get("company"), "mode": "restored",
-                    "started_at": None})
+        out.append(_run_row(run_id, state))
+
     return sorted(out, key=lambda r: r.get("started_at") or "", reverse=True)
+
+
+def _run_row(run_id: str, source: Dict[str, Any]) -> Dict[str, Any]:
+    """The history drawer's shape. `cancelled_stage` is what a resume starts from."""
+    return {
+        "run_id": run_id,
+        "status": source.get("status"),
+        "company": source.get("company"),
+        "mode": source.get("mode"),
+        "started_at": source.get("started_at"),
+        "finished_at": source.get("finished_at"),
+        "cancelled_stage": source.get("cancelled_stage"),
+        # A re-run reads `spec.json`, so a run that failed before writing one
+        # cannot be resumed. The server knows; offering the button anyway and
+        # letting it 404 would be a working-looking control that does nothing.
+        "resumable": (RUNS_DIR / run_id / "spec.json").exists(),
+    }
 
 
 @app.get("/api/runs/{run_id}")
 def get_run(run_id: str) -> Dict[str, Any]:
     state = _get(run_id)
-    if state is None:
-        summary_path = RUNS_DIR / run_id / "summary.json"
-        if summary_path.exists():
-            return {"run_id": run_id, "status": "done",
-                    "summary": json.loads(summary_path.read_text(encoding="utf-8"))}
-        raise HTTPException(404, "Run not found")
-    return state
+    if state is not None:
+        return state
+
+    summary_path = RUNS_DIR / run_id / "summary.json"
+    if summary_path.exists():
+        return {"run_id": run_id, "status": "done",
+                "summary": json.loads(summary_path.read_text(encoding="utf-8"))}
+    # No summary means the run did not finish — cancelled, or failed. Before the
+    # index that was indistinguishable from never having existed, so the answer
+    # was a 404 for a run whose stages were sitting on disk.
+    row = _store().get(run_id)
+    if row is not None:
+        return row
+    raise HTTPException(404, "Run not found")
+
+
+@app.post("/api/runs/{run_id}/cancel")
+def cancel_run(run_id: str) -> Dict[str, Any]:
+    """Ask a running pipeline to stop at its next stage boundary.
+
+    Fire and forget: the caller does not wait, because the engine finishes the
+    stage it is inside first and that can take a couple of seconds. The reply
+    says whether anything was actually signalled, so a Cancel on a run that has
+    already finished reads as `"idle"` rather than pretending to have stopped it.
+    """
+    with _LOCK:
+        event = _CANCEL.get(run_id)
+    if event is None:
+        return {"status": "idle", "run_id": run_id}
+    event.set()
+    return {"status": "cancelling", "run_id": run_id}
 
 
 @app.delete("/api/runs/{run_id}")
@@ -997,8 +1166,18 @@ def delete_run(run_id: str) -> Dict[str, str]:
     run_dir = RUNS_DIR / run_id
     if run_dir.exists():
         shutil.rmtree(run_dir, ignore_errors=True)
+    # Before the row, so a crash between the two leaves a row pointing at no
+    # directory — which lists as "missing" — rather than a directory nothing
+    # indexes, which the next reconcile would silently resurrect.
+    _store().delete(run_id)
     with _LOCK:
         _STATE.pop(run_id, None)
+        # Deleting a run mid-flight should stop it too, and must clear the
+        # event either way: a re-run under the same id would otherwise inherit
+        # a set flag and cancel itself before its first stage.
+        stale = _CANCEL.pop(run_id, None)
+    if stale is not None:
+        stale.set()
     return {"status": "deleted"}
 
 
@@ -1034,63 +1213,6 @@ def list_tables(run_id: str) -> List[Dict[str, Any]]:
     return out
 
 
-@app.post("/api/upload")
-async def upload(file: UploadFile = File(...)) -> Dict[str, Any]:
-    """Profile an uploaded spreadsheet.
-
-    Deterministic column profiling only — this is the honest half of Mode 3
-    (ROADMAP M6). The mapping and narrative agents are not wired up, so the UI
-    presents this as an inspection step rather than pretending to be an AI.
-    """
-    suffix = Path(file.filename or "upload").suffix.lower()
-    if suffix not in (".csv", ".xlsx", ".xls", ".tsv"):
-        raise HTTPException(400, f"Unsupported file type {suffix!r}. "
-                                 f"Use CSV, TSV or Excel.")
-    target = UPLOADS_DIR / f"{uuid.uuid4().hex[:8]}{suffix}"
-    target.write_bytes(await file.read())
-
-    try:
-        if suffix in (".csv", ".tsv"):
-            df = pd.read_csv(target, sep="\t" if suffix == ".tsv" else ",")
-        else:
-            df = pd.read_excel(target)
-    except Exception as exc:                             # noqa: BLE001
-        raise HTTPException(422, f"Could not parse the file: {exc}")
-
-    columns = []
-    for col in df.columns:
-        series = df[col]
-        non_null = series.dropna()
-        inferred = "unknown"
-        if pd.api.types.is_numeric_dtype(series):
-            inferred = "number"
-        elif pd.api.types.is_datetime64_any_dtype(series):
-            inferred = "date"
-        elif non_null.size:
-            parsed = pd.to_datetime(non_null.head(50), errors="coerce", format="mixed")
-            inferred = "date" if parsed.notna().mean() > 0.8 else "text"
-        columns.append({
-            "name": str(col),
-            "inferred_type": inferred,
-            "non_null": int(non_null.size),
-            "null_pct": round(float(series.isna().mean()), 4),
-            "unique": int(non_null.nunique()) if non_null.size else 0,
-            "sample": [None if pd.isna(v) else str(v) for v in non_null.head(3)],
-        })
-
-    return {
-        "filename": file.filename,
-        "rows": int(len(df)),
-        "columns": columns,
-        "stored_as": target.name,
-        "note": (
-            "Column profiling is deterministic. Automatic mapping to the KPI "
-            "data model and the AI narrative layer are not connected in this "
-            "build — see ROADMAP M6 and M7."
-        ),
-    }
-
-
 @app.get("/files/{run_id}/{path:path}")
 def serve_file(run_id: str, path: str):
     run_dir = (RUNS_DIR / run_id).resolve()
@@ -1103,12 +1225,32 @@ def serve_file(run_id: str, path: str):
 
 @app.get("/api/health")
 def health() -> Dict[str, Any]:
-    return {"status": "ok", "runs": len(_STATE), "ui": UI_DIR.exists()}
+    return {"status": "ok", "runs": len(_STATE), "ui": UI_DIST_DIR.exists()}
 
 
-if UI_DIR.exists():
-    app.mount("/", StaticFiles(directory=str(UI_DIR), html=True), name="ui")
+if UI_DIST_DIR.exists():
+    # Registered last, so it cannot shadow `/api/*` or `/files/*` — FastAPI
+    # matches routes in declaration order.
+    @app.get("/{path:path}")
+    def serve_app(path: str):
+        """Serve the bundle, and the shell for anything that is not a file.
+
+        Client-side routing means `/samples` and `/runs/abc` are real URLs the
+        user can reload or link to, but they are not files on disk. A static
+        mount answers 404 for them, which is what makes hand-rolled SPA routing
+        appear to work until the first refresh.
+        """
+        root = UI_DIST_DIR.resolve()
+        target = (root / path).resolve()
+        if path and target.is_file() and str(target).startswith(str(root)):
+            return FileResponse(target)
+        return FileResponse(root / "index.html")
+
 else:
     @app.get("/")
     def missing_ui() -> JSONResponse:
-        return JSONResponse({"error": f"UI directory not found at {UI_DIR}"}, 500)
+        # A checkout where the bundle was never built. Say what to run rather
+        # than serving a blank page: there is no vendored copy to fall back on.
+        return JSONResponse(
+            {"error": f"No front end at {UI_DIST_DIR}. Run "
+                      "`npm --prefix web ci && npm --prefix web run build`."}, 500)

@@ -39,6 +39,41 @@ def _q(qid: str, text: str, helptext: str, options: List[Dict[str, str]],
     }
 
 
+# Every sector the profile schema declares, in the order the survey offers
+# them: the two with their own content first, then the rest.
+SECTOR_LABELS: List[Dict[str, str]] = [
+    {"value": "saas", "label": "Software / subscription"},
+    {"value": "ecommerce", "label": "E-commerce or D2C"},
+    {"value": "retail", "label": "Retail (physical)"},
+    {"value": "services", "label": "Professional services"},
+    {"value": "manufacturing", "label": "Manufacturing"},
+    {"value": "marketplace", "label": "Marketplace or platform"},
+    {"value": "distribution", "label": "Distribution or wholesale"},
+    {"value": "hospitality", "label": "Hospitality and food service"},
+    {"value": "logistics", "label": "Logistics and transport"},
+    {"value": "healthcare", "label": "Healthcare services"},
+]
+
+
+def _sector_options() -> List[Dict[str, Any]]:
+    """The sector list, each entry marked exact or approximate.
+
+    Derived from `profile/sectors.py` rather than hand-maintained, so a sector
+    gaining its own pack stops being badged the moment the pack lands and
+    nobody has to remember to edit this file too.
+    """
+    from ..profile import sectors
+
+    options: List[Dict[str, Any]] = []
+    for entry in SECTOR_LABELS:
+        option = dict(entry)
+        if sectors.is_approximate(entry["value"]):
+            option["approximate"] = True
+            option["note"] = "cross-sector pack"
+        options.append(option)
+    return options
+
+
 QUESTIONS: List[Dict[str, Any]] = [
     # ---- Intent first -----------------------------------------------------
     _q("objective",
@@ -89,15 +124,17 @@ QUESTIONS: List[Dict[str, Any]] = [
        fills="identity.country", default="US", group="The business",
        allow_unknown=False),
 
+    # Every sector the schema declares is offered. Two have their own generator
+    # archetype and reviewed KPI pack; the rest run on the nearest archetype and
+    # the cross-sector `general` pack, and are badged `approximate` so the user
+    # chooses that knowingly. `profile/sectors.py` owns which is which, and the
+    # badge is derived from it rather than hand-maintained here — the previous
+    # list marked two sectors "Soon" and offered options that could not be
+    # picked at all, which is a worse answer than a labelled approximation.
     _q("business_model",
        "What kind of business is it?",
        "Selects the KPI library and the data model.",
-       [
-           {"value": "saas", "label": "Software / subscription"},
-           {"value": "ecommerce", "label": "E-commerce or D2C"},
-           {"value": "services", "label": "Professional services", "disabled": True},
-           {"value": "manufacturing", "label": "Manufacturing", "disabled": True},
-       ],
+       _sector_options(),
        fills="business_model.type", default="saas", group="The business",
        allow_unknown=False),
 

@@ -19,6 +19,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 import pandera.pandas as pa
 
+
 def _parses_as_month(series: pd.Series) -> bool:
     """Accept anything that reads as a month, whatever it is stored as."""
     if isinstance(series.dtype, pd.PeriodDtype):
