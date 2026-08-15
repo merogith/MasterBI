@@ -60,7 +60,16 @@ def fill_missing_tables(tables: Dict[str, pd.DataFrame], profile,
     if not fill:
         return tables, origins
 
-    from ..datagen.saas import generate
+    # Route through the registry the rest of the pipeline uses, not the SaaS
+    # module by name. Gap-filling an e-commerce upload with `datagen.saas`
+    # synthesised subscription tables — MRR movements for a retailer — and
+    # labelled them MODELLED, which made an invented number look like a
+    # deliberate one rather than a wrong one.
+    from ..datagen import GENERATORS
+    from ..profile.sectors import resolve_archetype
+
+    archetype = resolve_archetype(profile.business_model.type.value).value
+    generate = GENERATORS.get(archetype) or GENERATORS["saas"]
     synthetic = generate(profile)
 
     out = dict(tables)

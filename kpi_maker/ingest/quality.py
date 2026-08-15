@@ -15,8 +15,9 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from ..contract.schemas import FACT_SCHEMAS, REQUIRED_TABLES
+from ..contract.schemas import REQUIRED_TABLES, schemas_for
 from .shapes import shape_for_table
+from .table_kpis import TABLE_KPIS
 
 
 @dataclass
@@ -58,6 +59,9 @@ def build_report(tables: Dict[str, pd.DataFrame], profile,
     report = QualityReport()
     origins = origins or {}
 
+    from ..profile.sectors import resolve_archetype
+    archetype = resolve_archetype(profile.business_model.type.value).value
+
     present = [name for name, frame in tables.items()
                if frame is not None and not frame.empty]
     report.tables_present = sorted(present)
@@ -70,8 +74,12 @@ def build_report(tables: Dict[str, pd.DataFrame], profile,
                 f"{name} is required and was not mapped — without it there is no "
                 f"monthly spine to compute anything against")
 
+    # The archetype's own tables, not the union. Listing what is missing is
+    # advice, and advice has to be for this business: a retailer asked to go and
+    # find `mrr_movements` and `sales_capacity` has been handed a SaaS to-do
+    # list, and nothing on it will ever apply to them.
     report.tables_missing = [
-        _missing_entry(name, profile) for name in sorted(FACT_SCHEMAS)
+        _missing_entry(name, profile) for name in sorted(schemas_for(archetype))
         if name not in present
     ]
 
@@ -84,10 +92,16 @@ def build_report(tables: Dict[str, pd.DataFrame], profile,
     report.unmapped_columns = sorted(set(report.unmapped_columns))
 
     from ..contract.schemas import validate_schemas
-    _, problems = validate_schemas(tables)
+
+    # `validate_schemas` has taken an archetype since it was written — its own
+    # docstring says "a retailer held to the union would be asked for `mrr`" —
+    # and this, the one caller that judges a user's own upload, never passed it.
+    # So a retailer was told their data was missing `final_acv`.
+    _, problems = validate_schemas(tables, archetype=archetype)
     report.schema_problems = problems
 
-    report.kpis_available, report.kpis_blocked = _kpi_counts(present, profile)
+    report.kpis_available, report.kpis_blocked = _kpi_counts(
+        [entry["table"] for entry in report.tables_missing], profile)
     return report
 
 
@@ -104,49 +118,64 @@ def _missing_entry(table: str, profile) -> Dict[str, Any]:
     }
 
 
-# Which fact table each metric needs. Derived by running the metrics engine
-# against a table-by-table probe would be exact but expensive; this map is the
-# same information stated once, and the count is only ever advisory.
-TABLE_KPIS = {
-    "monthly_financials": ["arr", "arr_growth_yoy", "gross_margin_pct",
-                           "ebitda_margin", "rule_of_40", "cash_runway_months",
-                           "burn_multiple", "billings", "fcf_margin",
-                           "rnd_pct_revenue", "sm_pct_revenue", "crpo_growth"],
-    "mrr_movements": ["net_new_arr", "nrr", "grr", "logo_churn_rate",
-                      "expansion_share", "quick_ratio", "customer_count",
-                      "arpa", "revenue_concentration_top10"],
-    "customers": ["revenue_concentration_top10", "enterprise_customers"],
-    "pipeline": ["win_rate", "pipeline_coverage", "sales_cycle_days",
-                 "blended_cac", "pipeline_created"],
-    "marketing": ["lead_to_mql_rate", "mql_to_sql_rate"],
-    "headcount": ["arr_per_fte", "headcount_growth", "employee_attrition"],
-    "product_usage": ["activation_rate", "engagement_ratio", "time_to_value_days"],
-    "sales_capacity": ["quota_attainment", "arr_per_rep", "rep_ramp_months"],
-}
+# `TABLE_KPIS` — which KPIs each fact table unlocks — is **generated**, by
+# `tools/gen_table_kpis.py`, and imported above.
+#
+# It was a hand-written dict of SaaS ids, which failed twice over. Visibly: the
+# intersection with any other pack's scorecard was empty, so a retailer
+# uploading a P&L was told `monthly_financials` would unlock *nothing* — the
+# exact discouragement this report exists to remove. Invisibly: it restated a
+# fact the metrics engine already owns, so it was wrong the moment anyone added
+# a KPI, and it was — `orders`, `traffic`, `inventory` and `buyers` were not
+# keys at all. The generator derives it by taking each table away and seeing
+# which KPIs stop computing, so the map cannot disagree with the engine without
+# CI saying so.
 
 
 def _kpis_needing(table: str, profile) -> tuple:
-    """(kpi ids, how many of them this profile would actually have selected)."""
+    """(kpi ids, how many of them this profile would actually have selected).
+
+    A count of `None` means "no opinion", not "none". The two used to be the
+    same answer: when the map knew nothing about a profile's pack the
+    intersection came out empty and the report said supplying the table would
+    unlock zero KPIs — which reads as "don't bother" and was simply wrong.
+    Silence is the honest answer to a question we cannot answer.
+    """
     ids = TABLE_KPIS.get(table, [])
     try:
         from ..kpi.selection import select
         selected = {k.id for k in select(profile).kpis}
     except Exception:                                       # noqa: BLE001
-        return ids, len(ids)
+        return ids, None
     relevant = [i for i in ids if i in selected]
-    return relevant or ids, len(relevant)
+    if not relevant:
+        return ids, None
+    return relevant, len(relevant)
 
 
-def _kpi_counts(present: List[str], profile) -> tuple:
+def _kpi_counts(missing: List[str], profile) -> tuple:
+    """(available, blocked) for this profile's scorecard.
+
+    Counted from what is **missing**, not from what is present, and the
+    difference is not a refactor. A KPI needing both the P&L and the orders file
+    appears under both, so counting the union of present tables called it
+    available on the strength of the P&L alone — while `tables_missing` on the
+    same screen said supplying orders would unlock it. The report contradicted
+    itself: four missing tables, thirteen KPIs named against them, and "0
+    blocked" printed underneath.
+
+    One missing dependency blocks a KPI. That is what the map means, and it is
+    what the user sees when the tile is absent from the dashboard.
+    """
     try:
         from ..kpi.selection import select
         selected = {k.id for k in select(profile).kpis}
     except Exception:                                       # noqa: BLE001
         return 0, 0
 
-    reachable = set()
-    for table in present:
-        reachable.update(TABLE_KPIS.get(table, []))
+    blocked = set()
+    for table in missing:
+        blocked.update(TABLE_KPIS.get(table, []))
 
-    available = len(selected & reachable)
-    return available, len(selected) - available
+    blocked &= selected
+    return len(selected) - len(blocked), len(blocked)
