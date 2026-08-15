@@ -100,11 +100,16 @@ def _source_from_uploads(ctx) -> Any:
     if missing:
         raise ValueError(f"uploaded file(s) not found: {', '.join(missing)}")
 
-    data, origins = build_from_uploads(paths, ctx.get("resolve"), ctx.spec)
+    data, origins, plans = build_from_uploads(paths, ctx.get("resolve"), ctx.spec)
     # The origin map has to reach the metrics stage, which is where `basis` is
     # decided. It is not a stage output because it describes the data rather
     # than being one.
     ctx.origins = origins
+    # The plans are *not* set on the context — they travel on `data`, which is
+    # this stage's cached output, so a warm re-run that reuses `source` and
+    # rebuilds `model` still has them. See `GeneratedData.upload_plans`.
+    for plan in plans:
+        ctx.say(f"  Source    {plan.filename} -> {plan.table} ({plan.note})")
     ctx.say(f"  Source    {len(data.tables)} table(s) from {len(paths)} upload(s)")
     return data
 
@@ -125,24 +130,51 @@ def _clean(ctx) -> Dict[str, pd.DataFrame]:
     return cleaned
 
 
-@stage("model", needs=("clean",), reads=("model",),
+@stage("model", needs=("clean", "source"), reads=("model",),
        label="Building the fact-table model")
 def _model(ctx) -> Dict[str, pd.DataFrame]:
     tables = ctx.get("clean")
     spec = ctx.spec.model
 
-    if spec.mapping:
+    # What shape detection proposed for each upload, with anything the user
+    # wrote explicitly layered over it per field. Without this the detected
+    # mapping would have nowhere to go: `source` decides which table a file
+    # becomes, but renaming its columns has to wait until after `clean`, which
+    # works on the names the user recognises.
+    #
+    # `source` is in `needs` for this alone — the tables come through `clean` —
+    # because reading a stage the graph does not say you need is what `ctx.get`
+    # raises on, and rightly.
+    from ..ingest.pipeline import detected_mapping
+    mapping = detected_mapping(getattr(ctx.get("source"), "upload_plans", None) or [],
+                               spec.mapping)
+
+    if mapping:
         # Mapping runs AFTER cleaning on purpose: the user cleans using their
         # own column names, which are the ones the profiler reported problems
         # against, and only then are those columns renamed to canonical ones.
         from ..ingest.pipeline import apply_mapping
-        tables = apply_mapping(tables, spec.mapping)
+        tables = apply_mapping(tables, mapping)
 
     if spec.calculated_columns:
         from ..prep.model import apply_model
         tables = apply_model(tables, spec, ctx)
 
     if ctx.spec.source.kind.value == "upload":
+        # An export carries the lines an accountant types; the contract wants
+        # the ones an accountant derives. Both are the same numbers, and the
+        # gate would reject any other value for the derived ones — so computing
+        # them here is completing the user's data, not modelling it. Done after
+        # the user's own calculated columns so an explicit definition wins.
+        from ..ingest.pipeline import derive_pl_columns
+        fin = tables.get("monthly_financials")
+        if fin is not None and not fin.empty:
+            tables = dict(tables)
+            tables["monthly_financials"], added = derive_pl_columns(fin)
+            if added:
+                ctx.say(f"  Model     derived {', '.join(added)} from the P&L lines "
+                        f"supplied")
+
         # Uploaded data meets the contract here, once it is canonical. Tier 1
         # still raises; Tier 2 becomes warnings the appendix reports.
         from ..ingest.pipeline import gate_uploaded

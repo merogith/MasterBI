@@ -735,20 +735,29 @@ async def ingest_profile(file: UploadFile = File(...)) -> Dict[str, Any]:
 
     try:
         result = read_any(stored)
+        # Asked of the pipeline itself rather than re-derived here. This route
+        # used to answer `table_key: stored.stem` under a comment promising the
+        # rule had one implementation — and then the rule moved: the table a
+        # file becomes is now decided by shape detection, so the screen would
+        # have promised `a1b2c3d4` while the run produced `monthly_financials`.
+        # One call, one answer, and the `plan` it returns is what the user is
+        # shown *and* what the run will do.
+        from ..ingest.pipeline import plan_uploads
+        _tables, plans, _detail = plan_uploads([stored])
     except Exception as exc:                             # noqa: BLE001
         stored.unlink(missing_ok=True)
         raise HTTPException(422, str(exc))
 
     profile = profile_table(result.frame)
     proposals = detect_shape(result.frame, profile)
+    plan = plans[0]
 
     return {
         "filename": file.filename,
         "stored_as": stored.name,
-        # The key this file occupies once adopted as a source. Returned rather
-        # than left for the UI to derive: `load_uploads` decides it, and two
-        # implementations of that rule would drift.
-        "table_key": stored.stem,
+        # The table this file occupies once adopted as a source.
+        "table_key": plan.table,
+        "plan": plan.as_dict(),
         "read": result.as_dict(),
         "profile": profile.as_dict(),
         "shapes": [p.as_dict() for p in proposals[:3]],

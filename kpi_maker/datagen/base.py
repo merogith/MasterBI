@@ -61,6 +61,17 @@ class GeneratedData:
     tables: Dict[str, pd.DataFrame]
     anomalies: List[Anomaly] = field(default_factory=list)
     checks: List[str] = field(default_factory=list)
+    # Empty for generated data, one entry per file for uploads: which fact
+    # table each became and the column mapping shape detection proposed.
+    #
+    # It travels *in the stage output* rather than on `RunContext`, and that is
+    # the whole point. A context side channel is set only when its stage runs,
+    # so a warm re-run that reuses `source` and rebuilds `model` would find it
+    # empty — the mapping would silently vanish and the run would degrade to raw
+    # column names with nothing raised. That is the exact `RunContext`
+    # side-channel bug the audit found in `lineage`/`origins`, and repeating it
+    # in a new place was not worth the smaller diff.
+    upload_plans: List[Any] = field(default_factory=list)
 
     def __getitem__(self, key: str) -> pd.DataFrame:
         return self.tables[key]
