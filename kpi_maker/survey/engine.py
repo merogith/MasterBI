@@ -16,6 +16,12 @@ from .questions import QUESTION_BY_ID, QUESTIONS
 
 UNKNOWN = "__unknown__"
 
+# Provenance for a figure read off the user's own file. The exact `ingested:`
+# tag naming the file is set by `ingest/derive.py`; this is the fallback for a
+# value that reached the solve without one, and it still has to read as
+# measured rather than assumed — the appendix draws that line.
+_measured_provenance = "ingested:upload"
+
 # Name parts for generated companies. Deliberately fictional-sounding: a
 # generated report must never look like it describes a real business.
 _PREFIX = ["North", "Cobalt", "Vertex", "Lumen", "Harbor", "Quill", "Aster",
@@ -49,10 +55,22 @@ def _explicit(answers: Dict[str, Any], qid: str) -> Optional[Any]:
 
 
 def build_profile(answers: Dict[str, Any], *, name: Optional[str] = None,
-                  seed: Optional[int] = None) -> CompanyProfile:
-    """Turn survey answers into a validated, internally consistent profile."""
+                  seed: Optional[int] = None,
+                  measured: Optional[Dict[str, Any]] = None) -> CompanyProfile:
+    """Turn survey answers into a validated, internally consistent profile.
+
+    `measured` carries figures read off an uploaded file, by profile path, and
+    it has to arrive **here** rather than be patched on afterwards. The
+    consistency step below *solves* customer count from revenue so the profile's
+    cross-block validator passes by construction; overwriting revenue after that
+    breaks the equation it just satisfied. Measured on a real 12-month export:
+    `revenue does not reconcile with the customer book: 312 customers x 24,000
+    blended ACV = 7,488,000, but financials.revenue is 1,270,200 (490% apart)` —
+    a 422 on a perfectly good file, from a validator that was right.
+    """
     rng = random.Random(seed if seed is not None else 20250806)
     provenance: Dict[str, str] = {}
+    measured = dict(measured or {})
 
     def take(qid: str, path: str) -> Any:
         value, defaulted = _answer(answers, qid)
@@ -78,6 +96,11 @@ def build_profile(answers: Dict[str, Any], *, name: Optional[str] = None,
     revenue = D.REVENUE_BANDS.get(revenue_band, 7_500_000)
     headcount = D.HEADCOUNT_BANDS.get(headcount_band, 110)
 
+    if "financials.revenue" in measured:
+        revenue = float(measured.pop("financials.revenue"))
+        provenance["financials.revenue"] = _measured_provenance
+    measured.pop("size.revenue_band", None)   # a band is a coarser restatement
+
     # --- The consistency step -------------------------------------------
     # Segment mix gives us a blended ACV. Customer count is then SOLVED, not
     # guessed, so `customers x blended_acv == revenue` holds exactly and the
@@ -87,6 +110,22 @@ def build_profile(answers: Dict[str, Any], *, name: Optional[str] = None,
     provenance["market.customer_count"] = (
         f"derived:revenue/blended_acv={blended_acv:,.0f}"
     )
+
+    if "market.customer_count" in measured:
+        # Both sides measured, so the assumption that has to yield is the one
+        # nobody measured: the segment ACVs. Scaling them keeps the identity
+        # exact instead of letting two true numbers fail a validator between
+        # them.
+        counted = max(1, int(measured.pop("market.customer_count")))
+        implied = revenue / counted
+        if blended_acv > 0:
+            scale = implied / blended_acv
+            segments = [{**s, "avg_acv": round(s["avg_acv"] * scale)}
+                        for s in segments]
+        customer_count = counted
+        provenance["market.customer_count"] = _measured_provenance
+        provenance["market.segments.avg_acv"] = (
+            "derived:revenue/measured customer count")
 
     # --- Optional deep-dive answers override the derived assumptions -------
     churn_answer = _explicit(answers, "churn_level")
@@ -143,7 +182,7 @@ def build_profile(answers: Dict[str, Any], *, name: Optional[str] = None,
 
     company_name = name or generate_name(rng)
 
-    return CompanyProfile(
+    profile = CompanyProfile(
         identity={
             "name": company_name,
             "country": country,
@@ -208,6 +247,30 @@ def build_profile(answers: Dict[str, Any], *, name: Optional[str] = None,
         seed=seed if seed is not None else 20250806,
         history_months=36,
     )
+
+    # Whatever the file said that did not feed the consistency solve — history
+    # length, gross margin, currency, the segment list. Applied last and
+    # re-validated, so a measured figure that *does* break an identity is
+    # rejected here rather than surfacing as a wrong number in a board pack.
+    return _overlay(profile, measured) if measured else profile
+
+
+def _overlay(profile: CompanyProfile, measured: Dict[str, Any]) -> CompanyProfile:
+    """Set measured values by dotted path and re-validate the whole profile."""
+    dump = profile.model_dump(mode="json")
+    for path, value in measured.items():
+        node, parts = dump, path.split(".")
+        for part in parts[:-1]:
+            nxt = node.get(part)
+            if not isinstance(nxt, dict):
+                node = None
+                break
+            node = nxt
+        if node is None:
+            continue                     # a path this profile does not have
+        node[parts[-1]] = value
+        dump["provenance"][path] = profile.provenance.get(path, _measured_provenance)
+    return CompanyProfile(**dump)
 
 
 def generate_name(rng: Optional[random.Random] = None) -> str:

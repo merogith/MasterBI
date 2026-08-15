@@ -343,26 +343,79 @@ def test_the_survey_runs_end_to_end_on_averages(page):
     page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
 
 
-def test_bringing_data_profiles_the_file_without_running_it(page, tmp_path):
-    """Profiling is not adoption, and the screen has to say which it did.
+def test_bringing_data_walks_the_funnel_to_a_finished_run(page, tmp_path):
+    """The screen that had no button, all the way to a board pack.
 
-    The upload inspects a file and changes nothing: a run needs a company
-    profile before it can read anyone's numbers. A screen that took a file and
-    looked like it had started something would be promising a flow that does
-    not exist yet.
+    "Bring your data" used to profile a file, print its columns, and stop. The
+    only actual route was to start a *synthetic* run, open the Studio, and
+    upload the same file again from the Source panel — two screens and a wasted
+    run to do one thing. This walks the four steps that replaced that: read it,
+    check the mapping, see what it will produce, answer what the file could not
+    say, run.
+
+    Deliberately a file whose name says nothing about its contents, because
+    keying uploads by their stem is the bug the funnel is built on top of.
     """
-    csv = tmp_path / "monthly.csv"
-    csv.write_text("month,revenue,cogs\n2025-01,1000,400\n2025-02,1100,430\n",
-                   encoding="utf-8")
+    csv = tmp_path / "q4_export.csv"
+    csv.write_text(
+        "Period,Total Revenue,Cost of Sales,Marketing\n"
+        + "".join(f"2025-{m:02d},{100000 + m * 900},{40000 + m * 300},{7000 + m * 40}\n"
+                  for m in range(1, 13)),
+        encoding="utf-8")
 
     page.click('[data-nav="builder"]')
     _visible(page, "builder")
     page.set_input_files("#file-input", str(csv))
 
-    page.wait_for_selector("#upload-result table tbody tr")
-    report = page.locator("#upload-result")
-    assert "monthly.csv" in report.inner_text()
-    assert report.locator("table tbody tr").count() == 3, \
-        "one row per column of the uploaded file"
-    # Still on the builder screen: nothing was run.
-    assert page.locator("#view-builder:not([hidden])").count() == 1
+    # Step 2 — what we read. The table is the decision, not the filename.
+    page.wait_for_selector("#to-quality")
+    read = page.locator("#view-builder").inner_text()
+    assert "monthly financials" in read.lower(), read[:400]
+    assert page.locator(".mapping-table tbody tr").count() >= 3, \
+        "the mapping editor listed no fields"
+    assert page.locator(".mapping-table .map-select").count() >= 3, \
+        "the mapping is not editable, so a wrong guess cannot be corrected"
+
+    # Step 3 — what you will get, before committing to anything.
+    page.click("#to-quality")
+    page.wait_for_selector("#to-questions")
+    gate = page.locator("#view-builder").inner_text()
+    assert "KPI" in gate, gate[:400]
+    assert "monthly_financials" in gate
+
+    # Step 4 — only the questions the file could not answer.
+    page.click("#to-questions")
+    page.wait_for_selector("#run-upload")
+    questions = page.locator(".question[data-qid]")
+    assert questions.count() > 0, "the shortened survey asked nothing at all"
+    assert questions.count() < 19, \
+        "nothing was shortened — the file's own answers were asked for again"
+
+    page.fill(".name-input", "Wayfarer Freight")
+    page.click("#run-upload")
+    _visible(page, "running")
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    assert page.locator("#res-tiles .tile").count() > 0, \
+        "the upload produced a results screen with no numbers on it"
+    # Names the company *this funnel* was told about, so the results cannot be
+    # some other run that happened to be on screen.
+    assert "Wayfarer Freight" in page.locator("#res-company").inner_text()
+
+
+def test_the_funnel_goes_backwards_without_losing_the_file(page, tmp_path):
+    """Each step is reversible. A gate you cannot walk back out of is a trap."""
+    csv = tmp_path / "ledger.csv"
+    csv.write_text("Period,Total Revenue,Cost of Sales\n2025-01,1000,400\n"
+                   "2025-02,1100,430\n", encoding="utf-8")
+
+    page.click('[data-nav="builder"]')
+    _visible(page, "builder")
+    page.set_input_files("#file-input", str(csv))
+    page.wait_for_selector("#to-quality")
+    page.click("#to-quality")
+    page.wait_for_selector("#to-questions")
+
+    page.click(".survey-nav .ghost")
+    page.wait_for_selector("#to-quality")
+    assert page.locator(".mapping-table tbody tr").count() >= 2, \
+        "going back lost the file that had already been read"

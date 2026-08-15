@@ -758,3 +758,61 @@ tbody tr:hover { background: var(--accent-soft); }
 
 .field input[type="range"] { width: 100%; accent-color: var(--accent); }
 .range-value { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* -- Bring your data: the funnel ------------------------------------------ */
+
+.funnel-steps { display: flex; gap: 8px; list-style: none; padding: 0;
+  margin: 0 0 26px; flex-wrap: wrap; }
+.funnel-step { display: flex; align-items: center; gap: 8px; flex: 1 1 150px;
+  padding: 10px 14px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--muted); font-size: 13px; }
+.funnel-step.current { border-color: var(--accent); color: var(--text-primary); }
+.funnel-step.done { color: var(--text-secondary); }
+.funnel-num { display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; flex: none; border-radius: 50%;
+  border: 1px solid currentColor; font-size: 11.5px;
+  font-variant-numeric: tabular-nums; }
+.funnel-step.current .funnel-num { background: var(--accent); color: var(--bg);
+  border-color: var(--accent); }
+.funnel-step.done .funnel-num { border-style: solid; opacity: .6; }
+
+/* Confidence as a bar. A number between 0 and 1 tells a business user nothing;
+   a bar that is nearly full tells them everything they need before deciding
+   whether to look closer. */
+.confidence { display: block; width: 62px; height: 6px; border-radius: 3px;
+  background: var(--border); overflow: hidden; }
+.confidence-fill { display: block; height: 100%; border-radius: 3px;
+  background: var(--muted); }
+.confidence.sure .confidence-fill { background: var(--good); }
+.confidence.maybe .confidence-fill { background: var(--warning); }
+.confidence.weak .confidence-fill { background: var(--critical); }
+.confidence-yours { font-size: 11.5px; color: var(--accent); }
+
+.mapping-table .map-select { font: inherit; font-size: 12.5px; width: 100%;
+  max-width: 220px; background: none; color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 4px 6px; }
+.mapping-table .map-select:focus-visible { outline: 2px solid var(--accent);
+  outline-offset: 1px; }
+.required-pill { margin-left: 6px; font-size: 10.5px; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--warning); }
+.reason-cell { font-size: 12.5px; color: var(--text-secondary);
+  white-space: normal; max-width: 320px; }
+
+.table-list { list-style: none; padding: 0; margin: 0 0 22px;
+  display: flex; flex-wrap: wrap; gap: 8px; }
+.table-list li { display: flex; align-items: center; gap: 7px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 6px 11px; font-size: 13px; }
+.ok-pill { font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--muted); }
+
+.fill-toggle { display: flex; align-items: center; gap: 7px; font-size: 12.5px;
+  color: var(--text-secondary); cursor: pointer; }
+.fill-toggle input { accent-color: var(--accent); }
+
+.column-detail { margin: 20px 0; }
+.column-detail summary { cursor: pointer; font-size: 13px;
+  color: var(--text-secondary); }
+.column-detail summary:focus-visible { outline: 2px solid var(--accent);
+  outline-offset: 2px; }

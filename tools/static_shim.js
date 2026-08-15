@@ -121,8 +121,12 @@
     const run = path.match(/^\/api\/runs\/([^/]+)$/);
     if (run) return prebuilt(`data/runs/${run[1]}/summary.json`);
 
-    if (path === '/api/ingest/profile') {
-      return Promise.resolve(fail('Reading and profiling a spreadsheet needs pandas. ' + OFFLINE_NOTE));
+    // Every step of the upload funnel, not just the first. Reading a
+    // spreadsheet, judging it against the fact-table contract and deriving a
+    // profile from it are all pandas — there is no static stand-in for any of
+    // them, and the funnel shows whichever message it gets in its error banner.
+    if (path.startsWith('/api/ingest/')) {
+      return Promise.resolve(fail('Reading a spreadsheet needs pandas. ' + OFFLINE_NOTE));
     }
     return Promise.resolve(fail(`No static stand-in for ${path}`, 404));
   }

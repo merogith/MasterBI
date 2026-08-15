@@ -86,11 +86,15 @@ export interface RunRow {
 }
 
 export interface CreateRunRequest {
-  mode: 'sample' | 'survey' | 'surprise';
+  mode: 'sample' | 'survey' | 'surprise' | 'upload';
   sample_id?: string;
   answers?: Record<string, unknown>;
   company_name?: string;
   seed?: number;
+  /** `upload` mode: the `stored_as` names the profile route handed back. */
+  uploads?: string[];
+  fill_gaps?: string[];
+  spec?: Record<string, unknown>;
 }
 
 export interface CreateRunResponse {
@@ -220,16 +224,75 @@ export interface UploadShape {
   missing_required?: string[];
 }
 
+/** What the *run* will do with this file, as opposed to what it could do.
+ *
+ *  `shapes` is the ranked list of candidates; `plan` is the decision. They are
+ *  separate because the screen shows both — "we read this as a P&L export" and
+ *  "here is what else it resembled" are different questions. */
+export interface UploadPlan {
+  filename: string;
+  table: string;
+  shape: string | null;
+  confidence: number;
+  mapping: Record<string, string>;
+  note: string;
+  read_fixes: string[];
+}
+
 export interface UploadProfile {
   filename: string;
   /** Where the server put the file. Adoption records this, not the original
    *  name — two uploads called `data.csv` are two different files. */
   stored_as?: string;
   table_key?: string;
+  plan?: UploadPlan;
   read?: { rows: number; columns: string[]; notes?: string[] };
   profile?: { rows?: number; columns?: UploadColumn[]; problems?: string[] };
   shapes?: UploadShape[];
 }
+
+export interface MissingTable {
+  table: string;
+  unlocks_kpis: number | null;
+  unlocks: string;
+  supply_by: string;
+  shape_id: string | null;
+  example_kpis: string[];
+}
+
+export interface QualityReport {
+  can_run: boolean;
+  tables_present: string[];
+  tables_missing: MissingTable[];
+  tables_modelled: string[];
+  schema_problems: string[];
+  blocking: string[];
+  kpis_available: number;
+  kpis_blocked: number;
+  plans?: UploadPlan[];
+}
+
+export interface DerivedProfile {
+  values: Record<string, unknown>;
+  provenance: Record<string, string>;
+  notes: string[];
+  still_needed: { path: string; question: string }[];
+  /** Survey question ids the file could not answer. Resolved on the server:
+   *  question ids and profile paths meet in `questions.py`'s `fills`, and a
+   *  second implementation of that join would be one more thing to keep true. */
+  remaining_questions: string[];
+}
+
+export const ingestQuality = (body: {
+  uploads: string[]; answers?: Record<string, unknown>;
+}) => api<QualityReport>('/api/ingest/quality', {
+  method: 'POST', body: JSON.stringify(body),
+});
+
+export const ingestDerive = (body: { uploads: string[] }) =>
+  api<DerivedProfile>('/api/ingest/derive', {
+    method: 'POST', body: JSON.stringify(body),
+  });
 
 /** Multipart, so no JSON content-type — `api()` would set one and break the
  *  boundary. Profiling is read-only: nothing about a run changes here. */

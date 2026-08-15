@@ -48,7 +48,7 @@ from ..prep.recipe import preview_recipe
 from ..profile.schema import CompanyProfile
 from ..render.sections import REGISTRY as SECTION_REGISTRY
 from ..render.sections import default_order
-from ..spec.schema import ALL_ARTIFACTS, PATCHABLE_SECTIONS, RunSpec
+from ..spec.schema import ALL_ARTIFACTS, PATCHABLE_SECTIONS, RunSpec, SourceKind
 from ..store import COLUMNS as STORE_COLUMNS
 from ..store import store as _open_store
 from ..survey import as_json as survey_json
@@ -126,11 +126,21 @@ async def allow_private_network(request, call_next):
 # --------------------------------------------------------------------------
 
 class RunRequest(BaseModel):
-    mode: str                                  # sample | survey | surprise
+    mode: str                                  # sample | survey | surprise | upload
     sample_id: Optional[str] = None
     answers: Optional[Dict[str, Any]] = None
     company_name: Optional[str] = None
     seed: Optional[int] = None
+    # `upload` mode: the `stored_as` names `/api/ingest/profile` handed back.
+    # Uploading was already possible by launching a survey run and then editing
+    # `source` in the Studio — two screens and a re-run to do one thing, which
+    # is why "Bring your data" ended in a paragraph of instructions instead of
+    # a button.
+    uploads: Optional[List[str]] = None
+    # Tables the user agreed to synthesise for the gaps. Opt-in, per table, and
+    # never a default: an invented number beside a measured one with nothing
+    # marking the difference is the failure this whole path exists to avoid.
+    fill_gaps: Optional[List[str]] = None
     # Adjustments applied on top of whatever the mode produces. This is what
     # lets a preset be launched already customised rather than only inspected
     # after the fact.
@@ -398,9 +408,40 @@ def create_run(req: RunRequest) -> Dict[str, Any]:
                                     seed=req.seed)
         elif req.mode == "surprise":
             profile = surprise_profile(req.seed)
+        elif req.mode == "upload":
+            # The same survey answers, over a profile the data already filled
+            # in. `/api/ingest/derive` reads history, revenue, currency and
+            # segments off the files, so the questions that reach here are the
+            # ones no export contains — sector, objective, audience.
+            if not req.uploads:
+                raise HTTPException(400, "upload mode needs at least one file")
+            read = _uploaded_tables(list(req.uploads))
+            derived = derive_profile_fields(
+                read["tables"],
+                read["plans"][0].filename if read["plans"] else "upload").as_dict()
+            # Measured figures go *into* the build, not over the top of it. The
+            # survey solves customer count from revenue so the profile's own
+            # cross-block validator passes by construction; replacing revenue
+            # afterwards breaks the equation it had just satisfied, and a clean
+            # 12-month export was rejected with "revenue does not reconcile
+            # with the customer book … 490% apart".
+            profile = build_profile(req.answers or {},
+                                    name=req.company_name or None,
+                                    seed=req.seed,
+                                    measured=derived["values"])
+            profile.provenance.update(derived["provenance"])
         else:
             raise HTTPException(400, f"Unknown mode {req.mode!r}")
         spec = RunSpec.for_profile(profile)
+        if req.mode == "upload":
+            missing = [n for n in req.uploads if not (UPLOADS_DIR / n).exists()]
+            if missing:
+                raise HTTPException(
+                    404, f"uploaded file(s) no longer on the server: "
+                         f"{', '.join(missing)} — upload them again")
+            spec.source.kind = SourceKind.upload
+            spec.source.uploads = list(req.uploads)
+            spec.source.fill_gaps = list(req.fill_gaps or [])
         if req.spec:
             # The caller's adjustments merge over the mode's defaults, so a
             # preset can be launched already customised.
@@ -833,20 +874,111 @@ def get_quality(run_id: str) -> Dict[str, Any]:
     return build_report(tables, spec.profile, origins=origins).as_dict()
 
 
+def _uploaded_tables(names: List[str]) -> Dict[str, Any]:
+    """Read stored uploads exactly as a run would, without starting one.
+
+    Through `plan_uploads`, so the tables are keyed and typed the way the
+    pipeline will key and type them. A screen that previewed a different
+    reading from the one the run performs would be worse than no preview.
+    """
+    paths = [UPLOADS_DIR / name for name in names]
+    missing = [p.name for p in paths if not p.exists()]
+    if missing:
+        raise HTTPException(404, f"uploaded file(s) not found: {', '.join(missing)}")
+    from ..ingest.pipeline import (
+        apply_mapping,
+        derive_pl_columns,
+        detected_mapping,
+        plan_uploads,
+    )
+    try:
+        tables, plans, _detail = plan_uploads(paths)
+    except Exception as exc:                             # noqa: BLE001
+        raise HTTPException(422, str(exc))
+
+    # Mapped here, unlike in the pipeline, where renaming waits until after
+    # cleaning. Nothing is being cleaned on this path — the caller wants to
+    # know what the canonical tables look like, and `derive` reads canonical
+    # column names.
+    tables = apply_mapping(tables, detected_mapping(plans))
+
+    # And derived, for the same reason and one the live server made obvious:
+    # without it the pre-run gate reported `gross_profit`, `gross_margin_pct`
+    # and `total_opex` as missing — three problems the run itself then fixed.
+    # A preview that disagrees with the run is worse than no preview, which is
+    # the whole reason this helper goes through the pipeline's own functions.
+    fin = tables.get("monthly_financials")
+    if fin is not None and not fin.empty:
+        tables = dict(tables)
+        tables["monthly_financials"], _added = derive_pl_columns(fin)
+
+    return {"tables": tables, "plans": plans}
+
+
 @app.post("/api/ingest/derive")
 def ingest_derive(body: Dict[str, Any]) -> Dict[str, Any]:
     """What the uploaded data can tell us about the company.
 
     So the shortened survey asks only for what no file contains — sector,
     objective, audience — instead of for numbers the file already holds.
+
+    This route had no consumer, and could not have had one: it took a `run_id`
+    and read that run's tables, so it could only answer *after* a run existed —
+    which is after the survey it exists to shorten. It now also takes the
+    `uploads` names, which is the order the funnel actually needs.
     """
-    run_id = body.get("run_id")
-    if not run_id:
-        raise HTTPException(400, "derive needs a run_id")
-    tables = _load_run_tables(run_id)
-    if not tables:
-        raise HTTPException(404, "That run has no data on disk")
-    return derive_profile_fields(tables, body.get("filename", "upload")).as_dict()
+    uploads = body.get("uploads")
+    if uploads:
+        read = _uploaded_tables(list(uploads))
+        tables = read["tables"]
+        filename = read["plans"][0].filename if read["plans"] else "upload"
+    else:
+        run_id = body.get("run_id")
+        if not run_id:
+            raise HTTPException(400, "derive needs `uploads` or a `run_id`")
+        tables = _load_run_tables(run_id)
+        filename = body.get("filename", "upload")
+        if not tables:
+            raise HTTPException(404, "That run has no data on disk")
+
+    derived = derive_profile_fields(tables, filename).as_dict()
+    derived["remaining_questions"] = _questions_still_needed(derived["values"])
+    return derived
+
+
+def _questions_still_needed(derived_values: Dict[str, Any]) -> List[str]:
+    """Survey question ids the data could not answer.
+
+    Resolved here rather than in the browser because the two vocabularies —
+    question ids and profile paths — meet in `questions.py`'s `fills`, and a
+    second implementation of that join would be one more thing to keep in step.
+    """
+    filled = set(derived_values)
+    return [q["id"] for q in survey_json()["questions"]
+            if q.get("fills") not in filled]
+@app.post("/api/ingest/quality")
+def ingest_quality(body: Dict[str, Any]) -> Dict[str, Any]:
+    """The quality report for files that have not been run yet.
+
+    Profile before assumptions: the user should see what mapped, what did not
+    and what each gap costs *before* committing to a run, not afterwards from a
+    dashboard with holes in it. `/api/runs/{id}/quality` answers the same
+    question for a run that already exists; this one needs no run.
+    """
+    uploads = body.get("uploads") or []
+    if not uploads:
+        raise HTTPException(400, "quality needs at least one uploaded file")
+
+    read = _uploaded_tables(list(uploads))
+    try:
+        profile = build_profile(body.get("answers") or {},
+                                name=body.get("company_name") or None)
+    except Exception as exc:                             # noqa: BLE001
+        raise HTTPException(422, str(exc))
+
+    report = build_report(read["tables"], profile).as_dict()
+    report["plans"] = [plan.as_dict() for plan in read["plans"]]
+    return report
 
 
 @app.get("/api/catalog/options")

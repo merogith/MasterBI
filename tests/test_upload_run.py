@@ -291,3 +291,112 @@ def test_build_from_uploads_explains_each_file(export, retailer):
     assert any(export.name in line and "monthly_financials" in line
                for line in data.checks), data.checks
     assert data.upload_plans == plans
+
+
+# --------------------------------------------------------------------------
+# The funnel's server side. Called as functions rather than over HTTP, the way
+# `tests/test_progress.py` drives the API, so the suite still needs no client.
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def api(tmp_path, monkeypatch, export):
+    """The server module with its upload directory pointed somewhere throwaway."""
+    from kpi_maker.api import server
+
+    uploads = tmp_path / "_uploads"
+    uploads.mkdir(parents=True, exist_ok=True)
+    (uploads / export.name).write_text(export.read_text(), encoding="utf-8")
+    monkeypatch.setattr(server, "UPLOADS_DIR", uploads)
+    return server
+
+
+def test_the_gate_answers_before_a_run_exists(api, export):
+    """The quality report used to need a `run_id`, so it could only speak after
+    the fact — a gate you walk through and are then told about."""
+    report = api.ingest_quality({"uploads": [export.name],
+                                 "answers": {"business_model": "logistics"}})
+
+    assert report["can_run"] is True
+    assert report["tables_present"] == ["monthly_financials"]
+    assert report["kpis_available"] > 0
+    assert report["plans"][0]["table"] == "monthly_financials"
+
+
+def test_the_preview_does_not_report_problems_the_run_then_fixes(api, export):
+    """A gate that disagrees with the run is worse than no gate.
+
+    Found on the live server: the preview read the tables through
+    `plan_uploads` but not through `derive_pl_columns`, so it reported
+    `gross_profit`, `gross_margin_pct` and `total_opex` missing — three
+    problems the run itself resolved a second later.
+    """
+    report = api.ingest_quality({"uploads": [export.name], "answers": {}})
+    for column in ("gross_profit", "gross_margin_pct", "total_opex"):
+        assert not any(column in problem for problem in report["schema_problems"]), \
+            f"the gate warned about {column}, which the run derives"
+
+
+def test_derive_runs_before_the_survey_it_shortens(api, export):
+    """The orphan route, and why it was one.
+
+    It took a `run_id` and read that run's tables, so it could only answer
+    after a run existed — which is after the survey it exists to shorten. That
+    is a circle, and it is why nothing ever called it.
+    """
+    derived = api.ingest_derive({"uploads": [export.name]})
+
+    assert derived["values"]["financials.revenue"] == pytest.approx(8_345_000)
+    assert derived["values"]["history_months"] == 24
+    assert derived["provenance"]["financials.revenue"].startswith("ingested:")
+
+    total = len(api.survey_json()["questions"])
+    assert 0 < len(derived["remaining_questions"]) < total, \
+        "the shortened survey is not shorter than the full one"
+    assert "revenue_band" not in derived["remaining_questions"], \
+        "the file already answered revenue and was asked for it anyway"
+
+
+def test_a_measured_revenue_keeps_the_customer_book_consistent():
+    """Measured figures go into the build, not over the top of it.
+
+    `build_profile` *solves* customer count from revenue so the profile's
+    cross-block validator passes by construction. Patching revenue in
+    afterwards breaks the equation it had just satisfied, and a clean 12-month
+    export was rejected: "312 customers x 24,000 blended ACV = 7,488,000, but
+    financials.revenue is 1,270,200 (490% apart)".
+    """
+    from kpi_maker.survey import build_profile
+
+    profile = build_profile({"business_model": "logistics"},
+                            measured={"financials.revenue": 1_270_200.0,
+                                      "history_months": 12})
+
+    assert profile.financials.revenue == pytest.approx(1_270_200.0)
+    assert profile.history_months == 12
+    book = sum(s.share * s.avg_acv for s in profile.market.segments) \
+        * profile.market.customer_count
+    assert book == pytest.approx(1_270_200.0, rel=0.05), \
+        "revenue and the customer book disagree, which the validator forbids"
+
+
+def test_a_measured_customer_count_moves_the_acv_not_the_revenue():
+    """When both sides are measured, the assumption nobody made has to yield."""
+    from kpi_maker.survey import build_profile
+
+    profile = build_profile({}, measured={"financials.revenue": 4_000_000.0,
+                                          "market.customer_count": 200})
+
+    assert profile.market.customer_count == 200
+    assert profile.financials.revenue == pytest.approx(4_000_000.0)
+    blended = sum(s.share * s.avg_acv for s in profile.market.segments)
+    assert blended == pytest.approx(20_000, rel=0.05), \
+        "the segment ACVs did not move to meet two measured numbers"
+
+
+def test_an_unknown_measured_path_is_ignored_rather_than_fatal():
+    """`derive` may learn to report something the profile has no field for."""
+    from kpi_maker.survey import build_profile
+
+    profile = build_profile({}, measured={"nothing.like.this": 1,
+                                          "history_months": 18})
+    assert profile.history_months == 18
