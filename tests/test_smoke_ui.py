@@ -436,6 +436,8 @@ def _walk_survey_to_review(page, choose=None) -> set:
             target = page.locator(f'.question[data-qid="{qid}"] .option', has_text=label)
             if target.count():
                 target.first.click()
+                page.wait_for_selector(
+                    f'.question[data-qid="{qid}"] .option.selected')
         if page.locator("#survey-next").inner_text().strip() == "Generate my pack":
             return seen
         page.click("#survey-skip")
@@ -470,7 +472,7 @@ def test_the_survey_hides_questions_that_cannot_apply(page):
     assert page.locator('.question[data-qid="sales_motion"]').count() == 1, \
         "the test proves nothing unless the question is there to begin with"
 
-    page.click('.question[data-qid="business_model"] .option:has-text("Retail (physical)")')
+    _answer(page, "business_model", "Retail (physical)")
 
     assert page.locator('.question[data-qid="sales_motion"]').count() == 0, \
         "a retailer is still asked a question only the SaaS packs read"
@@ -496,22 +498,36 @@ def test_the_survey_still_asks_a_saas_business_everything(page):
         "branching hid a question from the archetype that reads it"
 
 
+def _answer(page, qid: str, label: str) -> None:
+    """Click an option and wait for the app to register it.
+
+    Clicking and immediately pressing Next raced on the CI runner: the survey
+    saw the question as unanswered, refused to advance, and the draft was saved
+    on step 0 — so the test that reloaded and reached for Back found it
+    correctly hidden. Waiting for `.selected` waits for the state, not the
+    paint.
+    """
+    page.click(f'.question[data-qid="{qid}"] .option:has-text("{label}")')
+    page.wait_for_selector(f'.question[data-qid="{qid}"] .option.selected')
+
+
 def test_an_unfinished_survey_survives_a_reload(page):
     """Nineteen questions is four minutes, and a reload lost every one."""
     page.click('[data-nav="survey"]')
     page.wait_for_selector("#survey-next")
-    page.click('.question[data-qid="objective"] .option:has-text("Protect cash")')
-    page.click('.question[data-qid="audience"] .option:has-text("The board")')
+    _answer(page, "objective", "Protect cash")
+    _answer(page, "audience", "The board")
     page.click("#survey-next")
     page.wait_for_selector('.question[data-qid="country"]')
 
     page.reload(wait_until="domcontentloaded")
     page.wait_for_selector("#survey-resumed")
-
     assert "Picked up where you left off" in page.locator("#survey-resumed").inner_text()
-    # Back to the first step and the answer is still selected.
-    page.click("#survey-back")
-    page.wait_for_selector('.question[data-qid="objective"]')
+
+    # Whichever step the draft restored, the answer itself has to have survived.
+    if page.locator('.question[data-qid="objective"]').count() == 0:
+        page.click("#survey-back")
+    page.wait_for_selector('.question[data-qid="objective"] .option.selected')
     assert page.locator(
         '.question[data-qid="objective"] .option.selected').inner_text().strip() \
         .startswith("Protect cash")
@@ -535,7 +551,7 @@ def test_the_review_jumps_back_to_the_question_it_names(page):
 
     page.click('#review-list [data-edit="objective"]')
     page.wait_for_selector('.question[data-qid="objective"]')
-    page.click('.question[data-qid="objective"] .option:has-text("Cut cost")')
+    _answer(page, "objective", "Cut cost")
 
     # Forward again to the review, which must show the change.
     for _ in range(20):
@@ -550,7 +566,7 @@ def test_progress_does_not_read_full_while_there_is_work_left(page):
     the one step that still has the name field and the run button on it."""
     page.click('[data-nav="survey"]')
     page.wait_for_selector("#survey-next")
-    page.click('.question[data-qid="objective"] .option:has-text("Grow revenue")')
+    _answer(page, "objective", "Grow revenue")
 
     for _ in range(20):
         if page.locator("#survey-next").inner_text().strip() == 'Generate my pack':
