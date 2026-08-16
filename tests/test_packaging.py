@@ -71,6 +71,17 @@ def test_readme_survey_question_count() -> None:
                 f"{where} claims {stated} questions; there are "
                 f"{len(CORE_QUESTIONS)} core and {len(QUESTIONS)} total"
             )
+        # The phrasing the README actually used, which the two patterns above
+        # did not match — so "14 core questions, 5 optional" sat unchecked
+        # through every change to the bank. A drift test with a hole in it is
+        # the same false assurance as a docstring naming a test nobody wrote.
+        for core, optional in re.findall(r"(\d+) core questions?, (\d+) optional", text):
+            assert int(core) == len(CORE_QUESTIONS), (
+                f"{where} claims {core} core questions; there are "
+                f"{len(CORE_QUESTIONS)}")
+            assert int(optional) == len(QUESTIONS) - len(CORE_QUESTIONS), (
+                f"{where} claims {optional} optional questions; there are "
+                f"{len(QUESTIONS) - len(CORE_QUESTIONS)}")
 
 
 def test_sample_count_is_stated_correctly() -> None:

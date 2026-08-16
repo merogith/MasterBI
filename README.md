@@ -94,8 +94,8 @@ Three modes on the home screen:
 | Mode | State | Cost |
 |---|---|---|
 | **1 · Try a sample** | Working — 4 curated companies | Free |
-| **2 · Build your own** | Working — 14 core questions, 5 optional | Free |
-| **3 · Bring your data** | Working — read, profile, clean, map, run | Free |
+| **2 · Build your own** | Working — 14 core questions, 5 optional; fewer where a sector makes one irrelevant. Saved as you go, and every answer editable from the review step | Free |
+| **3 · Bring your data** | Working — upload, see what it was read as, correct the field mapping, see what it will and will not produce, then run | Free |
 | **Surprise me** | Working — random self-consistent company | Free |
 
 Results open in a workspace with five tabs: Overview (findings), Dashboard
