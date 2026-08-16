@@ -918,3 +918,44 @@ tbody tr:hover { background: var(--accent-soft); }
   .tour { animation: tour-in .18s ease-out; }
   @keyframes tour-in { from { opacity: 0; transform: translateY(8px); } }
 }
+
+/* -- Provenance: where every number came from ----------------------------- */
+
+.basis, .benchmark {
+  display: inline-block; font-size: 10.5px; letter-spacing: .04em;
+  text-transform: uppercase; padding: 2px 7px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--muted); white-space: nowrap;
+}
+/* Measured is the quiet default — a figure computed from the user's own data
+   needs no badge shouting at them. Modelled does: it is the one a reader must
+   not mistake for a measurement. */
+.basis-measured { color: var(--muted); }
+.basis-modelled { color: var(--warning); border-color: var(--warning); }
+.basis-mixed { color: var(--serious); border-color: var(--serious); }
+.tile .basis { margin-top: 8px; }
+
+.bench-top_quartile { color: var(--good); border-color: var(--good); }
+.bench-above_median { color: var(--good); border-color: var(--border); }
+.bench-below_median { color: var(--serious); border-color: var(--border); }
+.bench-bottom_quartile { color: var(--critical); border-color: var(--critical); }
+
+.provenance { margin: 26px 0; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); overflow: hidden; }
+.provenance-toggle {
+  display: flex; align-items: baseline; gap: 12px; width: 100%; text-align: left;
+  font: inherit; font-size: 13.5px; padding: 14px 18px; cursor: pointer;
+  background: var(--surface); color: var(--text-primary); border: 0;
+}
+.provenance-toggle:hover { background: var(--accent-soft); }
+.provenance-toggle:focus-visible { outline: 2px solid var(--accent);
+  outline-offset: -2px; }
+.provenance-toggle > span:first-child { font-weight: 600; flex: none; }
+.provenance-summary { flex: 1; color: var(--muted); font-size: 12.5px; }
+.provenance-caret { color: var(--muted); flex: none; }
+.provenance-body { padding: 4px 18px 20px; border-top: 1px solid var(--border); }
+
+.scorecard td { vertical-align: top; }
+.scorecard tr.not-computed td { color: var(--muted); }
+.dropped-list { list-style: none; padding: 0; margin: 0 0 20px;
+  display: grid; gap: 6px; font-size: 12.5px; color: var(--text-secondary); }
+.dropped-list code { color: var(--text-primary); }

@@ -684,3 +684,78 @@ def test_a_findings_severity_is_actually_visible(page):
         "el => getComputedStyle(el).columnGap")
     assert gap not in ("normal", "0px"), \
         f"the severity label is jammed against the finding text (gap: {gap})"
+
+
+def test_every_figure_says_where_it_came_from(page):
+    """`basis` is derived automatically and was rendered nowhere.
+
+    `TrackedTables` records every fact table a metric reads, so each result is
+    `measured`, `modelled` or `mixed` without anyone declaring it. It has been
+    correct for as long as the metrics engine has existed, it arrives in the
+    browser in every row of `facts.csv`, and no screen showed it.
+    """
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#tour-dismiss")
+
+    chips = page.locator("#res-tiles .basis")
+    assert chips.count() == page.locator("#res-tiles .tile").count(), \
+        "some headline figures do not say where they came from"
+    assert chips.first.inner_text().strip().lower() in ("measured", "modelled",
+                                                        "part modelled")
+
+
+def test_the_run_explains_why_each_metric_is_on_the_scorecard(page):
+    """25 rationales and 19 dropped KPIs, computed and shown to nobody.
+
+    The selection engine records why each KPI was chosen and why each candidate
+    was rejected. "Why isn't X on my dashboard" had an answer the whole time.
+    """
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#tour-dismiss")
+
+    toggle = page.locator("#res-provenance-toggle")
+    assert toggle.count() == 1, "nothing on this screen explains how it was built"
+    summary = toggle.inner_text()
+    assert "north star" in summary.lower(), summary
+    assert "KPIs computed" in summary, summary
+
+    toggle.click()
+    page.wait_for_selector("#res-scorecard")
+
+    rows = page.locator("#res-scorecard tbody tr")
+    assert rows.count() >= 20, f"the scorecard lists only {rows.count()} KPIs"
+    body = page.locator("#res-scorecard").inner_text()
+    assert "North Star for this business model" in body, \
+        "the engine's own rationale is not shown against the metric it explains"
+
+    dropped = page.locator("#res-dropped li")
+    assert dropped.count() >= 10, \
+        f"only {dropped.count()} rejected candidates listed; a real run drops 19"
+    assert "requires unavailable data" in page.locator("#res-dropped").inner_text()
+
+
+def test_a_survey_run_shows_what_was_assumed_rather_than_answered(page):
+    """The survey's central promise, kept somewhere a user of the app can see.
+
+    "Anything you don't know is filled from sector benchmarks and clearly
+    footnoted" was honoured in the PDF appendix and nowhere else. Skipping the
+    whole survey is the sharpest case: almost every field is a prior.
+    """
+    page.click('[data-nav="survey"]')
+    page.wait_for_selector("#survey-next")
+    for _ in range(25):
+        if page.locator("#survey-next").inner_text().strip() == "Generate my pack":
+            break
+        page.click("#survey-skip")
+    page.click("#survey-next")
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#tour-dismiss")
+
+    page.click("#res-provenance-toggle")
+    page.wait_for_selector("#res-assumed")
+    assumed = page.locator("#res-assumed li")
+    assert assumed.count() > 0, \
+        "every answer was skipped and nothing says which figures are assumptions"
+    assert "profile fields from you" in page.locator("#res-provenance-toggle").inner_text()

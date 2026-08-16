@@ -1,4 +1,6 @@
 import { useState } from 'preact/hooks';
+import { BasisChip } from '../components/Basis';
+import { Provenance } from '../components/Provenance';
 import { Empty } from '../components/State';
 import { RESULTS_TOUR, Tour } from '../components/Tour';
 import { fileUrl, type Summary } from '../lib/api';
@@ -74,6 +76,10 @@ export function Results({ summary }: { summary: Summary }) {
               <StatusChip status={kpi.status} />
             </div>
             <div class="tile-value">{fmtValue(kpi.current, kpi.unit, currency)}</div>
+            {/* Where the number came from, on the number. Computed by the
+                metrics engine for every result since it was written, and
+                rendered nowhere until now. */}
+            <BasisChip basis={kpi.basis} />
           </article>
         ))}
       </div>
@@ -84,9 +90,11 @@ export function Results({ summary }: { summary: Summary }) {
       {summary.kpis.length > summary.tiles.length && (
         <p class="section-sub" id="res-kpi-count">
           {summary.tiles.length} headline KPIs of {summary.kpis.length} computed.
-          The full scorecard is in the dashboard and the workbook.
+          The full scorecard is below, in the dashboard and in the workbook.
         </p>
       )}
+
+      <Provenance summary={summary} />
 
       {findings.length === 0 ? (
         <Empty title="No findings">

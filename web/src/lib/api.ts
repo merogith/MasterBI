@@ -142,6 +142,21 @@ export interface Kpi {
   status: string | null;
   tier: number | null;
   computed: boolean;
+  // Columns of `facts.csv` that reached the browser and were dropped on the
+  // floor. `basis` in particular is derived automatically by `TrackedTables`
+  // from what each metric actually read, so it has always been correct and
+  // never once been shown.
+  basis?: string | null;
+  target?: number | null;
+  vs_target?: number | null;
+  benchmark_p50?: number | null;
+  benchmark_position?: string | null;
+  owner?: string | null;
+  perspective?: string | null;
+  timing?: string | null;
+  /** Why this KPI could not be computed. The answer to "why is this row
+   *  empty", written by the engine and previously visible to nobody. */
+  reason?: string | null;
 }
 
 export interface Finding {
@@ -173,6 +188,19 @@ export interface Summary {
   findings: Finding[];
   warnings: string[];
   artifacts: Artifact[];
+  // Seven more fields the server has always sent and the app has never shown.
+  // `dropped` is the sharpest of them: on a real SaaS run it holds **nineteen**
+  // KPIs the engine considered and rejected, each with its reason. "Why isn't
+  // X on my dashboard" had an answer the whole time, computed and unread.
+  north_star?: Kpi | null;
+  severity_counts?: Record<string, number>;
+  rationale?: Record<string, string>;
+  dropped?: Record<string, string>;
+  provenance?: Record<string, string>;
+  confidence?: number | null;
+  stages_ran?: string[];
+  stages_reused?: string[];
+  seconds?: number | null;
 }
 
 /** `GET /api/runs/{id}` — the live cache while a run is in flight, the store's
