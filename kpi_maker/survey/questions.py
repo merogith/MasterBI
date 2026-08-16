@@ -1,6 +1,13 @@
 """The question bank (ROADMAP M3).
 
-Design rules, enforced by `test_every_question_branches`:
+Design rules, enforced by `tests/test_survey.py::test_every_question_branches`
+— which for a long time this docstring named and *no such test existed*. A
+claim of enforcement nobody had written is worse than no claim, because it is
+the reason nobody checks. It exists now, along with one asserting that every
+option a user can click builds a profile at all; three countries crashed the
+survey outright when that was first run.
+
+Rules:
 
   * 14 core questions maximum before the user sees a result.
   * Every question must FILL a profile field or BRANCH the pipeline. If two

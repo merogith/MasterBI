@@ -232,6 +232,20 @@ def headcount_split(total: int) -> Dict[str, int]:
 
 
 def geographies_for(reach: str, country: str) -> Dict[str, float]:
+    """Market split by reach. Shares always sum to exactly 1.0.
+
+    They did not, and the survey crashed. The global case was a dict literal
+    holding `{country: .45, n0: .25, n1: .18, "US": .12}`, and for any country
+    whose neighbour list already contains the US the key repeated — the later
+    entry silently won, the shares came to 0.750, and `CompanyProfile` rejected
+    the profile with "geographies shares sum to 0.750, expected 1.0". A 422 in
+    the middle of the survey, for **GB, CA and AU** — three of the eight
+    countries offered — on one of the three answers to "Where are your
+    customers?".
+
+    Written additively and normalised, so a repeated market accumulates instead
+    of overwriting, and any future edit to the weights cannot reintroduce this.
+    """
     country = country.upper()
     neighbours = {
         "US": ["CA", "GB"], "GB": ["US", "DE"], "DE": ["NL", "FR"],
@@ -239,8 +253,18 @@ def geographies_for(reach: str, country: str) -> Dict[str, float]:
     }.get(country, ["US", "GB"])
 
     if reach == "domestic":
-        return {country: 1.0}
-    if reach == "regional":
-        return {country: 0.7, neighbours[0]: 0.2, neighbours[1]: 0.1}
-    return {country: 0.45, neighbours[0]: 0.25, neighbours[1]: 0.18, "US": 0.12} \
-        if country != "US" else {country: 0.55, "GB": 0.18, "DE": 0.15, "AU": 0.12}
+        weights = [(country, 1.0)]
+    elif reach == "regional":
+        weights = [(country, 0.7), (neighbours[0], 0.2), (neighbours[1], 0.1)]
+    elif country == "US":
+        weights = [(country, 0.55), ("GB", 0.18), ("DE", 0.15), ("AU", 0.12)]
+    else:
+        weights = [(country, 0.45), (neighbours[0], 0.25),
+                   (neighbours[1], 0.18), ("US", 0.12)]
+
+    shares: Dict[str, float] = {}
+    for market, share in weights:
+        shares[market] = shares.get(market, 0.0) + share
+
+    total = sum(shares.values())
+    return {market: round(share / total, 4) for market, share in shares.items()}

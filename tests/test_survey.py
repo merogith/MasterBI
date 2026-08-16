@@ -1,0 +1,153 @@
+"""The survey's own rules, actually enforced.
+
+`survey/questions.py` opens with "Design rules, enforced by
+`test_every_question_branches`" — and **no such test has ever existed**. A false
+claim of enforcement is worse than no claim: it is the reason nobody checked.
+This file is that test, plus the one the crash below demanded.
+
+Two things are checked here, and they are different in kind:
+
+* **Every answer must build a profile.** Not "should" — a survey answer that
+  raises is a 422 in the middle of a form, and it shipped: answering "Worldwide"
+  to *Where are your customers?* crashed for **GB, CA and AU**, three of the
+  eight countries offered, because the global market split was a dict literal
+  whose keys collided.
+* **Every question must earn its place.** The ROADMAP rule is "if two answers
+  produce the same dashboard, delete the question". The honest reading of
+  "dashboard" is the whole profile, not the KPI list — `revenue_band` changes
+  every number without changing which KPIs are chosen, and deleting it would be
+  absurd.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from kpi_maker.kpi.selection import select  # noqa: E402
+from kpi_maker.survey import build_profile  # noqa: E402
+from kpi_maker.survey.defaults import geographies_for  # noqa: E402
+from kpi_maker.survey.questions import QUESTIONS, SECTOR_LABELS  # noqa: E402
+
+UNKNOWN = "__unknown__"
+
+# A transactional consumer business — the profile least like the SaaS one the
+# survey was written around, and therefore the one most likely to be asked
+# something that does not apply to it.
+B2C = {
+    "objective": "growth", "audience": "exec", "country": "GB",
+    "business_model": "ecommerce", "customer_type": "B2C",
+    "sales_motion": "self_serve", "revenue_band": "5m_10m",
+    "headcount_band": "51_200", "stage": "growth", "customer_mix": "smb_heavy",
+    "reach": "domestic", "data_maturity": "spreadsheets",
+    "kpi_experience": "medium", "contract_terms": "mixed",
+}
+
+COUNTRIES = [o["value"] for q in QUESTIONS if q["id"] == "country"
+             for o in q["options"] if o["value"] != UNKNOWN]
+
+
+def _answerable(question) -> list:
+    return [o["value"] for o in question["options"] if o["value"] != UNKNOWN]
+
+
+# --------------------------------------------------------------------------
+# Nothing a user can click may raise
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("country", COUNTRIES)
+@pytest.mark.parametrize("reach", ["domestic", "regional", "global"])
+def test_every_market_split_sums_to_one(country, reach):
+    """`CompanyProfile` requires exactly 1.0, and three countries gave 0.750.
+
+    The global split repeated a market key — `{GB: .45, US: .25, DE: .18,
+    US: .12}` — and the later entry won, so 0.25 vanished. Additive now, and
+    normalised, so a future edit to the weights cannot bring it back.
+    """
+    shares = geographies_for(reach, country)
+    assert sum(shares.values()) == pytest.approx(1.0), shares
+    assert all(share > 0 for share in shares.values()), shares
+
+
+@pytest.mark.parametrize("question", QUESTIONS, ids=lambda q: q["id"])
+def test_every_answer_to_every_question_builds_a_profile(question):
+    """A survey option that raises is a dead end wearing a radio button."""
+    for value in _answerable(question) + [UNKNOWN]:
+        try:
+            build_profile({**B2C, question["id"]: value})
+        except Exception as exc:                            # noqa: BLE001
+            pytest.fail(f"{question['id']}={value!r} raised {type(exc).__name__}: "
+                        f"{str(exc)[:200]}")
+
+
+@pytest.mark.parametrize("sector", [s["value"] for s in SECTOR_LABELS])
+def test_every_offered_sector_produces_a_scorecard(sector):
+    """The survey offers ten sectors, so ten sectors have to work end to end."""
+    kpis = select(build_profile({**B2C, "business_model": sector}))
+    assert len(kpis.kpis) >= 8, f"{sector} produced {len(kpis.kpis)} KPIs"
+    assert kpis.north_star in {k.id for k in kpis.kpis}
+
+
+def test_an_empty_answer_set_is_a_complete_profile():
+    """Every question skipped is still a valid, fully defaulted run."""
+    profile = build_profile({})
+    assert profile.market.customer_count > 0
+    assert profile.provenance, "nothing recorded how any of this was decided"
+
+
+# --------------------------------------------------------------------------
+# Every question earns its place
+# --------------------------------------------------------------------------
+
+def _fingerprint(answers) -> str:
+    """What this set of answers actually produces.
+
+    The whole profile, not the KPI list. `revenue_band` changes every number in
+    the pack without changing which KPIs are chosen, and a rule that called
+    that "no effect" would recommend deleting it.
+    """
+    profile = build_profile(answers)
+    return profile.model_dump_json(exclude={"provenance", "seed"})
+
+
+@pytest.mark.parametrize("question", QUESTIONS, ids=lambda q: q["id"])
+def test_every_question_branches(question):
+    """The rule `questions.py` has always said was enforced, now enforcing it.
+
+    "If two answers produce an identical dashboard, the question is deleted."
+    A question whose every answer yields the same profile is a form field that
+    costs a user thirty seconds and buys them nothing.
+    """
+    reference = _fingerprint(B2C)
+    outcomes = {_fingerprint({**B2C, question["id"]: value})
+                for value in _answerable(question)}
+    outcomes.add(reference)
+
+    assert len(outcomes) > 1, (
+        f"{question['id']!r} produces the same profile whatever it is answered "
+        f"— it fills nothing and branches nothing, so it should be deleted or "
+        f"wired to something")
+
+
+def test_the_question_ids_are_unique():
+    ids = [q["id"] for q in QUESTIONS]
+    assert len(ids) == len(set(ids)), "a duplicate id shadows a question"
+
+
+def test_every_question_offers_a_way_out():
+    """"I don't know" everywhere, or an option set nobody can fail to answer.
+
+    Objective, audience, country and sector have no unknown branch on purpose:
+    they are choices only the user can make, and defaulting them silently would
+    produce a report about a business nobody described.
+    """
+    deliberate = {"objective", "audience", "country", "business_model"}
+    for question in QUESTIONS:
+        has_unknown = any(o["value"] == UNKNOWN for o in question["options"])
+        assert has_unknown or question["id"] in deliberate, \
+            f"{question['id']} has no 'I don't know' and is not one of the four " \
+            f"questions that deliberately require an answer"
