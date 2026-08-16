@@ -4,6 +4,7 @@ import {
   type Survey as SurveyData, type SurveyQuestion,
 } from '../lib/api';
 import { href, navigate } from '../lib/router';
+import { Failed, Loading } from '../components/State';
 
 /** "Use averages" is a real answer, not an absence: recording `__unknown__`
  *  makes the provenance say the field was defaulted rather than guessed. */
@@ -197,14 +198,15 @@ export function Survey() {
   if (error) {
     return (
       <section class="view" id="view-survey">
-        <p class="empty">Could not load the survey: {error}</p>
+        <Failed message={`Could not load the survey: ${error}`}
+                onRetry={() => window.location.reload()} />
       </section>
     );
   }
   if (survey === null || steps.length === 0) {
     return (
       <section class="view" id="view-survey">
-        <p class="empty">Loading…</p>
+        <Loading label="Loading the questions…" />
       </section>
     );
   }

@@ -351,13 +351,35 @@ button, input, select { font: inherit; }
 .section-sub { color: var(--text-secondary); font-size: 13.5px; margin-bottom: 18px; }
 
 .findings { list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; }
+/* The severity classes the component emits are `sev-high`, `sev-medium`, …
+   These selectors said `.finding.high`, so **none of them ever matched**: every
+   finding rendered with the same neutral left border however severe it was, on
+   the one screen where ranking is the whole point. And `.sev` had no rule at
+   all, so the label ran straight into the title — "HighChurn is concentrated in
+   the SMB segment". Both visible in a screenshot and invisible to every
+   assertion that had been written about this screen. */
 .finding {
+  display: flex; align-items: baseline; gap: 12px;
   background: var(--surface); border: 1px solid var(--border);
   border-left: 3px solid var(--axis); border-radius: var(--radius-sm); padding: 16px 18px;
 }
-.finding.critical, .finding.high { border-left-color: var(--critical); }
-.finding.medium { border-left-color: var(--serious); }
-.finding.positive { border-left-color: var(--good); }
+.finding.sev-critical, .finding.sev-high { border-left-color: var(--critical); }
+.finding.sev-medium { border-left-color: var(--serious); }
+.finding.sev-low { border-left-color: var(--warning); }
+.finding.sev-positive { border-left-color: var(--good); }
+
+/* The word, always — never the colour alone. Same rule the engine applies to
+   every chart it draws (`STATUS_GLYPH`), and the reason the border can carry
+   severity at all. */
+.sev {
+  flex: none; font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase;
+  font-weight: 600; padding: 3px 8px; border-radius: 999px;
+  background: var(--border); color: var(--text-secondary);
+}
+.sev-critical .sev, .sev-high .sev { background: var(--critical); color: #fff; }
+.sev-medium .sev { background: var(--serious); color: #1a1a1a; }
+.sev-low .sev { background: var(--warning); color: #1a1a1a; }
+.sev-positive .sev { background: var(--good); color: #fff; }
 .finding-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
 .finding-head h3 { font-size: 15px; }
 .finding p { color: var(--text-secondary); font-size: 14px; }
@@ -828,3 +850,71 @@ tbody tr:hover { background: var(--accent-soft); }
   color: var(--text-secondary); }
 .column-detail summary:focus-visible { outline: 2px solid var(--accent);
   outline-offset: 2px; }
+
+/* -- Loading, failed, empty: three states, three appearances --------------- */
+
+.state { display: flex; align-items: center; gap: 10px; font-size: 13.5px;
+  padding: 16px 18px; border-radius: var(--radius-sm); margin: 12px 0; }
+.state-loading { color: var(--text-secondary); background: var(--surface); }
+.state-failed { color: var(--text-primary); background: var(--surface);
+  border-left: 3px solid var(--critical); flex-wrap: wrap; }
+.state-empty { flex-direction: column; align-items: flex-start; gap: 4px;
+  color: var(--muted); border: 1px dashed var(--border-strong); }
+.state-title { color: var(--text-secondary); font-weight: 500; }
+.state-text { color: var(--muted); }
+.state-failed .state-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; flex: none; border-radius: 50%;
+  background: var(--critical); color: #fff; font-size: 13px; font-weight: 700;
+}
+.state-failed .state-text { color: var(--text-primary); flex: 1 1 240px; }
+
+/* A ring rather than a bouncing dot: motion here is a status, and one that
+   respects a reduced-motion preference below. */
+.state-spinner { width: 14px; height: 14px; flex: none; border-radius: 50%;
+  border: 2px solid var(--border-strong); border-top-color: var(--accent);
+  animation: state-spin .8s linear infinite; }
+@keyframes state-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .state-spinner { animation: none; border-top-color: var(--border-strong); }
+}
+
+/* -- Home: one milestone above the fold ----------------------------------- */
+
+.hero-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin-top: 22px; }
+.primary.big { font-size: 15px; padding: 12px 22px; }
+.hero-note { font-size: 12.5px; color: var(--muted); }
+
+.proof-strip { display: grid; gap: 10px; margin: 26px 0 34px;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.proof-card { display: flex; flex-direction: column; gap: 4px; text-align: left;
+  font: inherit; padding: 14px 16px; cursor: pointer; color: inherit;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); }
+.proof-card:hover:not(:disabled) { border-color: var(--accent); }
+.proof-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.proof-card:disabled { opacity: .6; cursor: default; }
+.proof-title { font-weight: 600; font-size: 14px; }
+.proof-tagline { font-size: 12.5px; color: var(--text-secondary); }
+.proof-stats { font-size: 12px; color: var(--muted);
+  font-variant-numeric: tabular-nums; margin-top: 2px; }
+
+/* -- The four-step tour --------------------------------------------------- */
+
+.tour { position: fixed; right: 20px; bottom: 20px; z-index: 60; width: min(340px, calc(100vw - 40px));
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); padding: 16px 18px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .18); }
+.tour-head { display: flex; justify-content: space-between; align-items: baseline;
+  gap: 10px; margin-bottom: 6px; }
+.tour-count { font-size: 11.5px; color: var(--muted);
+  font-variant-numeric: tabular-nums; }
+.tour-body { font-size: 13px; color: var(--text-secondary); margin: 0 0 14px; }
+.tour-nav { display: flex; justify-content: space-between; align-items: center;
+  gap: 10px; }
+.tour-nav > div { display: flex; gap: 6px; }
+@media (prefers-reduced-motion: no-preference) {
+  .tour { animation: tour-in .18s ease-out; }
+  @keyframes tour-in { from { opacity: 0; transform: translateY(8px); } }
+}

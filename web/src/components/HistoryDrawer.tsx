@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { listRuns, rerunRun, type RunRow } from '../lib/api';
 import { navigate } from '../lib/router';
+import { Empty, Failed, Loading } from './State';
 
 /* Every run this installation knows about, whatever became of it.
  *
@@ -68,9 +69,13 @@ export function HistoryDrawer({ open, onClose }: {
           </button>
         </div>
         <div id="drawer-list">
-          {error && <p class="empty">{error}</p>}
-          {!error && runs === null && <p class="empty">Loading…</p>}
-          {runs?.length === 0 && <p class="empty">No runs yet.</p>}
+          {error && <Failed message={error} />}
+          {!error && runs === null && <Loading label="Loading your runs…" />}
+          {runs?.length === 0 && (
+            <Empty title="No runs yet">
+              Anything you generate appears here, and stays addressable by URL.
+            </Empty>
+          )}
           {runs?.map((run) => (
             <div class="run-row" key={run.run_id}>
               <div>

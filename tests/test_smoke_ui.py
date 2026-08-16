@@ -562,3 +562,125 @@ def test_progress_does_not_read_full_while_there_is_work_left(page):
     percent = float(width.replace("%", ""))
     assert 0 < percent < 100, \
         f"progress reads {width} on the review step, having skipped everything"
+
+
+def test_the_home_screen_leads_with_one_finished_pack(page):
+    """One milestone above the fold, and it has to actually reach a pack.
+
+    The screen used to open with three equally-weighted doors and a paragraph
+    each — a decision handed to someone who has not yet seen what the product
+    makes, where two of the three cost minutes before anything appears.
+    """
+    _visible(page, "home")
+    assert page.locator("#btn-activate").is_visible()
+
+    # Real figures, read off the sample profiles by the server rather than
+    # written into the page. Copy cannot drift from the packs it promises if it
+    # is not copy.
+    page.wait_for_selector("#home-proof .proof-card")
+    stats = page.locator("#home-proof .proof-stats").first.inner_text()
+    assert any(ch.isdigit() for ch in stats), \
+        f"the proof strip shows no real figures: {stats!r}"
+
+    page.click("#btn-activate")
+    _visible(page, "running")
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    assert page.locator("#res-downloads .dl-card").count() >= 5
+
+
+def test_the_results_screen_admits_what_it_is_not_showing(page):
+    """Nine of nineteen findings were dropped with nothing on screen saying so.
+
+    Measured on a real `northwind_saas` run: 19 findings, 10 rendered. Silent
+    truncation is the failure mode this is about — the eleventh finding is not
+    less true than the tenth.
+    """
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#tour-dismiss")
+
+    more = page.locator("#res-more-findings")
+    assert more.count() == 1, "no way to see the findings that were cut"
+    assert "Show all" in more.inner_text()
+
+    before = page.locator("#res-findings .finding").count()
+    more.click()
+    after = page.locator("#res-findings .finding").count()
+    assert after > before, f"'Show all' revealed nothing ({before} -> {after})"
+
+    # And the KPI tiles say they are a selection rather than the whole set.
+    assert "of" in page.locator("#res-kpi-count").inner_text()
+
+
+def test_the_tour_appears_once_and_can_be_escaped(page):
+    """Four steps, on the screen with something to point at, never twice.
+
+    Tours over five steps drop off sharply and over eight are abandoned by 84%,
+    and one fired on arrival — before the user has anything of their own — is
+    dismissed unread. So it waits for a finished board pack.
+    """
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+
+    tour = page.locator("#tour")
+    assert tour.is_visible(), "no tour on the first finished pack"
+    assert "1 of 4" in tour.inner_text(), tour.inner_text()
+
+    page.keyboard.press("Escape")
+    assert tour.count() == 0, "Escape did not close a dialog that appeared unbidden"
+
+    # A second run must not show it again — dismissal is remembered.
+    _go_home(page)
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    assert page.locator("#tour").count() == 0, \
+        "the tour came back after being dismissed"
+
+
+def test_loading_and_failure_do_not_look_the_same(page):
+    """`<p class="empty">` was thirteen places, three meanings, one appearance.
+
+    A user could not tell a slow network from a broken server from an empty
+    list, and a screen reader was told nothing at all — none of them carried a
+    live region.
+    """
+    # A failing request, on the screen whose loader used to look identical to
+    # its error.
+    page.route("**/api/survey", lambda route: route.abort())
+    page.click('[data-nav="survey"]')
+    failure = page.wait_for_selector(".state-failed[role=alert]")
+    assert "Could not load the survey" in failure.inner_text()
+    assert page.locator(".state-failed .state-icon").count() == 1, \
+        "the failure state is indistinguishable from the loading one"
+
+
+def test_a_findings_severity_is_actually_visible(page):
+    """Severity is computed and ranked, and rendered identically for months.
+
+    The component emits `sev-high`; the stylesheet targeted `.finding.high`, so
+    **no severity rule ever matched** — every finding drew the same neutral left
+    border on the one screen where ranking is the point. `.sev` had no rule at
+    all, so the label ran into the title: "HighChurn is concentrated in the SMB
+    segment". Both were plain in a screenshot and invisible to every assertion
+    written about this screen, which is why this one measures pixels.
+    """
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#tour-dismiss")
+
+    findings = page.locator("#res-findings .finding")
+    assert findings.count() > 1
+
+    borders = page.locator("#res-findings .finding").evaluate_all(
+        "els => els.map(el => getComputedStyle(el).borderLeftColor)")
+    assert len(set(borders)) > 1, \
+        f"every finding drew the same left border, whatever its severity: {borders[0]}"
+
+    # The word is always there too — colour is never the only channel, the same
+    # rule the engine applies to every chart it draws.
+    label = page.locator("#res-findings .finding .sev").first
+    assert label.inner_text().strip(), "the severity label renders empty"
+    gap = page.locator("#res-findings .finding").first.evaluate(
+        "el => getComputedStyle(el).columnGap")
+    assert gap not in ("normal", "0px"), \
+        f"the severity label is jammed against the finding text (gap: {gap})"

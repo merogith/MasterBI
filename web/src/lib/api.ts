@@ -67,6 +67,16 @@ export interface Sample {
   watch_for?: string;
   tags?: string[];
   stats?: Record<string, string | number>;
+  // Read off the sample's own profile by `GET /api/samples`, not written into
+  // the gallery file. The home screen shows them, so a figure here that drifted
+  // from the pack it promises would be the product lying on its first screen.
+  currency?: string;
+  country?: string;
+  revenue?: number;
+  headcount?: number;
+  customers?: number;
+  stage?: string;
+  objective?: string;
 }
 
 export type RunStatus =

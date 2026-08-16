@@ -12,6 +12,7 @@ import { AdoptUpload } from './AdoptUpload';
 import { AiActions } from './AiActions';
 import { AddCalculatedColumn, AddCleaningStep, AddKpi } from './Editors';
 import { BrandPreview } from './BrandPreview';
+import { Empty } from '../components/State';
 
 export interface PanelProps {
   spec: Spec;
@@ -204,7 +205,7 @@ export function CleanPanel({ spec, options, tables, onChange }: PanelProps) {
                      Order matters and is preserved: a rename after a filter is
                      not the same as a rename before it.`}>
       {steps.length === 0
-        ? <p class="empty">No cleaning steps. The data is used as it arrives.</p>
+        ? <Empty title="No cleaning steps">The data is used exactly as it arrives.</Empty>
         : (
           <div class="op-list">
             {steps.map((step, index) => (

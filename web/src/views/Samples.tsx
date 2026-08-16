@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { createRun, listSamples, type Sample } from '../lib/api';
 import { href, navigate } from '../lib/router';
+import { Empty, Failed, Loading } from '../components/State';
 
 export function Samples() {
   const [samples, setSamples] = useState<Sample[] | null>(null);
@@ -36,9 +37,14 @@ export function Samples() {
       </div>
 
       <div class="sample-grid" id="sample-grid">
-        {error && <p class="empty">Could not load samples: {error}</p>}
-        {!error && samples === null && <p class="empty">Loading…</p>}
-        {samples?.length === 0 && <p class="empty">No samples found.</p>}
+        {error && <Failed message={`Could not load samples: ${error}`}
+                         onRetry={() => window.location.reload()} />}
+        {!error && samples === null && <Loading label="Loading the sample companies…" />}
+        {samples?.length === 0 && (
+          <Empty title="No samples found">
+            The bundled sample profiles could not be read from this install.
+          </Empty>
+        )}
         {samples?.map((sample) => (
           <article class="sample-card" key={sample.id}>
             <div>

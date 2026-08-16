@@ -5,6 +5,7 @@ import {
 } from '../lib/api';
 import { href, navigate } from '../lib/router';
 import { useIsStatic } from '../lib/useStatic';
+import { Failed, Loading } from '../components/State';
 import {
   AiPanel, AnalysisPanel, CleanPanel, DesignPanel, KpiPanel, ModelPanel,
   OutputsPanel, SourcePanel,
@@ -96,14 +97,14 @@ export function Studio({ runId }: { runId: string }) {
   if (error && spec === null) {
     return (
       <section class="view" id="view-studio">
-        <p class="empty">{error}</p>
+        <Failed message={error} onRetry={() => window.location.reload()} />
       </section>
     );
   }
   if (spec === null || options === null) {
     return (
       <section class="view" id="view-studio">
-        <p class="empty">Loading…</p>
+        <Loading label="Loading this run’s spec…" />
       </section>
     );
   }

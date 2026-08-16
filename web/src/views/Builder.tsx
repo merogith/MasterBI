@@ -6,6 +6,7 @@ import {
 } from '../lib/api';
 import { href, navigate } from '../lib/router';
 import { QualityStep, QuestionsStep, ReadStep } from '../builder/steps';
+import { Loading } from '../components/State';
 
 /* Bring your data — a funnel, not a dead end.
  *
@@ -154,7 +155,7 @@ export function Builder() {
       </ol>
 
       {error && <div class="warn-banner" role="alert">{error}</div>}
-      {busy && <p class="empty">{busy}</p>}
+      {busy && <Loading label={busy} />}
 
       {phase === 'upload' && (
         <label class={`dropzone${dragging ? ' dragging' : ''}`} id="dropzone"

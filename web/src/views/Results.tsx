@@ -1,7 +1,16 @@
+import { useState } from 'preact/hooks';
+import { Empty } from '../components/State';
+import { RESULTS_TOUR, Tour } from '../components/Tour';
 import { fileUrl, type Summary } from '../lib/api';
 import { fmtBytes, fmtValue, SEVERITY_LABEL, STATUS_GLYPH, STATUS_LABEL } from '../lib/format';
 import { href, navigate } from '../lib/router';
 import { useIsStatic } from '../lib/useStatic';
+
+/** Findings shown before the fold. Ten is about where a reader stops, and the
+ *  eleventh is not less true — so the rest are one click away rather than
+ *  discarded. A real sample run produces nineteen; nine of them used to be
+ *  dropped with nothing on screen saying so. */
+const FINDINGS_SHOWN = 10;
 
 function StatusChip({ status }: { status: string | null }) {
   const key = status ?? 'unknown';
@@ -14,8 +23,13 @@ function StatusChip({ status }: { status: string | null }) {
 
 export function Results({ summary }: { summary: Summary }) {
   const isStatic = useIsStatic();
+  const [allFindings, setAllFindings] = useState(false);
   const currency = summary.currency ?? 'USD';
   const dashboard = summary.artifacts.find((a) => a.name === 'dashboard.html');
+
+  const findings = summary.findings ?? [];
+  const shown = allFindings ? findings : findings.slice(0, FINDINGS_SHOWN);
+  const hidden = findings.length - shown.length;
 
   return (
     <section class="view" id="view-results">
@@ -64,14 +78,41 @@ export function Results({ summary }: { summary: Summary }) {
         ))}
       </div>
 
-      <ol class="findings" id="res-findings">
-        {summary.findings.slice(0, 10).map((finding, i) => (
-          <li class={`finding sev-${finding.severity}`} key={i}>
-            <span class="sev">{SEVERITY_LABEL[finding.severity] ?? finding.severity}</span>
-            <span>{finding.title ?? finding.statement ?? ''}</span>
-          </li>
-        ))}
-      </ol>
+      {/* The tiles are the top-tier KPIs, not the whole scorecard — a
+          deliberate edit rather than a truncation. Saying which, and how many
+          there are in total, is the difference between an edit and a loss. */}
+      {summary.kpis.length > summary.tiles.length && (
+        <p class="section-sub" id="res-kpi-count">
+          {summary.tiles.length} headline KPIs of {summary.kpis.length} computed.
+          The full scorecard is in the dashboard and the workbook.
+        </p>
+      )}
+
+      {findings.length === 0 ? (
+        <Empty title="No findings">
+          The detectors found nothing worth flagging in this data — which is
+          itself a result, not a failure.
+        </Empty>
+      ) : (
+        <>
+          <ol class="findings" id="res-findings">
+            {shown.map((finding, i) => (
+              <li class={`finding sev-${finding.severity}`} key={i}>
+                <span class="sev">{SEVERITY_LABEL[finding.severity] ?? finding.severity}</span>
+                <span>{finding.title ?? finding.statement ?? ''}</span>
+              </li>
+            ))}
+          </ol>
+          {(hidden > 0 || allFindings) && (
+            <button class="linkish" id="res-more-findings" type="button"
+                    onClick={() => setAllFindings(!allFindings)}>
+              {allFindings
+                ? `Show the top ${FINDINGS_SHOWN} only`
+                : `Show all ${findings.length} findings (${hidden} more)`}
+            </button>
+          )}
+        </>
+      )}
 
       <div class="download-grid" id="res-downloads">
         {summary.artifacts.map((artifact) => (
@@ -84,6 +125,11 @@ export function Results({ summary }: { summary: Summary }) {
           </a>
         ))}
       </div>
+
+      {/* Last in the DOM so its targets exist by the time it looks for them,
+          and so it never precedes the content it is describing for a screen
+          reader working down the page. */}
+      <Tour steps={RESULTS_TOUR} />
     </section>
   );
 }
