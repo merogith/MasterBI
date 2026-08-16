@@ -24,7 +24,7 @@ question. Adding a question here makes it appear in the survey.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 DONT_KNOW = {"value": "__unknown__", "label": "I don't know — use the sector average"}
 
@@ -32,7 +32,8 @@ DONT_KNOW = {"value": "__unknown__", "label": "I don't know — use the sector a
 def _q(qid: str, text: str, helptext: str, options: List[Dict[str, str]],
        fills: str, default: str, group: str, multi: bool = False,
        allow_unknown: bool = True, optional: bool = False,
-       unlocks: str = "") -> Dict[str, Any]:
+       unlocks: str = "",
+       show_if: Optional[Dict[str, List[str]]] = None) -> Dict[str, Any]:
     opts = list(options)
     if allow_unknown:
         opts.append(DONT_KNOW)
@@ -43,7 +44,29 @@ def _q(qid: str, text: str, helptext: str, options: List[Dict[str, str]],
         # `unlocks` tells the user what accuracy they buy by answering — without
         # that, an optional question is just a longer form.
         "optional": optional, "unlocks": unlocks,
+        # When to ask this at all: `{question_id: [answers that keep it]}`, every
+        # entry having to match.
+        #
+        # **Data, not an expression.** The browser has to decide this as the
+        # user types and the server has to decide it again when the answers come
+        # back, and a small expression language would mean two parsers to keep
+        # in step — the drift this repo tests for everywhere else. A dict of
+        # allowed values is five lines in each language and cannot disagree.
+        "show_if": show_if or {},
     }
+
+
+def _sectors_on(archetype: str) -> List[str]:
+    """Every declared sector this archetype simulates.
+
+    Derived from `profile/sectors.py`, never listed by hand: the moment a
+    sector gains its own archetype, the questions gated on that archetype start
+    being asked of it, with nothing here to remember to edit. A test asserts
+    the two stay in step.
+    """
+    from ..profile import sectors
+    return [entry["value"] for entry in SECTOR_LABELS
+            if sectors.resolve_archetype(entry["value"]).value == archetype]
 
 
 # Every sector the profile schema declares, in the order the survey offers
@@ -166,7 +189,16 @@ QUESTIONS: List[Dict[str, Any]] = [
            {"value": "channel", "label": "Partners and resellers"},
            {"value": "tender", "label": "Tenders and public bids"},
        ],
-       fills="business_model.sales_motion", default="inside", group="The business"),
+       fills="business_model.sales_motion", default="inside", group="The business",
+       # Asked only of subscription businesses, because for anyone else it
+       # provably changes nothing: `sales_motion` is read by
+       # `datagen/subscription.py` and by seven `applies_when` clauses, all of
+       # them in `saas*.yaml`. Verified by varying every answer against an
+       # e-commerce profile — identical generated data, identical scorecard.
+       # When P4 gives professional services its own project archetype,
+       # utilisation and realisation will make this matter there too, and
+       # `_sectors_on` will start asking it without an edit here.
+       show_if={"business_model": _sectors_on("saas")}),
 
     # ---- Size -------------------------------------------------------------
     _q("revenue_band",
@@ -262,7 +294,12 @@ QUESTIONS: List[Dict[str, Any]] = [
            {"value": "multi_year", "label": "Multi-year contracts"},
            {"value": "mixed", "label": "A mix"},
        ],
-       fills="business_model.contract_terms", default="mixed", group="How you work"),
+       fills="business_model.contract_terms", default="mixed", group="How you work",
+       # Same evidence, stronger: this fills `annual_prepay_share` and
+       # `avg_contract_months`, and `grep` finds exactly two readers, both
+       # inside `datagen/subscription.py`. No KPI pack gates on it. A retailer
+       # answering "how do customers commit and pay" was answering into a void.
+       show_if={"business_model": _sectors_on("saas")}),
 
     # ---- Optional deep dive ----------------------------------------------
     # Everything below can be skipped entirely. Each answer replaces a derived

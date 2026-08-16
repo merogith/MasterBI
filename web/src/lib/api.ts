@@ -194,6 +194,31 @@ export interface SurveyQuestion {
   default?: string;
   optional?: boolean;
   unlocks?: string;
+  /** `{question_id: [answers that keep this question]}`, all entries having to
+   *  match. Data rather than an expression on purpose: the browser decides it
+   *  as the user answers and `survey/engine.py` decides it again when the
+   *  answers come back, and two parsers of a small language would be two things
+   *  to keep in step. Kept identical by `test_the_two_evaluators_agree`. */
+  show_if?: Record<string, string[]>;
+}
+
+const UNANSWERED: (string | undefined)[] = [undefined, '', '__unknown__'];
+
+/** Whether a question applies to the business described so far.
+ *
+ *  Mirrors `survey/engine.py::is_visible`, including the rule that an
+ *  unanswered condition keeps the question visible — the survey is answered top
+ *  to bottom, and questions appearing and disappearing mid-form is worse than
+ *  one extra question. */
+export function isVisible(
+  question: SurveyQuestion, answers: Record<string, string>,
+): boolean {
+  for (const [other, allowed] of Object.entries(question.show_if ?? {})) {
+    const given = answers[other];
+    if (UNANSWERED.includes(given)) continue;
+    if (!allowed.includes(given as string)) return false;
+  }
+  return true;
 }
 
 export interface Survey {

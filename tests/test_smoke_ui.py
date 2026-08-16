@@ -419,3 +419,146 @@ def test_the_funnel_goes_backwards_without_losing_the_file(page, tmp_path):
     page.wait_for_selector("#to-quality")
     assert page.locator(".mapping-table tbody tr").count() >= 2, \
         "going back lost the file that had already been read"
+
+
+def _walk_survey_to_review(page, choose=None) -> set:
+    """Skip through the survey, answering `choose`, and return every id asked.
+
+    Returns the union rather than the last step's, because the whole point of
+    branching is that a question is absent from *every* step it might have been
+    on.
+    """
+    seen: set = set()
+    for _ in range(25):
+        for element in page.query_selector_all(".question[data-qid]"):
+            seen.add(element.get_attribute("data-qid"))
+        for qid, label in (choose or {}).items():
+            target = page.locator(f'.question[data-qid="{qid}"] .option', has_text=label)
+            if target.count():
+                target.first.click()
+        if page.locator("#survey-next").inner_text().strip() == "Generate my pack":
+            return seen
+        page.click("#survey-skip")
+    raise AssertionError("never reached the review step")
+
+
+def test_the_survey_hides_questions_that_cannot_apply(page):
+    """Pick "Retail" and the two subscription questions stop being asked.
+
+    `contract_terms` fills `annual_prepay_share` and `avg_contract_months`,
+    whose only readers are in `datagen/subscription.py`; `sales_motion`'s seven
+    `applies_when` clauses are all in the SaaS packs. Both were asked of every
+    respondent, so a shop was answering "how do customers commit and pay" into
+    a void.
+
+    Asserted on the state *after* the sector is chosen, not on the union of
+    every step: `sales_motion` shares a step with the sector question, so it is
+    legitimately on screen until the answer that makes it irrelevant arrives —
+    and then it has to go, in the same render.
+    """
+    page.click('[data-nav="survey"]')
+    page.wait_for_selector("#survey-next")
+
+    # Walk to the step holding the sector question.
+    for _ in range(10):
+        if page.locator('.question[data-qid="business_model"]').count():
+            break
+        page.click("#survey-skip")
+    else:
+        raise AssertionError("never reached the sector question")
+
+    assert page.locator('.question[data-qid="sales_motion"]').count() == 1, \
+        "the test proves nothing unless the question is there to begin with"
+
+    page.click('.question[data-qid="business_model"] .option:has-text("Retail (physical)")')
+
+    assert page.locator('.question[data-qid="sales_motion"]').count() == 0, \
+        "a retailer is still asked a question only the SaaS packs read"
+
+    seen = _walk_survey_to_review(page)
+    assert "contract_terms" not in seen, \
+        "a retailer was asked how customers commit and pay"
+    assert "revenue_band" in seen, "branching removed a question the profile needs"
+
+    review = page.locator("#review-list").inner_text()
+    assert "commit and pay" not in review and "win customers" not in review, \
+        "the review lists answers the user was never asked for"
+
+
+def test_the_survey_still_asks_a_saas_business_everything(page):
+    """The other half of the same rule: nothing was removed for the businesses
+    the two questions exist for."""
+    page.click('[data-nav="survey"]')
+    page.wait_for_selector("#survey-next")
+    seen = _walk_survey_to_review(page, {"business_model": "Software / subscription"})
+
+    assert {"contract_terms", "sales_motion"} <= seen, \
+        "branching hid a question from the archetype that reads it"
+
+
+def test_an_unfinished_survey_survives_a_reload(page):
+    """Nineteen questions is four minutes, and a reload lost every one."""
+    page.click('[data-nav="survey"]')
+    page.wait_for_selector("#survey-next")
+    page.click('.question[data-qid="objective"] .option:has-text("Protect cash")')
+    page.click('.question[data-qid="audience"] .option:has-text("The board")')
+    page.click("#survey-next")
+    page.wait_for_selector('.question[data-qid="country"]')
+
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_selector("#survey-resumed")
+
+    assert "Picked up where you left off" in page.locator("#survey-resumed").inner_text()
+    # Back to the first step and the answer is still selected.
+    page.click("#survey-back")
+    page.wait_for_selector('.question[data-qid="objective"]')
+    assert page.locator(
+        '.question[data-qid="objective"] .option.selected').inner_text().strip() \
+        .startswith("Protect cash")
+
+    page.click("#survey-resumed .linkish")
+    assert page.locator(
+        '.question[data-qid="objective"] .option.selected').count() == 0, \
+        "'Start again' left the old answers in place"
+
+
+def test_the_review_jumps_back_to_the_question_it_names(page):
+    """A review you cannot act on is a receipt, not a review."""
+    page.click('[data-nav="survey"]')
+    page.wait_for_selector("#survey-next")
+    for _ in range(20):
+        if page.locator("#survey-next").inner_text().strip() == 'Generate my pack':
+            break
+        page.click("#survey-skip")
+    else:
+        raise AssertionError("never reached the review step")
+
+    page.click('#review-list [data-edit="objective"]')
+    page.wait_for_selector('.question[data-qid="objective"]')
+    page.click('.question[data-qid="objective"] .option:has-text("Cut cost")')
+
+    # Forward again to the review, which must show the change.
+    for _ in range(20):
+        if page.locator("#survey-next").inner_text().strip() == 'Generate my pack':
+            break
+        page.click("#survey-next")
+    assert "Cut cost" in page.locator("#review-list").inner_text()
+
+
+def test_progress_does_not_read_full_while_there_is_work_left(page):
+    """It used to: `index / (steps.length - 1)` is 100% on the review step —
+    the one step that still has the name field and the run button on it."""
+    page.click('[data-nav="survey"]')
+    page.wait_for_selector("#survey-next")
+    page.click('.question[data-qid="objective"] .option:has-text("Grow revenue")')
+
+    for _ in range(20):
+        if page.locator("#survey-next").inner_text().strip() == 'Generate my pack':
+            break
+        page.click("#survey-skip")
+
+    width = page.locator("#survey-progress").evaluate(
+        "el => el.style.width")
+    percent = float(width.replace("%", ""))
+    assert 0 < percent < 100, \
+        f"progress reads {width} on the review step, having skipped everything"

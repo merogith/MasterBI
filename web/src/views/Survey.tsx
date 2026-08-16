@@ -1,10 +1,52 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import { createRun, getSurvey, type Survey as SurveyData, type SurveyQuestion } from '../lib/api';
+import {
+  createRun, getSurvey, isVisible,
+  type Survey as SurveyData, type SurveyQuestion,
+} from '../lib/api';
 import { href, navigate } from '../lib/router';
 
 /** "Use averages" is a real answer, not an absence: recording `__unknown__`
  *  makes the provenance say the field was defaulted rather than guessed. */
 const UNKNOWN = '__unknown__';
+
+/* Where a half-finished survey lives.
+ *
+ * Nineteen questions is four minutes of someone's attention, and a reload lost
+ * every one of them. `localStorage` rather than a server draft: there is no
+ * account to attach a draft to, the whole survey is a few hundred bytes, and it
+ * survives a closed tab — which is the case that actually loses people. */
+const DRAFT_KEY = 'masterbi.survey.draft';
+
+interface Draft {
+  answers: Record<string, string>;
+  name: string;
+  index: number;
+}
+
+function loadDraft(): Draft | null {
+  try {
+    const raw = window.localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Draft;
+    return parsed && typeof parsed === 'object' && parsed.answers ? parsed : null;
+  } catch {
+    // A corrupt or unavailable store must never block the survey — private
+    // browsing throws on `localStorage` in some browsers.
+    return null;
+  }
+}
+
+function saveDraft(draft: Draft): void {
+  try {
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  } catch { /* saving is a convenience; failing to save is not an error */ }
+}
+
+function clearDraft(): void {
+  try {
+    window.localStorage.removeItem(DRAFT_KEY);
+  } catch { /* see above */ }
+}
 
 interface Step {
   title: string;
@@ -13,15 +55,26 @@ interface Step {
   review: boolean;
 }
 
-function buildSteps(survey: SurveyData): Step[] {
-  const steps: Step[] = survey.groups.map((group) => ({
-    title: group,
-    questions: survey.questions.filter((q) => q.group === group),
-    // The deep-dive block is skippable wholesale, so the nav can offer "skip
-    // this section" instead of demanding five more answers.
-    optional: group === survey.optional_group,
-    review: false,
-  }));
+/** The steps this respondent actually has, given what they have answered.
+ *
+ * Recomputed on every answer, because answering "retail" removes the two
+ * questions that only apply to subscription businesses. A group left with no
+ * visible questions is dropped rather than shown empty. */
+function buildSteps(survey: SurveyData, answers: Record<string, string>): Step[] {
+  const steps: Step[] = [];
+  for (const group of survey.groups) {
+    const questions = survey.questions.filter(
+      (q) => q.group === group && isVisible(q, answers));
+    if (questions.length === 0) continue;
+    steps.push({
+      title: group,
+      questions,
+      // The deep-dive block is skippable wholesale, so the nav can offer "skip
+      // this section" instead of demanding five more answers.
+      optional: group === survey.optional_group,
+      review: false,
+    });
+  }
   steps.push({ title: 'Name and review', questions: [], optional: false, review: true });
   return steps;
 }
@@ -64,11 +117,12 @@ function Question({ question, answer, onAnswer }: {
   );
 }
 
-function Review({ survey, answers, name, onName }: {
-  survey: SurveyData;
+function Review({ asked, answers, name, onName, onEdit }: {
+  asked: SurveyQuestion[];
   answers: Record<string, string>;
   name: string;
   onName: (value: string) => void;
+  onEdit: (questionId: string) => void;
 }) {
   return (
     <>
@@ -84,32 +138,30 @@ function Review({ survey, answers, name, onName }: {
       <div class="question">
         <div class="question-text">Your answers</div>
         <div class="question-help">
-          Anything marked <em>assumed</em> will be filled from sector benchmarks
-          and footnoted in the report appendix rather than presented as fact.
+          Click any row to change it. Anything marked <em>assumed</em> will be
+          filled from sector benchmarks and footnoted in the report appendix
+          rather than presented as fact.
         </div>
         <div class="review-list" id="review-list">
-          {survey.questions.map((question) => {
+          {asked.map((question) => {
             const value = answers[question.id];
             const answered = Boolean(value) && value !== UNKNOWN;
-            if (!answered && question.optional) {
-              // An unanswered optional question is not an assumption the user
-              // made — it is one we are making. Say which.
-              return (
-                <div class="review-row" key={question.id}>
-                  <span class="k">{question.text}</span>
-                  <span class="v assumed">sector benchmark</span>
-                </div>
-              );
-            }
             const effective = answered ? value : question.default;
             const option = question.options.find((o) => o.value === effective);
+            const shown = !answered && question.optional
+              // An unanswered optional question is not an assumption the user
+              // made — it is one we are making. Say which.
+              ? 'sector benchmark'
+              : `${option ? option.label : effective}${answered ? '' : ' · assumed'}`;
             return (
-              <div class="review-row" key={question.id}>
+              <button type="button" class="review-row" key={question.id}
+                      data-edit={question.id}
+                      title={`Change: ${question.text}`}
+                      onClick={() => onEdit(question.id)}>
                 <span class="k">{question.text}</span>
-                <span class={`v ${answered ? '' : 'assumed'}`}>
-                  {option ? option.label : effective}{answered ? '' : ' · assumed'}
-                </span>
-              </div>
+                <span class={`v ${answered ? '' : 'assumed'}`}>{shown}</span>
+                <span class="review-edit" aria-hidden="true">change</span>
+              </button>
             );
           })}
         </div>
@@ -119,18 +171,28 @@ function Review({ survey, answers, name, onName }: {
 }
 
 export function Survey() {
+  const restored = useMemo(loadDraft, []);
   const [survey, setSurvey] = useState<SurveyData | null>(null);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [name, setName] = useState('');
-  const [index, setIndex] = useState(0);
+  const [answers, setAnswers] = useState<Record<string, string>>(
+    restored?.answers ?? {});
+  const [name, setName] = useState(restored?.name ?? '');
+  const [index, setIndex] = useState(restored?.index ?? 0);
   const [error, setError] = useState<string | null>(null);
   const [missing, setMissing] = useState(0);
+  const [resumed, setResumed] = useState(Boolean(restored));
 
   useEffect(() => {
     getSurvey().then(setSurvey, (err: Error) => setError(err.message));
   }, []);
 
-  const steps = useMemo(() => (survey ? buildSteps(survey) : []), [survey]);
+  const steps = useMemo(
+    () => (survey ? buildSteps(survey, answers) : []), [survey, answers]);
+
+  // Saved on every change rather than on navigation: the tab that gets closed
+  // is closed mid-question, not on the way to the next step.
+  useEffect(() => {
+    if (survey) saveDraft({ answers, name, index });
+  }, [answers, name, index, survey]);
 
   if (error) {
     return (
@@ -147,7 +209,29 @@ export function Survey() {
     );
   }
 
-  const step = steps[index] as Step;
+  // Branching can shorten the survey while the user is past the new end.
+  const position = Math.min(index, steps.length - 1);
+  const step = steps[position] as Step;
+  const asked = steps.flatMap((s) => s.questions);
+
+  // Progress is over questions answered, not steps walked. It used to be
+  // `index / (steps.length - 1)`, which reads 100% on the review step — the one
+  // step that still has work on it.
+  const answered = asked.filter(
+    (q) => answers[q.id] && answers[q.id] !== UNKNOWN).length;
+  const percent = Math.round((answered / Math.max(asked.length, 1)) * 100);
+
+  function goToQuestion(questionId: string) {
+    const target = steps.findIndex(
+      (s) => s.questions.some((q) => q.id === questionId));
+    if (target < 0) return;
+    setIndex(target);
+    // The step renders before the scroll can find the row, so wait a frame.
+    requestAnimationFrame(() => {
+      document.querySelector(`.question[data-qid="${questionId}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }
 
   async function advance() {
     if (step.review) {
@@ -158,6 +242,7 @@ export function Survey() {
           ...(name.trim() ? { company_name: name.trim() } : {}),
           seed: Math.floor(Math.random() * 1e7),
         });
+        clearDraft();
         navigate(`/runs/${run.run_id}`);
       } catch (err) {
         setError((err as Error).message);
@@ -174,7 +259,7 @@ export function Survey() {
       return;
     }
     setMissing(0);
-    setIndex(index + 1);
+    setIndex(position + 1);
   }
 
   function skip() {
@@ -184,7 +269,7 @@ export function Survey() {
     }
     setAnswers(filled);
     setMissing(0);
-    setIndex(index + 1);
+    setIndex(position + 1);
   }
 
   return (
@@ -196,18 +281,32 @@ export function Survey() {
         <h1>Build your own</h1>
       </div>
 
+      {resumed && (
+        <div class="notice" id="survey-resumed">
+          Picked up where you left off — {answered} of {asked.length} answered.{' '}
+          <button class="linkish" type="button" onClick={() => {
+            clearDraft();
+            setAnswers({});
+            setName('');
+            setIndex(0);
+            setResumed(false);
+          }}>Start again</button>
+        </div>
+      )}
+
       <div class="survey-progress-row">
         <div class="progress-track">
           <div class="progress-fill" id="survey-progress"
-               style={{ width: `${(index / (steps.length - 1)) * 100}%` }} />
+               style={{ width: `${percent}%` }} />
         </div>
         <span class="progress-label" id="survey-step-label">
-          Step {index + 1} of {steps.length} · {step.title}
+          Step {position + 1} of {steps.length} · {step.title} · {answered} of
+          {' '}{asked.length} answered
         </span>
       </div>
 
       <form id="survey-form" autocomplete="off" onSubmit={(e) => e.preventDefault()}>
-        <fieldset class="survey-step active" data-step={index}>
+        <fieldset class="survey-step active" data-step={position}>
           <legend class="survey-group-title">{step.title}</legend>
           {step.optional && (
             <p class="step-note">
@@ -217,7 +316,8 @@ export function Survey() {
             </p>
           )}
           {step.review
-            ? <Review survey={survey} answers={answers} name={name} onName={setName} />
+            ? <Review asked={asked} answers={answers} name={name} onName={setName}
+                      onEdit={goToQuestion} />
             : step.questions.map((question) => (
               <Question key={question.id} question={question}
                         answer={answers[question.id]}
@@ -236,8 +336,8 @@ export function Survey() {
 
       <div class="survey-nav">
         <button class="ghost" id="survey-back" type="button"
-                style={{ visibility: index === 0 ? 'hidden' : 'visible' }}
-                onClick={() => setIndex(Math.max(0, index - 1))}>
+                style={{ visibility: position === 0 ? 'hidden' : 'visible' }}
+                onClick={() => setIndex(Math.max(0, position - 1))}>
           Back
         </button>
         <div>

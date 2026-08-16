@@ -8,7 +8,7 @@ contract has leaked.
 from __future__ import annotations
 
 import random
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..profile.schema import CompanyProfile
 from . import defaults as D
@@ -32,22 +32,58 @@ _KIND = ["Analytics", "Systems", "Labs", "Software", "Technologies", "Data",
          "Platform", "Cloud"]
 
 
+def is_visible(question: Dict[str, Any], answers: Dict[str, Any]) -> bool:
+    """Whether this question applies to the business described so far.
+
+    `show_if` is `{question_id: [answers that keep it]}`, every entry having to
+    match. Data rather than an expression, so the browser and this module can
+    each decide it in five lines without two parsers drifting apart.
+
+    A condition whose own question is unanswered keeps the question visible:
+    the survey is answered top to bottom, and hiding something because a
+    later-but-unanswered question has not decided yet would make questions
+    appear and disappear as the user works.
+    """
+    for other, allowed in (question.get("show_if") or {}).items():
+        given = answers.get(other)
+        if given in (None, "", UNKNOWN):
+            continue
+        if given not in allowed:
+            return False
+    return True
+
+
+def visible_questions(answers: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The questions this respondent should actually be asked."""
+    return [q for q in QUESTIONS if is_visible(q, answers)]
+
+
 def _answer(answers: Dict[str, Any], qid: str) -> Tuple[Any, bool]:
-    """Return (value, was_defaulted)."""
+    """Return (value, was_defaulted).
+
+    An answer to a question this respondent should never have seen is
+    discarded. Otherwise changing "software" to "retail" halfway through would
+    leave the contract-terms answer behind, and the profile would carry a fact
+    about the business that the user was never asked to confirm and cannot see.
+    """
     q = QUESTION_BY_ID[qid]
     raw = answers.get(qid)
+    if not is_visible(q, answers):
+        return q["default"], True
     if raw is None or raw == UNKNOWN or raw == "":
         return q["default"], True
     return raw, False
 
 
 def _explicit(answers: Dict[str, Any], qid: str) -> Optional[Any]:
-    """The answer only if the user actually gave one.
+    """The answer only if the user actually gave one, and was asked.
 
     Optional questions must not fall back to a default: the entire point of
     the deep-dive block is that an unanswered question leaves the derived
     assumption in place (and correctly flagged as derived).
     """
+    if not is_visible(QUESTION_BY_ID[qid], answers):
+        return None
     raw = answers.get(qid)
     if raw is None or raw == UNKNOWN or raw == "":
         return None
