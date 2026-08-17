@@ -69,8 +69,7 @@ def generate(profile: CompanyProfile,
     n_report = profile.history_months
     n_total = n_report + WARMUP_MONTHS
 
-    months = pd.period_range(end=pd.Period("2025-12", freq="M"), periods=n_total, freq="M")
-    report_months = months[WARMUP_MONTHS:]
+    months, report_months = month_range(n_report, end=params.history_end)
 
     segments = profile.market.segments
     if not segments:

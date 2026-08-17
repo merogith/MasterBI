@@ -56,6 +56,14 @@ class SourceKind(str, Enum):
     upload = "upload"          # P2 — ingestion
 
 
+def _default_history_end() -> str:
+    """Imported lazily: `datagen` imports this module, so a top-level import
+    here would close the cycle at interpreter start."""
+    from ..datagen.base import default_history_end
+
+    return str(default_history_end())
+
+
 class GeneratorParams(SpecModel):
     """Knobs on the synthetic generator.
 
@@ -66,6 +74,14 @@ class GeneratorParams(SpecModel):
     archetype: Optional[str] = None        # None -> from business_model.type
     seed: Optional[int] = None             # None -> profile.seed
     history_months: Optional[int] = None   # None -> profile.history_months
+    # The last month of generated history, "YYYY-MM". Resolved *here*, at spec
+    # construction, rather than read from the clock inside the generator: a
+    # run's data has to be a function of its spec, or the cache key says two
+    # runs are the same when their data is fifteen months apart. Written into
+    # `spec.json`, so a saved run reproduces itself and 0.7's `spec_versions`
+    # records what each set of artifacts was as of.
+    history_end: str = Field(default_factory=lambda: _default_history_end(),
+                             pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     seasonality_amplitude: float = Field(default=1.0, ge=0.0, le=3.0)
     volatility: float = Field(default=1.0, ge=0.0, le=3.0)
     inject_anomalies: bool = True

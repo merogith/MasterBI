@@ -451,7 +451,8 @@ def generate(profile: CompanyProfile,
     params = params or GeneratorParams()
     rng = volatile(np.random.default_rng(profile.seed), params.volatility)
 
-    months, report_months = month_range(profile.history_months)
+    months, report_months = month_range(profile.history_months,
+                                        end=params.history_end)
     segments = profile.market.segments
     if not segments:
         raise ValueError("e-commerce generator requires at least one market segment")

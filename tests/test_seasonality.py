@@ -40,8 +40,6 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import kpi_maker.datagen.base as datagen_base  # noqa: E402
-import kpi_maker.datagen.ecommerce as ecommerce  # noqa: E402
 import kpi_maker.insight.detectors as detectors  # noqa: E402
 from kpi_maker.cli import load_profile  # noqa: E402
 from kpi_maker.datagen import GENERATORS  # noqa: E402
@@ -52,6 +50,7 @@ from kpi_maker.insight.seasonality import (  # noqa: E402
 )
 from kpi_maker.kpi.selection import select  # noqa: E402
 from kpi_maker.metrics.engine import compute  # noqa: E402
+from kpi_maker.spec.schema import GeneratorParams  # noqa: E402
 
 # The retail year the generator plants: Black Friday and Christmas carry it,
 # January is the hangover. Used here as an independent copy rather than
@@ -224,18 +223,9 @@ def retail_history():
     findings says nothing about the calendar.
     """
     profile = load_profile(ROOT / "samples" / "kestrel_retail.json")
-    original = ecommerce.month_range
-
-    def month_range(history_months, warmup=datagen_base.WARMUP_MONTHS):
-        months = pd.period_range(end=pd.Period("2026-11", freq="M"),
-                                 periods=47 + warmup, freq="M")
-        return months, months[warmup:]
-
-    ecommerce.month_range = month_range
-    try:
-        tables = dict(GENERATORS["ecommerce"](profile).tables)
-    finally:
-        ecommerce.month_range = original
+    profile = profile.model_copy(update={"history_months": 47})
+    params = GeneratorParams(history_end="2026-11")
+    tables = dict(GENERATORS["ecommerce"](profile, params).tables)
     return profile, tables, select(profile)
 
 

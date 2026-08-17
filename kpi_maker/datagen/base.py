@@ -105,11 +105,47 @@ def available() -> List[str]:
 # Time
 # --------------------------------------------------------------------------
 
-def month_range(history_months: int, warmup: int = WARMUP_MONTHS):
-    """Every month to simulate, and the slice of it the user will see."""
+#: Pin the end of generated history without touching a spec. Set by the test
+#: suite so the whole suite is reproducible whatever month it runs in, and
+#: useful to anyone who needs two runs on different days to be comparable.
+HISTORY_END_ENV = "MASTERBI_HISTORY_END"
+
+
+def default_history_end() -> pd.Period:
+    """The last month a company could have closed its books on.
+
+    This was a literal December 2025 period, written out twice — here and in
+    `subscription.py` — so **every** generated company's history ended in that
+    month whatever today's date was: a report dated
+    2026 opening on figures fifteen months old. It also parked every sample at
+    the one calendar position where a fourth-quarter peak sits at the very end
+    of the series, which is what hid the seasonal artefact 3.4b fixes.
+
+    The current month is deliberately excluded: it is not over, and a partial
+    month rendered beside twelve complete ones is a cliff at the right-hand
+    edge of every chart.
+    """
+    import os
+
+    pinned = os.environ.get(HISTORY_END_ENV)
+    if pinned:
+        return pd.Period(pinned, freq="M")
+    return pd.Period(pd.Timestamp.utcnow(), freq="M") - 1
+
+
+def month_range(history_months: int, warmup: int = WARMUP_MONTHS, end=None):
+    """Every month to simulate, and the slice of it the user will see.
+
+    `end` comes from the spec, which resolves it **once, at spec construction**,
+    rather than being read from the clock here. That is what keeps the cache
+    key honest: a run's data is a function of its spec, so re-running a saved
+    spec next month reproduces the same artifacts, and asking for fresh data is
+    a new spec rather than a silent difference between two identical-looking
+    runs.
+    """
     total = history_months + warmup
-    months = pd.period_range(end=pd.Period("2025-12", freq="M"),
-                             periods=total, freq="M")
+    last = pd.Period(end, freq="M") if end is not None else default_history_end()
+    months = pd.period_range(end=last, periods=total, freq="M")
     return months, months[warmup:]
 
 
