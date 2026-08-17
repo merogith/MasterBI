@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 import numpy as np
 import pandas as pd
@@ -37,6 +37,14 @@ class Finding:
     # A pre-written clause for when this finding is folded into another, so the
     # merge never has to slice prose apart and guess which sentence to keep.
     merge_note: Optional[str] = None
+    # How long ago the event this finding describes happened. `None` means "the
+    # current state", which is what most detectors report and is not the same
+    # as an unknown date — see `insight/ranking.recency`.
+    months_ago: Optional[float] = None
+    # Set by `ranking.rank_all`, so the dashboard, the report and the deck order
+    # findings identically. They each sorted for themselves before, which is how
+    # three renderers of one list can disagree about what matters most.
+    score: float = 0.0
 
     @property
     def rank(self) -> int:
@@ -102,7 +110,8 @@ def _pct(value: float, decimals: int = 1) -> str:
 
 def detect_all(results: List[MetricResult], tables: Dict[str, pd.DataFrame],
                profile: CompanyProfile, spec=None,
-               locale: Optional[str] = None) -> List[Finding]:
+               locale: Optional[str] = None,
+               watched: Optional[Set[str]] = None) -> List[Finding]:
     """Run the deterministic detectors.
 
     `spec` is a `spec.AnalysisSpec` (or None for all of them, unfiltered).
@@ -124,6 +133,8 @@ def detect_all(results: List[MetricResult], tables: Dict[str, pd.DataFrame],
         "arr_bridge": lambda: _arr_bridge(tables, profile),
         "channel_efficiency": lambda: _channel_efficiency(tables),
         "runway": lambda: _runway(by_id),
+        "driver_decomposition": lambda: _driver_decomposition(results),
+        "concentration": lambda: _concentration(tables),
     }
 
     wanted = list(registry) if spec is None or spec.detectors is None else [
@@ -143,12 +154,32 @@ def detect_all(results: List[MetricResult], tables: Dict[str, pd.DataFrame],
             # nothing to say. The metrics engine already treats missing data as
             # "not computable" rather than an error; a detector crashing the
             # whole run would make an honest partial upload impossible.
-            skipped.append(f"{name}: needs the {exc} table")
+            #
+            # Two of them are not missing a table by accident, though: the ARR
+            # bridge and the churn-by-segment outlier are statements about a
+            # subscription book, and a retailer does not have one. "Needs the
+            # mrr_movements table" invites someone to go and find a file that
+            # does not exist for their business, so say the true thing instead.
+            if name in _SUBSCRIPTION_ONLY:
+                skipped.append(
+                    f"{name}: describes a subscription book, which this "
+                    f"business does not have")
+            else:
+                skipped.append(f"{name}: needs the {exc} table")
         except Exception as exc:                        # noqa: BLE001
             skipped.append(f"{name}: {type(exc).__name__}: {exc}")
 
     findings = _merge_same_kpi(findings)
-    findings.sort(key=lambda f: (f.rank, f.id))
+    # Ordering was `(severity, id)` — alphabetical by detector id inside the
+    # band that matters, which is to say arbitrary. A reader takes the top three
+    # seriously and skims the rest.
+    #
+    # `watched` is passed in rather than read off `spec`, because pinning lives
+    # on `MetricsSpec` and this function is handed `AnalysisSpec`. Reaching
+    # across for it would tie the detectors to a part of the spec they have no
+    # other business knowing about.
+    from .ranking import rank_all
+    findings = rank_all(findings, set(watched or ()))
 
     if spec is not None and spec.min_severity:
         # "positive" ranks last in SEVERITY_ORDER, so a floor of "medium" keeps
@@ -166,9 +197,14 @@ def detect_all(results: List[MetricResult], tables: Dict[str, pd.DataFrame],
     return findings
 
 
+#: Detectors whose subject matter only exists for a subscription business.
+#: Not a data gap — a category difference, and reported as one.
+_SUBSCRIPTION_ONLY = {"arr_bridge", "segment_outliers"}
+
 DETECTOR_NAMES = [
     "status_breaches", "benchmark_gaps", "trend_breaks", "segment_outliers",
     "operating_leverage", "arr_bridge", "channel_efficiency", "runway",
+    "driver_decomposition", "concentration",
 ]
 
 
@@ -329,7 +365,14 @@ def _trend_breaks(results: List[MetricResult], window: int = 6) -> List[Finding]
                 f"{_fmt(float(recent.iloc[-1]), r.kpi.unit)}. The inflection is "
                 f"recent enough to still be addressable."
             ),
-            evidence={"recent_slope": float(recent_slope), "prior_slope": float(prior_slope)},
+            # `current` and `prior` are the two numbers the statement above
+            # already quotes. They are here so the ranker can size the move:
+            # with slopes alone every trend break scored identically, which put
+            # a metric that halved level with one that wobbled.
+            evidence={"current": float(recent.iloc[-1]),
+                      "prior": float(prior.iloc[0]),
+                      "recent_slope": float(recent_slope),
+                      "prior_slope": float(prior_slope)},
             kpi_ids=[r.kpi.id],
             impact="high",
             effort="medium",
@@ -457,19 +500,32 @@ def _arr_bridge(tables: Dict[str, pd.DataFrame], profile: CompanyProfile) -> Lis
     )]
 
 
+#: Marketing outcome columns, best first. `sqls` is the subscription funnel's
+#: qualified lead; `leads` is what every other archetype's marketing table
+#: records. Hardcoding `sqls` made this detector raise `Column(s) ['sqls'] do
+#: not exist` on an e-commerce run — reported to the user as
+#: `needs the "Column(s) ['sqls'] do not exist" table`, which is not a sentence.
+_FUNNEL_COLUMNS = ("sqls", "leads", "orders")
+
+
 def _channel_efficiency(tables: Dict[str, pd.DataFrame]) -> List[Finding]:
     mkt = tables["marketing"]
+    outcome = next((c for c in _FUNNEL_COLUMNS if c in mkt.columns), None)
+    if outcome is None or "spend" not in mkt.columns:
+        return []
+    noun = {"sqls": "qualified lead", "leads": "lead", "orders": "order"}[outcome]
     months = sorted(mkt["month"].unique())
     recent = mkt[mkt["month"].isin(months[-6:])]
     prior = mkt[mkt["month"].isin(months[-18:-12])] if len(months) >= 18 else None
     if prior is None or prior.empty:
         return []
 
-    def cost_per_sql(df):
-        g = df.groupby("channel").agg(spend=("spend", "sum"), sqls=("sqls", "sum"))
-        return (g["spend"] / g["sqls"].replace(0, np.nan)).dropna()
+    def cost_per_outcome(df):
+        g = df.groupby("channel").agg(spend=("spend", "sum"),
+                                      outcome=(outcome, "sum"))
+        return (g["spend"] / g["outcome"].replace(0, np.nan)).dropna()
 
-    now, before = cost_per_sql(recent), cost_per_sql(prior)
+    now, before = cost_per_outcome(recent), cost_per_outcome(prior)
     shared = now.index.intersection(before.index)
     if shared.empty:
         return []
@@ -481,15 +537,16 @@ def _channel_efficiency(tables: Dict[str, pd.DataFrame]) -> List[Finding]:
     return [Finding(
         id="channel_cost_inflation",
         severity="high",
-        title=f"Cost per qualified lead in {worst.replace('_', ' ')} is up {_pct(change[worst], 0)}",
+        title=f"Cost per {noun} in {worst.replace('_', ' ')} is up {_pct(change[worst], 0)}",
         statement=(
             f"{worst.replace('_', ' ').title()} now costs "
-            f"{_fmt(float(now[worst]), 'currency')} per SQL, up {_pct(change[worst], 0)} from "
+            f"{_fmt(float(now[worst]), 'currency')} per {noun}, "
+            f"up {_pct(change[worst], 0)} from "
             f"{_fmt(float(before[worst]), 'currency')} a year ago. Other channels moved "
             f"{_pct(change.drop(worst).mean(), 0)} on average, so this is channel-specific "
             f"rather than a market-wide shift."
         ),
-        evidence={"current_cps": float(now[worst]), "prior_cps": float(before[worst]),
+        evidence={"current": float(now[worst]), "prior": float(before[worst]),
                   "change": float(change[worst]), "other_channels_avg": float(change.drop(worst).mean())},
         kpi_ids=["blended_cac", "cac_payback_months"],
         recommendation=(
@@ -523,3 +580,132 @@ def _runway(by_id: Dict[str, MetricResult]) -> List[Finding]:
         impact="high",
         effort="high",
     )]
+
+
+def _driver_decomposition(results: List[MetricResult]) -> List[Finding]:
+    """Which part of the business moved the number.
+
+    The detector the plan calls the highest-value analytical addition, and the
+    one that could not be written until `MetricResult.by_segment` existed. It
+    says one of two things and never confuses them — see `insight/decompose.py`
+    for why additivity is measured against this run's own numbers rather than
+    inferred from a metric's unit.
+    """
+    from .decompose import decompose, worth_reporting
+
+    out: List[Finding] = []
+    for r in results:
+        if not r.computed or not r.segmented:
+            continue
+        for dimension in r.dimensions:
+            found = decompose(r, dimension)
+            if found is None or not worth_reporting(found):
+                continue
+            lead = found.leader
+            if lead is None:
+                continue
+
+            unit = r.kpi.unit
+            cut = dimension.replace("_", " ")
+            if found.kind == "contribution":
+                statement = (
+                    f"{r.kpi.name} moved {_fmt(found.total_change, unit)} over "
+                    f"the last twelve months, and {lead.segment} accounts for "
+                    f"{_pct(abs(lead.share_of_move), 0)} of that "
+                    f"({_fmt(lead.change, unit)}). The other "
+                    f"{len(found.parts) - 1} {cut}s together account for the rest."
+                )
+                title = f"{lead.segment} drove most of the move in {r.kpi.name}"
+                evidence = {"current": lead.current, "prior": lead.prior,
+                            "total_change": found.total_change,
+                            "share_of_move": lead.share_of_move}
+            else:
+                statement = (
+                    f"{r.kpi.name} reads {_fmt(r.current, unit)} blended, but "
+                    f"{lead.segment} is at {_fmt(lead.current, unit)}. A blended "
+                    f"figure averages that away, which is exactly what it is for "
+                    f"and exactly why it should not be read alone."
+                )
+                title = f"{r.kpi.name} differs sharply by {cut}"
+                evidence = {"current": lead.current, "blended": r.current,
+                            "total_change": found.total_change}
+
+            # The two kinds of finding ask different questions, and using one
+            # test for both mislabels half of them. A *contribution* is bad when
+            # the leader pulled the metric the wrong way. A *dispersion* is bad
+            # when the outlier sits worse than the blend — NRR at 81% against a
+            # 103% blend is a problem however the segment moved, and this read
+            # `positive` until the two were separated.
+            higher_is_better = r.kpi.direction.value == "higher_is_better"
+            if found.kind == "contribution":
+                worse = (lead.change < 0) if higher_is_better else (lead.change > 0)
+            elif lead.current is None or r.current is None:
+                worse = False
+            else:
+                worse = ((lead.current < r.current) if higher_is_better
+                         else (lead.current > r.current))
+            out.append(Finding(
+                id=f"decomp_{r.kpi.id}_{dimension}",
+                severity=("high" if worse and r.kpi.tier.value <= 1
+                          else "medium" if worse else "positive"),
+                title=title,
+                statement=statement,
+                evidence={k: v for k, v in evidence.items() if v is not None},
+                kpi_ids=[r.kpi.id],
+                recommendation=(
+                    f"Look at {lead.segment} on its own before drawing a "
+                    f"company-wide conclusion from {r.kpi.name}."),
+                impact="high",
+                effort="low",
+            ))
+    return out
+
+
+def _concentration(tables: Dict[str, pd.DataFrame]) -> List[Finding]:
+    """How much of the revenue rides on one segment, channel or category.
+
+    Herfindahl-Hirschman: the sum of squared shares, which is the standard
+    measure and needs no threshold invented for it — competition authorities
+    treat 0.25 as highly concentrated and 0.15 as moderately so, and those are
+    the numbers used here rather than ones chosen to make the finding fire.
+
+    Computed from `segment_financials`, so it works for every archetype that
+    emits one rather than for subscriptions alone. `atlas_enterprise`'s whole
+    story is concentration, and it was authored into the sample's profile
+    instead of being computed from anything.
+    """
+    seg = tables.get("segment_financials")
+    if seg is None or seg.empty:
+        return []
+
+    out: List[Finding] = []
+    latest = seg["month"].max()
+    for dimension, part in seg[seg["month"] == latest].groupby("dimension"):
+        shares = part.set_index("segment")["share"].sort_values(ascending=False)
+        if len(shares) < 2:
+            continue
+        hhi = float((shares ** 2).sum())
+        if hhi < 0.15:
+            continue
+        top = shares.index[0]
+        cut = str(dimension).replace("_", " ")
+        out.append(Finding(
+            id=f"concentration_{dimension}",
+            severity="high" if hhi >= 0.25 else "medium",
+            title=f"Revenue is concentrated by {cut}",
+            statement=(
+                f"{top} accounts for {_pct(float(shares.iloc[0]), 0)} of revenue, "
+                f"and the {cut} mix scores {hhi:.2f} on the Herfindahl index "
+                f"({'highly' if hhi >= 0.25 else 'moderately'} concentrated). "
+                f"A shock to {top} lands on the whole company."
+            ),
+            evidence={"current": hhi, "threshold": 0.25,
+                      "top_share": float(shares.iloc[0])},
+            kpi_ids=["revenue_concentration_top10"],
+            recommendation=(
+                f"Model the downside of losing a third of {top} before "
+                f"committing to next year's plan."),
+            impact="high",
+            effort="medium",
+        ))
+    return out

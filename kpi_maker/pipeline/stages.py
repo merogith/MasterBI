@@ -217,7 +217,10 @@ def _metrics(ctx) -> List[Any]:
        label="Detecting findings")
 def _analyse(ctx) -> List[Any]:
     return detect_all(ctx.get("metrics"), ctx.get("model"), ctx.get("resolve"),
-                      spec=ctx.spec.analysis, locale=ctx.spec.resolve_locale())
+                      spec=ctx.spec.analysis, locale=ctx.spec.resolve_locale(),
+                      # A KPI the user pinned is one they have said they care
+                      # about, and nothing else in the product knows that.
+                      watched=set(ctx.spec.metrics.pinned or ()))
 
 
 @stage("narrate", needs=("analyse", "select", "metrics"),
