@@ -39,6 +39,7 @@ from .base import (
     generator,
     month_range,
     monthly_growth,
+    segment_financials,
     to_reported,
     trim_warmup,
     volatile,
@@ -509,9 +510,18 @@ def generate(profile: CompanyProfile,
     headcount = _build_headcount(profile, financials, months, rng)
     marketing = _build_marketing(orders, financials, months, rng)
 
+    # Two dimensions here, not one: a retailer asks "which channel" and "which
+    # category" as separate questions, and the same table answers both because
+    # it is long rather than wide.
+    segment_fin = segment_financials(financials, {
+        "channel": (orders, "gross_revenue", False),
+        "category": (orders, "gross_revenue", False),
+    })
+
     tables = trim_warmup(
         {
             "monthly_financials": financials,
+            "segment_financials": segment_fin,
             "orders": orders.drop(columns=["sessions"]),
             "traffic": traffic,
             "inventory": inventory,

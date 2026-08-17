@@ -317,3 +317,63 @@ def yoy_growth(monthly_revenue: pd.Series, report_start: int) -> Optional[float]
     if prior <= 0:
         return None
     return end / prior - 1.0
+
+
+def segment_financials(financials: pd.DataFrame,
+                       activity: Dict[str, Tuple[pd.DataFrame, str, bool]],
+                       ) -> pd.DataFrame:
+    """Company revenue split across each dimension a run can be sliced by.
+
+    Long: `month, dimension, segment, revenue, share`. One table rather than
+    one per dimension, because a subscription business slices by customer
+    segment and a transactional one by channel *and* category — a wide table
+    would need a different shape per archetype, and everything downstream would
+    have to learn which.
+
+    **Built from shares, not from levels, and that is the whole design.** Each
+    segment's share of the dimension's activity is measured from the table that
+    actually records it, and the company's own revenue is then split by those
+    shares. Shares sum to one by construction, so segment revenue sums to
+    company revenue *exactly*, for every dimension, whatever route the
+    generator took to derive the company figure. Summing simulated per-segment
+    levels instead would leave a residual that a Tier 1 identity would rightly
+    reject, and the residual would have to be shoved somewhere arbitrary.
+
+    `activity` maps a dimension name to `(frame, value_column, cumulative)`.
+    `cumulative` is for a stock built from a flow: MRR is the running sum of
+    movements, so a segment's share this month depends on everything it has
+    accumulated, not on what it happened to add in that one month.
+    """
+    months = list(financials["month"])
+    revenue = financials.set_index("month")["revenue"]
+    rows: List[Dict[str, Any]] = []
+
+    for dimension, (frame, column, cumulative) in activity.items():
+        if frame is None or frame.empty or dimension not in frame.columns:
+            continue
+        grid = (frame.groupby(["month", dimension])[column].sum()
+                .unstack(fill_value=0.0).reindex(months, fill_value=0.0)
+                .sort_index())
+        if cumulative:
+            grid = grid.cumsum()
+
+        totals = grid.sum(axis=1)
+        for month in months:
+            total = float(totals.loc[month])
+            if total <= 0:
+                # No activity yet. Emitting zero-revenue rows would be a claim
+                # that every segment earned nothing, which is different from
+                # not knowing how to split a month that has not happened.
+                continue
+            for segment in grid.columns:
+                share = float(grid.loc[month, segment]) / total
+                rows.append({
+                    "month": month,
+                    "dimension": dimension,
+                    "segment": str(segment),
+                    "revenue": float(revenue.loc[month]) * share,
+                    "share": share,
+                })
+
+    return pd.DataFrame(rows, columns=["month", "dimension", "segment",
+                                       "revenue", "share"])

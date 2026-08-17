@@ -98,6 +98,25 @@ UNIVERSAL_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
 
     "monthly_financials": _financials(_PL_COLUMNS, "Universal P&L columns."),
 
+    # Company revenue split across whichever dimensions this archetype can be
+    # sliced by. Long — `dimension` names the cut — because a subscription
+    # business slices by customer segment and a transactional one by channel
+    # *and* category; a wide table would need a different shape per archetype
+    # and everything downstream would have to learn which.
+    "segment_financials": pa.DataFrameSchema(
+        {
+            "month": MONTH,
+            "dimension": pa.Column(nullable=False),
+            "segment": pa.Column(nullable=False),
+            "revenue": _money(),
+            "share": pa.Column(float, coerce=True, checks=A_FRACTION),
+        },
+        strict=False, name="segment_financials",
+        description=("Month x dimension x segment. Shares sum to 1.0 within a "
+                     "month and dimension, so segment revenue sums to the "
+                     "company's."),
+    ),
+
     "headcount": pa.DataFrameSchema(
         {
             "month": MONTH,

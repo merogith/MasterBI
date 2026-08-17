@@ -196,8 +196,21 @@ def _select(ctx) -> Any:
        reads=("profile", "metrics", "source"),
        label="Computing metrics")
 def _metrics(ctx) -> List[Any]:
-    return compute(ctx.get("select"), ctx.get("model"), ctx.get("resolve"),
-                   origins=getattr(ctx, "origins", None))
+    # Every cut the data offers, not one chosen here. The dimensions come from
+    # `segment_financials`, which the generator emits for whatever the archetype
+    # can actually be sliced by — customer segment for a subscription business,
+    # channel *and* category for a transactional one. Nothing in the spec picks
+    # a dimension because nothing needs to: the cost is about 250ms per cut
+    # against a 2.3s pipeline, and a decomposition that can only see one
+    # dimension cannot rank it against another.
+    #
+    # An upload with no `segment_financials` yields no dimensions and this is
+    # exactly the blended computation it was before.
+    from ..metrics.engine import dimensions
+    tables = ctx.get("model")
+    return compute(ctx.get("select"), tables, ctx.get("resolve"),
+                   origins=getattr(ctx, "origins", None),
+                   by=dimensions(tables))
 
 
 @stage("analyse", needs=("metrics",), reads=("profile", "analysis"),

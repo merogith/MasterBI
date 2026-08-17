@@ -128,6 +128,31 @@ def _opex(t, p):
     return _ok(np.allclose(fin["total_opex"], fin[lines].sum(axis=1), rtol=1e-9))
 
 
+@check("segment revenue sums to company revenue", Tier.structural,
+       ("monthly_financials", "segment_financials"))
+def _segment_revenue(t, p):
+    """The whole point of splitting by share rather than by simulated level.
+
+    A per-segment figure that does not add back to the company's is not a
+    decomposition, it is a second, quieter set of numbers — and a reader who
+    sums the segments and gets a different total has caught the product lying.
+    Checked per dimension, because a run can be sliced more than one way and a
+    residual in one cut must not be hidden by another that reconciles.
+    """
+    fin = t["monthly_financials"].set_index("month")["revenue"]
+    seg = t["segment_financials"]
+    for dimension, part in seg.groupby("dimension"):
+        totals = part.groupby("month")["revenue"].sum()
+        expected = fin.reindex(totals.index)
+        if not np.allclose(totals.to_numpy(), expected.to_numpy(), rtol=1e-9):
+            worst = float((totals - expected).abs().max())
+            return _ok(False, f"{dimension}: off by up to {worst:,.2f}")
+        shares = part.groupby("month")["share"].sum()
+        if not np.allclose(shares.to_numpy(), 1.0, atol=1e-9):
+            return _ok(False, f"{dimension}: shares do not sum to 1.0")
+    return _ok(True)
+
+
 @check("arr = mrr x 12", Tier.structural, FIN, archetypes=SUBSCRIPTION)
 def _arr(t, p):
     fin = t["monthly_financials"]

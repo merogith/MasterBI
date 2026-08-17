@@ -10,7 +10,7 @@ field is documentation for humans; this is the implementation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -149,6 +149,30 @@ class MetricResult:
     # than being reconstructed by whoever renders it.
     basis: str = MEASURED
     tables_used: tuple = ()
+    # `{dimension: {level: series}}`, when the run asked for a cut and this
+    # metric could actually be measured within it.
+    #
+    # Nested, because a run can be sliced more than one way — a retailer asks
+    # "which channel" and "which category" as different questions — and 3.4's
+    # decomposition exists precisely to rank one dimension's contribution
+    # against another's. Flattening would make that impossible to express.
+    #
+    # Empty is the common and honest case: most metrics need a cost line, and
+    # costs are not split by segment because nothing measures them that way.
+    by_segment: Dict[str, Dict[str, pd.Series]] = field(default_factory=dict)
+
+    def current_by_segment(self, dimension: str) -> Dict[str, Optional[float]]:
+        return {level: _last_valid(series)
+                for level, series in self.by_segment.get(dimension, {}).items()}
+
+    @property
+    def dimensions(self) -> List[str]:
+        """Cuts this metric could actually be measured within."""
+        return [d for d, levels in self.by_segment.items() if len(levels) > 1]
+
+    @property
+    def segmented(self) -> bool:
+        return bool(self.dimensions)
 
     @property
     def yoy_change(self) -> Optional[float]:
@@ -739,9 +763,76 @@ def _universe(kpi_set: KPISet) -> Dict[str, KPI]:
     return known
 
 
+SEGMENT_TABLE = "segment_financials"
+
+
+def dimensions(tables: Dict[str, pd.DataFrame]) -> List[str]:
+    """Which cuts this run can be sliced by, in a stable order."""
+    frame = tables.get(SEGMENT_TABLE)
+    if frame is None or frame.empty:
+        return []
+    return sorted(frame["dimension"].unique())
+
+
+def levels(tables: Dict[str, pd.DataFrame], dimension: str) -> List[str]:
+    frame = tables.get(SEGMENT_TABLE)
+    if frame is None or frame.empty:
+        return []
+    return sorted(frame.loc[frame["dimension"] == dimension, "segment"].unique())
+
+
+def slice_tables(tables: Dict[str, pd.DataFrame], dimension: str,
+                 level: str) -> Dict[str, pd.DataFrame]:
+    """The same fact tables, restricted to one segment.
+
+    Three rules, and the second and third are the ones that keep this honest:
+
+    * **A table carrying the dimension is filtered.** `mrr_movements` has a
+      `segment` column, so a per-segment NRR is a real measurement.
+    * **`monthly_financials` is replaced by revenue alone**, taken from
+      `segment_financials`. The cost lines are *not* split. Scaling COGS by
+      revenue share would assume every segment earns the same margin, which is
+      an assumption dressed as a measurement — and a wrong margin in a board
+      pack is the one failure this project treats as unacceptable. A metric
+      needing `cogs` therefore reports that it needs it, per segment, which is
+      true.
+    * **A table without the dimension is dropped, not shared.** Company-wide
+      headcount inside a per-segment revenue-per-head would silently mix grains
+      and produce a number that looks fine and means nothing. Dropping it makes
+      the metric say "needs the headcount table", which is the truth for this
+      slice.
+    """
+    segment_fin = tables.get(SEGMENT_TABLE)
+    if segment_fin is None or segment_fin.empty:
+        return {}
+
+    rows = segment_fin[(segment_fin["dimension"] == dimension)
+                       & (segment_fin["segment"] == level)]
+    if rows.empty:
+        return {}
+
+    out: Dict[str, pd.DataFrame] = {
+        "monthly_financials": rows[["month", "revenue"]]
+        .sort_values("month").reset_index(drop=True),
+    }
+    for name, frame in tables.items():
+        if name in (SEGMENT_TABLE, "monthly_financials"):
+            continue
+        if frame is not None and dimension in getattr(frame, "columns", ()):
+            out[name] = frame[frame[dimension] == level].reset_index(drop=True)
+    return out
+
+
 def compute(kpi_set: KPISet, tables: Dict[str, pd.DataFrame],
             profile: CompanyProfile,
-            origins: Optional[Dict[str, str]] = None) -> List[MetricResult]:
+            origins: Optional[Dict[str, str]] = None,
+            by: Union[None, str, Sequence[str]] = None) -> List[MetricResult]:
+    """Every selected KPI, blended — and per segment when `by` names a dimension.
+
+    The blended series is always the company's. `by` adds a second view beside
+    it rather than replacing it: a segment that behaves differently from the
+    average is the finding, and you cannot see that without both.
+    """
     ctx = MetricContext(profile=profile, tables=tables, origins=origins or {})
     evaluator = _Evaluator(ctx, _universe(kpi_set))
     results: List[MetricResult] = []
@@ -797,7 +888,51 @@ def compute(kpi_set: KPISet, tables: Dict[str, pd.DataFrame],
             tables_used=used,
         ))
 
+    wanted = [by] if isinstance(by, str) else list(by or ())
+    for dimension in wanted:
+        _attach_segments(results, kpi_set, tables, profile, origins, dimension)
     return results
+
+
+def _attach_segments(results: List[MetricResult], kpi_set: KPISet,
+                     tables: Dict[str, pd.DataFrame], profile: CompanyProfile,
+                     origins: Optional[Dict[str, str]], dimension: str) -> None:
+    """Re-evaluate every KPI once per level of `dimension`, in place.
+
+    A whole second evaluation per segment rather than something cleverer: the
+    formula engine, the builtin registry and the reference resolver all read
+    from `ctx.tables`, so handing them a sliced set is the only way to get a
+    per-segment answer that goes through exactly the same arithmetic as the
+    blended one. Anything else would be a second implementation of every
+    metric, which is the drift this repo spends its tests preventing.
+
+    A metric that cannot be computed within a slice is simply absent from
+    `by_segment`. That is the common case and it is the honest one: most
+    metrics need a cost line, and costs are not split by segment because
+    nothing in the data measures them that way.
+    """
+    universe = _universe(kpi_set)
+    by_id = {r.kpi.id: r for r in results}
+
+    for level in levels(tables, dimension):
+        sliced = slice_tables(tables, dimension, level)
+        if not sliced:
+            continue
+        ctx = MetricContext(profile=profile, tables=sliced, origins=origins or {})
+        evaluator = _Evaluator(ctx, universe)
+        for kpi in kpi_set.kpis:
+            try:
+                series = evaluator.series_for(kpi.id)
+            except Exception:                            # noqa: BLE001
+                # Expected, and frequent: this slice does not carry a table or
+                # a column the metric needs. The blended figure stands alone.
+                continue
+            if series is None or series.dropna().empty:
+                continue
+            result = by_id.get(kpi.id)
+            if result is not None:
+                result.by_segment.setdefault(dimension, {})[level] = \
+                    series.astype(float)
 
 
 def facts_table(results: List[MetricResult]) -> pd.DataFrame:

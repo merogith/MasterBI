@@ -234,8 +234,19 @@ def test_contract_scoping(saas_data, retail_data) -> None:
     print("\ncontract scoping")
 
     universal = [c for c in CHECKS if c.archetypes is None]
-    check("the universal identities are P&L arithmetic only",
-          len(universal) == 4, str([c.name for c in universal]))
+    # Asserted as a property rather than a count. `len(universal) == 4` broke
+    # the moment a fifth genuinely-universal identity was added, and a count
+    # cannot tell a legitimate addition from a subscription check smuggled in
+    # without its `archetypes` — which is the thing actually worth preventing.
+    off_contract = [
+        (c.name, sorted(set(c.requires) - set(UNIVERSAL_SCHEMAS)))
+        for c in universal
+        if set(c.requires) - set(UNIVERSAL_SCHEMAS)
+    ]
+    check("every universal identity reads only universal tables",
+          not off_contract, str(off_contract))
+    check("there are universal identities at all", len(universal) >= 4,
+          str([c.name for c in universal]))
     for name in ("saas", "ecommerce"):
         owned = [c for c in CHECKS if c.archetypes and name in c.archetypes]
         structural = [c for c in owned if c.tier is Tier.structural]

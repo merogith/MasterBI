@@ -33,6 +33,7 @@ from .base import (  # noqa: F401
     calibration_tolerance,
     generator,
     month_range,
+    segment_financials,
     to_reported,
     trim_warmup,
     volatile,
@@ -108,10 +109,18 @@ def generate(profile: CompanyProfile,
     product_usage = _build_product_usage(profile, rng, months, movements, customers)
     sales_capacity = _build_sales_capacity(profile, rng, months, movements, headcount)
 
+    # Revenue split by customer segment. Derived rather than simulated: the
+    # book already records which segment every movement belongs to, so a
+    # segment's share of MRR is a fact about the simulation rather than a
+    # second guess at it.
+    segment_fin = segment_financials(
+        financials, {"segment": (movements, "delta_mrr", True)})
+
     tables = {
         "customers": customers,
         "mrr_movements": movements,
         "monthly_financials": financials,
+        "segment_financials": segment_fin,
         "headcount": headcount,
         "pipeline": pipeline_tbl,
         "marketing": marketing,
@@ -122,8 +131,9 @@ def generate(profile: CompanyProfile,
     # Trim the warm-up out of every time-series table; `customers` keeps its
     # full history because cohort analysis needs the earlier acquisitions.
     cutoff = report_months[0]
-    for name in ("mrr_movements", "monthly_financials", "headcount", "pipeline",
-                 "marketing", "product_usage", "sales_capacity"):
+    for name in ("mrr_movements", "monthly_financials", "segment_financials",
+                 "headcount", "pipeline", "marketing", "product_usage",
+                 "sales_capacity"):
         tables[name] = tables[name][tables[name]["month"] >= cutoff].reset_index(drop=True)
 
     checks = reconcile(tables, profile)
