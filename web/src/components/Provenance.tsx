@@ -1,7 +1,5 @@
 import { useState } from 'preact/hooks';
-import { BasisChip, BenchmarkChip } from './Basis';
-import type { Kpi, Summary } from '../lib/api';
-import { fmtValue } from '../lib/format';
+import type { Summary } from '../lib/api';
 
 /* Everything the engine already worked out about its own answer.
  *
@@ -15,78 +13,12 @@ import { fmtValue } from '../lib/format';
  * That is the product's best credibility moment and it was invisible, which is
  * worse than not having it: a scorecard that cannot say why a metric is on it
  * asks to be taken on faith, and this one never needed to be.
- */
-
-type DriverNodes = Record<string, { name: string; parent: string | null }>;
-
-/** What this metric rolls up into: "ARR -> NRR -> GRR".
  *
- *  The record sheets have described this the whole time. It answers "why is
- *  this on here" with a structural claim rather than a scoring one — GRR is on
- *  the scorecard because it drives NRR, which drives ARR — and that is the
- *  half of the question a selection score cannot answer. */
-function DriverPath({ kpiId, nodes }: { kpiId: string; nodes: DriverNodes }) {
-  const path: string[] = [];
-  const seen = new Set<string>();
-  let current: string | null = kpiId;
-  while (current !== null && !seen.has(current)) {
-    const node: DriverNodes[string] | undefined = nodes[current];
-    if (node === undefined) break;
-    seen.add(current);
-    path.unshift(node.name);
-    current = node.parent;
-  }
-  if (path.length < 2) return null;
-  return (
-    <span class="driver-path" title="What this metric rolls up into">
-      {path.join(' → ')}
-    </span>
-  );
-}
-
-function Scorecard({ kpis, rationale, nodes, currency }: {
-  kpis: Kpi[];
-  rationale: Record<string, string>;
-  nodes: DriverNodes;
-  currency: string;
-}) {
-  return (
-    <div class="table-wrap">
-      <table class="scorecard" id="res-scorecard">
-        <thead>
-          <tr>
-            <th>KPI</th><th class="num">Value</th><th>Where it came from</th>
-            <th>vs sector</th><th>Why it is here</th>
-          </tr>
-        </thead>
-        <tbody>
-          {kpis.map((kpi) => (
-            <tr key={kpi.kpi_id} class={kpi.computed ? '' : 'not-computed'}>
-              <td>
-                <strong>{kpi.name}</strong>
-                {kpi.owner && <><br /><span class="watch-for">{kpi.owner}</span></>}
-              </td>
-              <td class="num">
-                {kpi.computed
-                  ? fmtValue(kpi.current, kpi.unit, currency)
-                  : <span class="watch-for">not computed</span>}
-              </td>
-              <td><BasisChip basis={kpi.basis} /></td>
-              <td><BenchmarkChip kpi={kpi} /></td>
-              <td class="reason-cell">
-                {/* For an uncomputed KPI the engine's own reason is far more
-                    use than its selection rationale: "needs the headcount
-                    table, which this run does not have" is actionable. */}
-                {kpi.computed ? rationale[kpi.kpi_id] ?? '' : kpi.reason ?? ''}
-                <DriverPath kpiId={kpi.kpi_id} nodes={nodes} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+ * The scorecard itself moved out of this panel in 3.5 and onto the page. Being
+ * one click behind a disclosure triangle was the wrong home for the surface
+ * that carries the governed definition of every metric — this panel keeps the
+ * reasoning around it: what was dropped, and what was assumed.
+ */
 
 export function Provenance({ summary }: { summary: Summary }) {
   const [open, setOpen] = useState(false);
@@ -121,11 +53,6 @@ export function Provenance({ summary }: { summary: Summary }) {
 
       {open && (
         <div class="provenance-body">
-          <h3 class="section-title">The scorecard, and why each metric is on it</h3>
-          <Scorecard kpis={kpis} rationale={summary.rationale ?? {}}
-                     nodes={summary.drivers?.nodes ?? {}}
-                     currency={summary.currency ?? 'USD'} />
-
           {dropped.length > 0 && (
             <>
               <h3 class="section-title">

@@ -175,6 +175,37 @@ export interface Artifact {
   url: string;
 }
 
+/** One KPI's record sheet, in the Neely/Cambridge shape the library authors in.
+ *  Optional almost everywhere because a pack may legitimately omit a benchmark
+ *  or a target rule, and showing an empty row is honest where inventing a
+ *  placeholder would not be. */
+export interface RecordSheet {
+  id: string;
+  name: string;
+  short_name?: string | null;
+  perspective?: string | null;
+  tier?: number | null;
+  timing?: string | null;
+  direction?: string | null;
+  driver_parent?: string | null;
+  formula?: string | null;
+  unit?: string | null;
+  frequency?: string | null;
+  owner_role?: string | null;
+  source_systems?: string[] | null;
+  benchmark?: {
+    p25?: number | null; p50?: number | null; p75?: number | null;
+    source?: string | null;
+  } | null;
+  alert_bands?: { green?: number | null; red?: number | null } | null;
+  target_rule?: string | null;
+  applies_when?: string | null;
+  requires_data?: string[] | null;
+  pitfalls?: string | null;
+  interpretation?: string | null;
+  serves_objectives?: string[] | null;
+}
+
 export interface Summary {
   run_id: string;
   company: string;
@@ -203,6 +234,11 @@ export interface Summary {
       name: string; parent: string | null; children: string[]; depth: number;
     }>;
   };
+  /** The governed record sheet for every selected KPI, keyed by id. Every
+   *  field has existed in `kpi/library/*.yaml` since the beginning and reached
+   *  only the PDF appendix — which is the opposite of "one reviewed definition,
+   *  surfaced everywhere the number appears". */
+  sheets?: Record<string, RecordSheet>;
   severity_counts?: Record<string, number>;
   rationale?: Record<string, string>;
   dropped?: Record<string, string>;

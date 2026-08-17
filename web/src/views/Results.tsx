@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks';
 import { BasisChip } from '../components/Basis';
 import { Provenance } from '../components/Provenance';
+import { Scorecard } from '../components/Scorecard';
 import { Empty } from '../components/State';
 import { RESULTS_TOUR, Tour } from '../components/Tour';
 import { fileUrl, type Summary } from '../lib/api';
@@ -90,9 +91,14 @@ export function Results({ summary }: { summary: Summary }) {
       {summary.kpis.length > summary.tiles.length && (
         <p class="section-sub" id="res-kpi-count">
           {summary.tiles.length} headline KPIs of {summary.kpis.length} computed.
-          The full scorecard is below, in the dashboard and in the workbook.
+          The full scorecard is below.
         </p>
       )}
+
+      {/* The semantic layer, on the page rather than one click inside a
+          disclosure panel. Every field of every record sheet has existed in
+          the library from the start and reached only the PDF appendix. */}
+      <Scorecard summary={summary} />
 
       <Provenance summary={summary} />
 

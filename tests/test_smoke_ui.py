@@ -775,3 +775,129 @@ def test_a_survey_run_shows_what_was_assumed_rather_than_answered(page):
     assert assumed.count() > 0, \
         "every answer was skipped and nothing says which figures are assumptions"
     assert "profile fields from you" in page.locator("#res-provenance-toggle").inner_text()
+
+
+# --------------------------------------------------------------------------
+# 3.5 — the scorecard as a semantic-layer surface
+# --------------------------------------------------------------------------
+
+def test_the_scorecard_is_on_the_page_not_behind_a_triangle(page):
+    """It rendered inside the collapsed "How this was built" panel, which is
+    the wrong home for the surface carrying every metric's definition."""
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#tour-dismiss")
+
+    assert page.locator("#res-scorecard").is_visible(), \
+        "the scorecard needs a click before it exists"
+    assert page.locator("#res-scorecard tbody tr").count() >= 20
+
+
+def test_a_column_can_be_sorted_and_the_table_says_which(page):
+    """Ordering was whatever the engine emitted, which is not a fact about the
+    metrics. And a sorted table that does not mark the column it sorted by
+    leaves a screen reader with no way to know."""
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#tour-dismiss")
+
+    # `localeCompare`, not codepoint order: "Active Customers" belongs above
+    # "ARR Growth" for a reader, and Python's default sort would disagree.
+    def names() -> list:
+        return page.locator(
+            "#res-scorecard tbody tr td:first-child").all_inner_texts()
+
+    def collated(rows: list) -> list:
+        return sorted(rows, key=lambda n: n.lower())
+
+    before = names()
+    page.click("#sc-sort-name")
+    ascending = names()
+    assert ascending != before, "clicking a header changed nothing"
+    assert ascending == collated(ascending), f"not sorted: {ascending[:4]}"
+
+    header = page.locator("#res-scorecard thead th").first
+    assert header.get_attribute("aria-sort") == "ascending", \
+        "the sorted column does not announce itself"
+
+    page.click("#sc-sort-name")
+    assert names() == collated(ascending)[::-1], "the sort does not reverse"
+    assert page.locator("#res-scorecard thead th").first.get_attribute(
+        "aria-sort") == "descending"
+
+
+def test_the_columns_can_be_chosen_and_the_choice_survives_a_reload(page):
+    """A scorecard nobody can shape is a screenshot. And a preference that
+    resets on every visit is worse than not offering it."""
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#tour-dismiss")
+
+    def widths() -> int:
+        return page.locator("#res-scorecard thead th").count()
+
+    start = widths()
+    page.click("#sc-columns")
+    page.wait_for_selector("#sc-chooser")
+    page.locator("#sc-chooser label", has_text="Perspective").locator(
+        "input").check()
+    assert widths() == start + 1, "adding a column did not add a column"
+
+    page.reload()
+    page.wait_for_selector("#res-scorecard")
+    assert widths() == start + 1, "the column choice did not survive a reload"
+    # Rendered uppercase by the stylesheet, and `inner_text` returns what is
+    # on screen rather than what is in the DOM.
+    assert "PERSPECTIVE" in page.locator("#res-scorecard thead").inner_text().upper()
+
+
+def test_a_kpi_opens_the_record_sheet_it_has_always_had(page):
+    """Formula, grain, owner, source systems, benchmark **and its citation**,
+    alert bands, target rule, pitfalls, interpretation. Every field authored in
+    `kpi/library/*.yaml` from the beginning, reaching only the PDF appendix."""
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#tour-dismiss")
+
+    page.locator("#res-scorecard .kpi-open").first.click()
+    page.wait_for_selector("#kpi-sheet")
+    sheet = page.locator("#kpi-sheet").inner_text()
+    for field in ("DEFINITION", "GRAIN", "OWNER", "SOURCE SYSTEMS", "BENCHMARK"):
+        assert field in sheet.upper(), f"the record sheet has no {field}: {sheet[:200]}"
+    assert "HOW TO READ IT" in sheet.upper(), "the interpretation prose is not shown"
+
+    # Escape closes it, like every other overlay in the app.
+    page.keyboard.press("Escape")
+    assert page.locator("#kpi-sheet").count() == 0
+
+
+def test_the_export_is_of_what_you_are_looking_at(page):
+    """Not a second copy of facts.csv — that artifact already exists as a
+    download, and an export that differs from the table above it is the kind of
+    small dishonesty this project spends its time removing."""
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#tour-dismiss")
+
+    page.click("#sc-sort-name")
+    with page.expect_download() as caught:
+        page.click("#sc-export")
+    download = caught.value
+    path = download.path()
+    assert path is not None
+    text = Path(path).read_text(encoding="utf-8-sig")
+    lines = [line for line in text.splitlines() if line.strip()]
+
+    header = lines[0].split(",")
+    assert header[0] == "kpi_id"
+    on_screen = page.locator("#res-scorecard thead th").all_inner_texts()
+    assert len(header) == len(on_screen) + 1, \
+        f"the export has {len(header)} columns and the table shows {len(on_screen)}"
+
+    rows = page.locator("#res-scorecard tbody tr").count()
+    assert len(lines) - 1 == rows, \
+        f"the export has {len(lines) - 1} rows and the table shows {rows}"
+    # And in the order it was sorted into, not the order the engine emitted.
+    exported = [line.split(",")[1].strip('"') for line in lines[1:]]
+    assert exported == sorted(exported, key=lambda n: n.lower()), \
+        "the export ignored the sort"

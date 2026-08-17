@@ -319,6 +319,15 @@ def _build_summary(run_id: str, run_dir: Path, profile: CompanyProfile) -> Dict[
         # sheet — and a second copy on disk would be one more thing that can
         # disagree with the first.
         "drivers": _driver_tree(kpi_set, profile),
+        # The governed definition of every metric on the scorecard: formula,
+        # grain, owner role, source systems, benchmark and its citation, target
+        # rule, alert bands, pitfalls, interpretation. All of it already sat in
+        # `kpi_set.json`, all of it reached only the PDF appendix, and the whole
+        # semantic-layer argument is that one reviewed definition should be
+        # visible everywhere the number is. Sent in the payload rather than
+        # behind a new endpoint so the frozen Pages demo gets drill-through
+        # with no static stand-in to write — 24 KB for a 25-KPI run.
+        "sheets": {row["id"]: row for row in (kpi_set.get("kpis") or [])},
         "rationale": kpi_set.get("rationale", {}),
         "dropped": kpi_set.get("dropped", {}),
         "warnings": [v for k, v in kpi_set.get("rationale", {}).items()
