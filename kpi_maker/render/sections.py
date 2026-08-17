@@ -610,6 +610,21 @@ def _appendix(ctx: SectionContext) -> SectionContent:
         "fact tables; no number in this document was produced by a language "
         "model.")))
 
+    # What the sector was matched against, in the two standards a reader is
+    # likely to know. Carried on every sector since 4.1 and printed here
+    # because a scorecard that names the classification it was built for is
+    # arguing from something; one that names nothing asks to be believed.
+    from ..profile import sectors as _sectors
+
+    classification = _sectors.classification(p.business_model.type.value)
+    if classification:
+        content.blocks.append(Block(
+            title="Sector classification",
+            intro=f"{p.business_model.type.value} — {classification}",
+            lines=["Official codes are carried for traceability and for "
+                   "benchmark lookup; they do not select the KPIs, which are "
+                   "chosen from the profile itself."]))
+
     # Immediately after methodology, before anything reassuring. A caveat that
     # changes how the whole report should be read cannot sit below sixty KPI
     # definitions.

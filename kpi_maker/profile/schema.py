@@ -19,16 +19,46 @@ from pydantic import BaseModel, Field, model_validator
 # --------------------------------------------------------------------------
 
 class BusinessModel(str, Enum):
+    """The sectors the product offers.
+
+    Spelled out rather than generated from `taxonomy.yaml`, because this is the
+    type the rest of the codebase branches on and mypy checks — an enum built
+    at import time is an enum no static tool can see. `tests/test_taxonomy.py`
+    fails if the two ever disagree, which is the same arrangement the design
+    tokens and the table-to-KPI map use: one source of truth, one declared
+    copy, and a test between them.
+
+    Nothing may be removed here. A stored spec from 0.7 or a saved profile
+    names its sector by value, and dropping a value makes an old run
+    unloadable — a sector that turns out to be a bad idea gets a better label,
+    not a deletion.
+    """
+
+    # Subscription-shaped.
     saas = "saas"
+    it_services = "it_services"
+    media = "media"
+    fitness = "fitness"
+
+    # Transactional.
     ecommerce = "ecommerce"
     retail = "retail"
-    manufacturing = "manufacturing"
-    services = "services"
-    marketplace = "marketplace"
     distribution = "distribution"
-    hospitality = "hospitality"
-    healthcare = "healthcare"
+    manufacturing = "manufacturing"
+    food_production = "food_production"
     logistics = "logistics"
+    hospitality = "hospitality"
+    food_service = "food_service"
+    healthcare = "healthcare"
+    education = "education"
+    real_estate = "real_estate"
+    marketplace = "marketplace"
+
+    # Project-shaped. None has its own archetype yet — 4.2 builds it.
+    services = "services"
+    agency = "agency"
+    engineering = "engineering"
+    construction = "construction"
 
 
 class CustomerType(str, Enum):

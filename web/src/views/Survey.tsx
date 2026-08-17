@@ -8,6 +8,12 @@ import { Failed, Loading } from '../components/State';
 
 /** "Use averages" is a real answer, not an absence: recording `__unknown__`
  *  makes the provenance say the field was defaulted rather than guessed. */
+/** Options above which a question gets a filter box. Ten is a list you read;
+ *  twenty is a list you scan and give up on, and 4.1 took the sector question
+ *  from one to the other. Below this a search box is a control that never
+ *  earns its place. */
+const FILTER_FROM = 12;
+
 const UNKNOWN = '__unknown__';
 
 /* Where a half-finished survey lives.
@@ -85,13 +91,38 @@ function Question({ question, answer, onAnswer }: {
   answer: string | undefined;
   onAnswer: (value: string) => void;
 }) {
+  // A filter, and only where there is something to filter. Ten options is a
+  // list you read; twenty is a list you scan and give up on, and the sector
+  // question went from one to the other in 4.1. Below the threshold the box
+  // would be a control that never earns its place.
+  const [filter, setFilter] = useState('');
+  const searchable = question.options.length > FILTER_FROM;
+  const needle = filter.trim().toLowerCase();
+  const shown = !searchable || !needle ? question.options
+    : question.options.filter((option) =>
+        option.value === UNKNOWN
+        || option.label.toLowerCase().includes(needle)
+        || (option.aliases ?? []).some((alias) => alias.includes(needle)));
+
   return (
     <div class="question" data-qid={question.id}>
       <div class="question-text">{question.text}</div>
       <div class="question-help">{question.help}</div>
       {question.unlocks && <div class="question-unlocks">Unlocks: {question.unlocks}</div>}
+      {searchable && (
+        <input class="option-filter" id={`filter-${question.id}`} type="search"
+               placeholder={`Search ${question.options.length} options — try "gym", "haulage"`}
+               aria-label="Filter the options"
+               value={filter} onInput={(e) => setFilter(e.currentTarget.value)} />
+      )}
       <div class="options">
-        {question.options.map((option) => {
+        {shown.length === 0 && (
+          <p class="empty" role="status">
+            Nothing matches “{filter}”. Clear the box to see all
+            {' '}{question.options.length}.
+          </p>
+        )}
+        {shown.map((option) => {
           // `approximate` is not `disabled`. A sector that runs on the
           // cross-sector pack is a real choice with a caveat, and offering it
           // with the caveat attached beats a "Soon" pill that shows people
@@ -110,6 +141,12 @@ function Question({ question, answer, onAnswer }: {
               {option.disabled
                 ? <span class="option-soon">Soon</span>
                 : option.note && <span class="option-note">{option.note}</span>}
+              {/* Only on the chosen one: the official classification is
+                  reassurance where it is relevant and noise on nineteen rows
+                  the user did not pick. */}
+              {answer === option.value && option.classification && (
+                <span class="option-code">{option.classification}</span>
+              )}
             </label>
           );
         })}

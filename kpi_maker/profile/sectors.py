@@ -30,44 +30,19 @@ and delete nothing else — every caller reads through the two functions below.
 """
 from __future__ import annotations
 
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from typing import List, NamedTuple, Optional
 
-# Sectors whose own generator archetype exists today. Anything absent from this
-# map is simulated by ARCHETYPE_APPROXIMATION and flagged.
-ARCHETYPE_EXACT: Dict[str, str] = {
-    "saas": "saas",
-    "ecommerce": "ecommerce",
-}
+from . import taxonomy
 
-# The nearest shipped archetype for a sector that has none of its own, with the
-# reason it is the nearest. The reason is rendered to the user, so it has to
-# read as an argument rather than an apology.
-ARCHETYPE_APPROXIMATION: Dict[str, Tuple[str, str]] = {
-    "retail": ("ecommerce", "physical retail sells discrete units at a price, "
-                            "which is the transactional archetype's shape"),
-    "distribution": ("ecommerce", "distribution is transactional at a lower "
-                                  "margin and a higher volume"),
-    "hospitality": ("ecommerce", "covers and room-nights behave like orders "
-                                 "with a strong seasonal profile"),
-    "logistics": ("ecommerce", "shipments priced per movement behave like "
-                               "orders"),
-    "manufacturing": ("ecommerce", "units shipped at a price is transactional; "
-                                   "what is missing is the capacity ceiling, "
-                                   "not the revenue shape"),
-    "marketplace": ("ecommerce", "the transactional archetype models the "
-                                 "demand side; take rate and the supply side "
-                                 "are not simulated"),
-    "services": ("ecommerce", "project fees behave like orders; utilisation "
-                              "and realisation are not simulated"),
-    "healthcare": ("ecommerce", "episodes of care behave like orders; case mix "
-                                "and payer mix are not simulated"),
-}
-
-# Sectors with their own reviewed KPI pack.
-PACKS_EXACT: Dict[str, List[str]] = {
-    "saas": ["saas"],
-    "ecommerce": ["ecommerce"],
-}
+# The two maps that used to live here are gone: they stated, in a second
+# place, facts `taxonomy.yaml` now owns. Adding a sector meant editing this
+# file, the `BusinessModel` enum and `SECTOR_LABELS` in the survey, with
+# nothing to notice when one of the three was missed — and each way of missing
+# one fails differently, which is why none of them was obvious.
+#
+# The functions below are unchanged in signature and behaviour. Every caller
+# still reads through them, so 4.2 moving a sector onto its own archetype is
+# still a one-line edit — it is now a one-line edit to the taxonomy.
 
 # The pack every sector can always fall back on: metrics computable from the
 # P&L, the headcount roster and the marketing spend table, which every
@@ -89,16 +64,16 @@ class Resolution(NamedTuple):
 
 def resolve_archetype(model: str) -> Resolution:
     """The generator that simulates this sector."""
-    if model in ARCHETYPE_EXACT:
-        return Resolution(ARCHETYPE_EXACT[model], True, None)
-    if model in ARCHETYPE_APPROXIMATION:
-        archetype, because = ARCHETYPE_APPROXIMATION[model]
+    sector = taxonomy.load().get(model)
+    if sector is not None and sector.exact_archetype:
+        return Resolution(sector.archetype, True, None)
+    if sector is not None:
         return Resolution(
-            archetype, False,
+            sector.archetype, False,
             f"No data generator has been built for {model!r} yet, so this run "
-            f"was simulated with the {archetype!r} archetype — {because}. "
-            f"The figures are internally consistent and reconcile, but they are "
-            f"not a model of {model!r} economics.",
+            f"was simulated with the {sector.archetype!r} archetype — "
+            f"{sector.why}. The figures are internally consistent and "
+            f"reconcile, but they are not a model of {model!r} economics.",
         )
     # An unknown model is a schema change that got ahead of this map. Degrade
     # rather than raise: the transactional archetype is the general case.
@@ -111,8 +86,9 @@ def resolve_archetype(model: str) -> Resolution:
 
 def resolve_packs(model: str) -> Resolution:
     """The KPI packs that define this sector's scorecard."""
-    if model in PACKS_EXACT:
-        return Resolution(list(PACKS_EXACT[model]), True, None)
+    sector = taxonomy.load().get(model)
+    if sector is not None and sector.exact_packs:
+        return Resolution(list(sector.packs), True, None)
     return Resolution(
         [GENERAL_PACK], False,
         f"No KPI pack has been authored for {model!r} yet, so this scorecard "
@@ -135,4 +111,21 @@ def approximation_notes(model: str) -> List[str]:
 
 def supported_sectors() -> List[str]:
     """Sectors with both their own archetype and their own pack."""
-    return sorted(set(ARCHETYPE_EXACT) & set(PACKS_EXACT))
+    return sorted(s.id for s in taxonomy.load().sectors
+                  if s.exact_archetype and s.exact_packs)
+
+
+def declared_sectors() -> List[str]:
+    """Every sector the product offers, in the order the survey shows them."""
+    return taxonomy.load().ids()
+
+
+def classification(model: str) -> Optional[str]:
+    """This sector's official codes, for the report appendix. None if unknown.
+
+    The plan's reason for carrying them: a scorecard that names the standard
+    its sector was matched against is arguing from something, and one that
+    names nothing is asking to be believed.
+    """
+    sector = taxonomy.load().get(model)
+    return None if sector is None else sector.classification()

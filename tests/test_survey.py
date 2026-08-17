@@ -29,9 +29,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from kpi_maker.kpi.selection import select  # noqa: E402
+from kpi_maker.profile.taxonomy import load as load_taxonomy  # noqa: E402
 from kpi_maker.survey import build_profile, visible_questions  # noqa: E402
 from kpi_maker.survey.defaults import geographies_for  # noqa: E402
-from kpi_maker.survey.questions import QUESTIONS, SECTOR_LABELS  # noqa: E402
+from kpi_maker.survey.questions import QUESTIONS  # noqa: E402
+
+# The sector list moved into `profile/taxonomy.yaml` in 4.1, so these read
+# it rather than a hand-maintained copy in the survey module.
+SECTORS = [s.id for s in load_taxonomy().sectors]
 
 UNKNOWN = "__unknown__"
 
@@ -84,7 +89,7 @@ def test_every_answer_to_every_question_builds_a_profile(question):
                         f"{str(exc)[:200]}")
 
 
-@pytest.mark.parametrize("sector", [s["value"] for s in SECTOR_LABELS])
+@pytest.mark.parametrize("sector", SECTORS)
 def test_every_offered_sector_produces_a_scorecard(sector):
     """The survey offers ten sectors, so ten sectors have to work end to end."""
     kpis = select(build_profile({**B2C, "business_model": sector}))
@@ -228,8 +233,8 @@ def test_the_gate_follows_the_archetype_registry():
     from kpi_maker.profile import sectors
     from kpi_maker.survey.questions import QUESTION_BY_ID
 
-    expected = sorted(s["value"] for s in SECTOR_LABELS
-                      if sectors.resolve_archetype(s["value"]).value == "saas")
+    expected = sorted(sector for sector in SECTORS
+                      if sectors.resolve_archetype(sector).value == "saas")
     for qid in ("contract_terms", "sales_motion"):
         gate = QUESTION_BY_ID[qid]["show_if"]["business_model"]
         assert sorted(gate) == expected, (
@@ -259,7 +264,7 @@ def test_the_two_evaluators_agree():
 
 def test_branching_does_not_strand_a_respondent_mid_survey():
     """Every sector must still leave enough questions to build a profile."""
-    for sector in (s["value"] for s in SECTOR_LABELS):
+    for sector in SECTORS:
         asked = visible_questions({**B2C, "business_model": sector})
         ids = {q["id"] for q in asked}
         assert len(ids) >= 15, f"{sector} was left with only {len(ids)} questions"

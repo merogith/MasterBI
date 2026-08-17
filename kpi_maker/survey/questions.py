@@ -64,25 +64,15 @@ def _sectors_on(archetype: str) -> List[str]:
     being asked of it, with nothing here to remember to edit. A test asserts
     the two stay in step.
     """
-    from ..profile import sectors
-    return [entry["value"] for entry in SECTOR_LABELS
-            if sectors.resolve_archetype(entry["value"]).value == archetype]
+    from ..profile import sectors, taxonomy
+    return [sector.id for sector in taxonomy.load().sectors
+            if sectors.resolve_archetype(sector.id).value == archetype]
 
 
-# Every sector the profile schema declares, in the order the survey offers
-# them: the two with their own content first, then the rest.
-SECTOR_LABELS: List[Dict[str, str]] = [
-    {"value": "saas", "label": "Software / subscription"},
-    {"value": "ecommerce", "label": "E-commerce or D2C"},
-    {"value": "retail", "label": "Retail (physical)"},
-    {"value": "services", "label": "Professional services"},
-    {"value": "manufacturing", "label": "Manufacturing"},
-    {"value": "marketplace", "label": "Marketplace or platform"},
-    {"value": "distribution", "label": "Distribution or wholesale"},
-    {"value": "hospitality", "label": "Hospitality and food service"},
-    {"value": "logistics", "label": "Logistics and transport"},
-    {"value": "healthcare", "label": "Healthcare services"},
-]
+# The sector list is `profile/taxonomy.yaml`, read rather than restated. It
+# used to be a third hand-maintained copy of the same twenty facts — the enum,
+# `sectors.py`'s maps and this list all had to agree, with nothing to notice
+# when they did not.
 
 
 def _sector_options() -> List[Dict[str, Any]]:
@@ -92,12 +82,17 @@ def _sector_options() -> List[Dict[str, Any]]:
     gaining its own pack stops being badged the moment the pack lands and
     nobody has to remember to edit this file too.
     """
-    from ..profile import sectors
+    from ..profile import sectors, taxonomy
 
     options: List[Dict[str, Any]] = []
-    for entry in SECTOR_LABELS:
-        option = dict(entry)
-        if sectors.is_approximate(entry["value"]):
+    for sector in taxonomy.load().sectors:
+        option: Dict[str, Any] = {"value": sector.id, "label": sector.label,
+                                  # What people type, so twenty options can be
+                                  # searched rather than scrolled.
+                                  "aliases": list(sector.aliases)}
+        if sector.nace is not None or sector.naics is not None:
+            option["classification"] = sector.classification()
+        if sectors.is_approximate(sector.id):
             option["approximate"] = True
             option["note"] = "cross-sector pack"
         options.append(option)

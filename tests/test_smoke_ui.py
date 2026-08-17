@@ -822,6 +822,57 @@ def test_a_survey_run_shows_what_was_assumed_rather_than_answered(page):
 # 3.5 — the scorecard as a semantic-layer surface
 # --------------------------------------------------------------------------
 
+def test_twenty_sectors_can_be_searched_rather_than_scrolled(page):
+    """4.1 took the sector question from ten options to twenty.
+
+    Ten is a list you read; twenty is a list you scan and give up on. The
+    filter matches what a user types — "gym", "haulage", "dtc" — rather than
+    the label the taxonomy happens to use, because nobody types "Distribution
+    or wholesale".
+    """
+    page.click('[data-nav="survey"]')
+    page.wait_for_selector("#survey-next")
+    for _ in range(12):
+        if page.locator('[data-qid="business_model"]').count():
+            break
+        page.click("#survey-skip")
+    page.wait_for_selector('[data-qid="business_model"]')
+
+    options = page.locator('[data-qid="business_model"] .option')
+    assert options.count() >= 20, f"only {options.count()} sectors offered"
+
+    page.fill("#filter-business_model", "gym")
+    assert options.count() == 1, \
+        f"'gym' narrowed twenty sectors to {options.count()}"
+    assert "Gyms" in options.first.inner_text()
+
+    # And an alias nobody would guess from the label.
+    page.fill("#filter-business_model", "haulage")
+    assert "Logistics" in options.first.inner_text(), options.first.inner_text()
+
+
+def test_a_chosen_sector_names_the_standard_it_was_matched_against(page):
+    """The official codes are carried for credibility, and a code nobody can
+    see is not credibility. Shown on the chosen option only — on nineteen rows
+    the user did not pick it is noise."""
+    page.click('[data-nav="survey"]')
+    page.wait_for_selector("#survey-next")
+    for _ in range(12):
+        if page.locator('[data-qid="business_model"]').count():
+            break
+        page.click("#survey-skip")
+    page.fill("#filter-business_model", "retail")
+
+    option = page.locator('[data-qid="business_model"] .option').first
+    assert option.locator(".option-code").count() == 0, \
+        "the classification is shown before anything is chosen"
+    option.click()
+    code = option.locator(".option-code")
+    code.wait_for()
+    assert "NACE" in code.inner_text() and "NAICS" in code.inner_text(), \
+        code.inner_text()
+
+
 def test_an_overlay_can_be_escaped_from_the_moment_it_is_visible(page):
     """The history drawer, under the same freeze as the record sheet.
 

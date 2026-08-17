@@ -86,8 +86,8 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 def test_every_sector_runs() -> None:
     """No sector the schema offers may raise.
 
-    `BusinessModel` declares ten sectors; two have their own archetype and pack.
-    For a long time the other eight raised `FileNotFoundError: KPI pack not
+    `BusinessModel` declares twenty sectors; two have their own archetype and
+    pack. For a long time the rest raised `FileNotFoundError: KPI pack not
     found: retail` out of the selection engine, or `ValueError: No data
     generator for business model 'retail'` out of the source stage — so a survey
     respondent who picked "manufacturing" got a stack trace rather than a
@@ -105,8 +105,16 @@ def test_every_sector_runs() -> None:
     from kpi_maker.spec.schema import RunSpec
 
     declared = [m.value for m in BusinessModel]
-    check("the schema still declares ten sectors", len(declared) == 10,
-          f"{len(declared)}: {declared}")
+    # Counted against the taxonomy rather than a literal. This read
+    # `len(declared) == 10` and went red the moment 4.1 added ten more sectors
+    # — the same trap as `len(universal) == 4` in 3.2. A count is not the
+    # property; "the enum and the file agree" is, and `tests/test_taxonomy.py`
+    # asserts that directly.
+    from kpi_maker.profile import taxonomy
+
+    check("the schema and the taxonomy declare the same sectors",
+          sorted(declared) == sorted(taxonomy.load().ids()),
+          f"enum {len(declared)} vs taxonomy {len(taxonomy.load().ids())}")
 
     base = json.loads(SAAS.read_text(encoding="utf-8"))
     exact = set(sectors.supported_sectors())

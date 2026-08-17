@@ -267,6 +267,13 @@ export interface SurveyOption {
   note?: string;
   disabled?: boolean;
   approximate?: boolean;
+  /** What a user might type for this option — "gym", "haulage", "dtc". Twenty
+   *  sectors is past the point where a list is a choice, and nobody types
+   *  "Distribution or wholesale". */
+  aliases?: string[];
+  /** NACE and NAICS, shown once the option is chosen: the classification a
+   *  sector was matched against is worth seeing, and worth not shouting. */
+  classification?: string;
 }
 
 export interface SurveyQuestion {
