@@ -653,3 +653,39 @@ def test_the_deploy_builds_the_front_end_it_serves() -> None:
         "the image does not build the front end"
     assert "ui_dist" in dockerfile, "the image never copies the built bundle in"
     assert "docker build" in ci, "nothing builds the deployable image"
+
+
+def test_no_overlay_registers_its_escape_key_in_an_effect() -> None:
+    """Something a user can see must already work.
+
+    All three overlays — the record sheet, the tour, the history drawer —
+    registered a `keydown` listener inside `useEffect`. Preact flushes effects
+    after paint, racing `requestAnimationFrame` against `setTimeout(flush, 35)`,
+    so each panel was painted, focusable and clickable while the listener that
+    dismisses it did not exist yet. Locally that window closed before anyone
+    could act; on a CI runner it did not, and two of the three failed there
+    while passing here.
+
+    A `keydown` handler on the element is part of the same commit that puts the
+    element on screen, so there is no window. Asserted at the source because
+    the tour's *appearance* is legitimately effect-driven (its steps are
+    filtered once its targets exist), which makes the behavioural version of
+    this check impossible for one of the three — and a rule two thirds enforced
+    is how the third one comes back.
+    """
+    overlays = {
+        "components/Scorecard.tsx": "the KPI record sheet",
+        "components/Tour.tsx": "the tour",
+        "components/HistoryDrawer.tsx": "the history drawer",
+    }
+    offenders = []
+    for path, what in overlays.items():
+        source = (ROOT / "web" / "src" / path).read_text(encoding="utf-8")
+        if "'keydown'" in source or '"keydown"' in source:
+            offenders.append(f"{what} ({path})")
+        if "onKeyDown" not in source:
+            offenders.append(f"{what} has no key handler on the element ({path})")
+
+    assert not offenders, \
+        "an overlay is back to a window listener registered after paint: " \
+        + ", ".join(offenders)

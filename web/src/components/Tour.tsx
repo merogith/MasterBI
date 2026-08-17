@@ -65,17 +65,6 @@ export function Tour({ steps, storageKey = SEEN_KEY }: {
     if (open) remember(storageKey);
   }, [open, storageKey]);
 
-  // Escape closes it. A modal-ish overlay with no keyboard exit is a trap, and
-  // this one appears unbidden.
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
-
   if (!open || live.length === 0) return null;
 
   const position = Math.min(index, live.length - 1);
@@ -83,8 +72,18 @@ export function Tour({ steps, storageKey = SEEN_KEY }: {
   const last = position === live.length - 1;
 
   return (
+    // Escape closes it. A modal-ish overlay with no keyboard exit is a trap,
+    // and this one appears unbidden.
+    //
+    // Handled on the element, with focus taken in a ref callback, rather than
+    // by a `keydown` listener registered in an effect. CI caught the effect
+    // version of exactly this on the record sheet: the panel is painted and
+    // clickable while the listener that dismisses it does not exist yet,
+    // because Preact defers effects. Something a user can see must already
+    // work.
     <aside class="tour" id="tour" role="dialog" aria-label="Quick tour"
-           aria-live="polite">
+           aria-live="polite" tabIndex={-1} ref={(node) => node?.focus()}
+           onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }}>
       <div class="tour-head">
         <strong>{step.title}</strong>
         <span class="tour-count">{position + 1} of {live.length}</span>

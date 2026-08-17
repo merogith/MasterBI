@@ -179,6 +179,41 @@ def _go_home(page) -> None:
     page.goto(origin, wait_until="domcontentloaded")
 
 
+def _freeze_effects(page) -> None:
+    """Stop `useEffect` from flushing, and find out what still works.
+
+    CI caught two races a local run never did: a column choice that vanished on
+    reload, and a record sheet that ignored Escape. Both were rendered,
+    painted and clickable while the effect meant to complete them had not run —
+    Preact schedules an effect flush with `requestAnimationFrame` raced against
+    `setTimeout(flush, 35)`, and on a headless runner acting inside that window
+    is ordinary rather than unlucky.
+
+    So the reproduction is not "act quickly and hope". `requestAnimationFrame`
+    is neutered and Preact's own 35ms fallback is pushed out of reach, which
+    makes the failure deterministic and turns a flaky assertion into a real
+    one: **whatever the user can see and touch must already work, with no
+    effect having run.**
+
+    Applied to the loaded page rather than at init, and that distinction is the
+    point of the test. Effects are the right place for asynchronous work — the
+    app fetches the run in one, and freezing that from the start just leaves a
+    blank screen. They are the wrong place for *completing something the user
+    can already see and act on*. So the app boots normally, the freeze goes on
+    immediately before the interaction, and a page reload gets a fresh context
+    that lifts it.
+
+    The 35 is Preact's constant, matched exactly so nothing else in the app is
+    slowed — the poll backoff starts at 400ms and never lands on it.
+    """
+    page.evaluate("""() => {
+        window.requestAnimationFrame = () => 0;
+        const realTimeout = window.setTimeout.bind(window);
+        window.setTimeout = (fn, delay, ...rest) =>
+          realTimeout(fn, delay === 35 ? 100000 : delay, ...rest);
+    }""")
+
+
 def _start_first_sample(page) -> None:
     page.click('[data-nav="samples"]')
     page.wait_for_selector("#sample-grid [data-sample]")
@@ -635,6 +670,12 @@ def test_the_tour_appears_once_and_can_be_escaped(page):
     and one fired on arrival — before the user has anything of their own — is
     dismissed unread. So it waits for a finished board pack.
     """
+    # Not frozen, and the reason is worth stating: the tour's *appearance* is
+    # properly effect-driven — 2.1 moved its step filtering into an effect
+    # precisely so it runs after its targets exist — so a freeze stops it
+    # rendering at all. What must not depend on an effect is dismissing an
+    # overlay that is already on screen, and that rule is asserted at the
+    # source in `tests/test_packaging.py` for all three overlays at once.
     _start_first_sample(page)
     page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
 
@@ -781,6 +822,27 @@ def test_a_survey_run_shows_what_was_assumed_rather_than_answered(page):
 # 3.5 — the scorecard as a semantic-layer surface
 # --------------------------------------------------------------------------
 
+def test_an_overlay_can_be_escaped_from_the_moment_it_is_visible(page):
+    """The history drawer, under the same freeze as the record sheet.
+
+    All three overlays in the app registered their Escape listener in a
+    `useEffect`, so each was on screen and un-dismissable for as long as Preact
+    took to flush — invisible locally, reproducible on a CI runner. This is the
+    third of the three, and the one that had no test at all.
+    """
+    # Frozen before the drawer opens, so the effect that would have registered
+    # its Escape listener never runs. The run list is fetched in an effect too
+    # and stays empty — which is the point: the panel is visible, so it has to
+    # be dismissable, finished loading or not.
+    _freeze_effects(page)
+    page.click("#btn-history")
+    page.wait_for_selector("#drawer:not([hidden])")
+
+    page.keyboard.press("Escape")
+    assert page.locator("#drawer[hidden]").count() == 1, \
+        "Escape did not close the history drawer"
+
+
 def test_the_scorecard_is_on_the_page_not_behind_a_triangle(page):
     """It rendered inside the collapsed "How this was built" panel, which is
     the wrong home for the surface carrying every metric's definition."""
@@ -828,10 +890,17 @@ def test_a_column_can_be_sorted_and_the_table_says_which(page):
 
 def test_the_columns_can_be_chosen_and_the_choice_survives_a_reload(page):
     """A scorecard nobody can shape is a screenshot. And a preference that
-    resets on every visit is worse than not offering it."""
+    resets on every visit is worse than not offering it.
+
+    Run with effects frozen: the choice must be saved by the click that makes
+    it, not by an effect afterwards. Persisting in `useEffect` passed here
+    every time and failed on CI every time — see `_freeze_effects`.
+    """
     _start_first_sample(page)
     page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
     page.click("#tour-dismiss")
+    page.wait_for_selector("#res-scorecard")
+    _freeze_effects(page)
 
     def widths() -> int:
         return page.locator("#res-scorecard thead th").count()
@@ -854,10 +923,17 @@ def test_the_columns_can_be_chosen_and_the_choice_survives_a_reload(page):
 def test_a_kpi_opens_the_record_sheet_it_has_always_had(page):
     """Formula, grain, owner, source systems, benchmark **and its citation**,
     alert bands, target rule, pitfalls, interpretation. Every field authored in
-    `kpi/library/*.yaml` from the beginning, reaching only the PDF appendix."""
+    `kpi/library/*.yaml` from the beginning, reaching only the PDF appendix.
+
+    Effects frozen here too: a dialog that is on screen and cannot be dismissed
+    is a trap, so Escape has to work from the first paint rather than from
+    whenever a `keydown` listener gets registered.
+    """
     _start_first_sample(page)
     page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
     page.click("#tour-dismiss")
+    page.wait_for_selector("#res-scorecard")
+    _freeze_effects(page)
 
     page.locator("#res-scorecard .kpi-open").first.click()
     page.wait_for_selector("#kpi-sheet")

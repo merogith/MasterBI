@@ -34,15 +34,6 @@ export function HistoryDrawer({ open, onClose }: {
     listRuns().then(setRuns, (err: Error) => setError(err.message));
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    addEventListener('keydown', escape);
-    return () => removeEventListener('keydown', escape);
-  }, [open, onClose]);
-
   async function resume(runId: string) {
     try {
       await rerunRun(runId);
@@ -61,7 +52,13 @@ export function HistoryDrawer({ open, onClose }: {
   return (
     <>
       <div class="drawer-scrim" id="drawer-scrim" hidden={!open} onClick={onClose} />
-      <aside class="drawer" id="drawer" hidden={!open} aria-label="Recent runs">
+      {/* Escape on the panel, with focus taken as it opens, rather than a
+          listener registered in an effect — the drawer is dismissable from the
+          moment it is visible. Same defect the record sheet had, found on CI
+          rather than locally, because Preact flushes effects after paint. */}
+      <aside class="drawer" id="drawer" hidden={!open} aria-label="Recent runs"
+             tabIndex={-1} ref={(node) => { if (open) node?.focus(); }}
+             onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}>
         <div class="drawer-head">
           <h2>Recent runs</h2>
           <button class="ghost" id="drawer-close" aria-label="Close" onClick={onClose}>

@@ -1,5 +1,5 @@
 import type { ComponentChild } from 'preact';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 import { BasisChip, BenchmarkChip } from './Basis';
 import type { Kpi, RecordSheet, Summary } from '../lib/api';
 import { fmtValue, STATUS_GLYPH, STATUS_LABEL } from '../lib/format';
@@ -96,12 +96,6 @@ function Sheet({ sheet, kpi, currency, rationale, onClose }: {
   rationale: string | undefined;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', escape);
-    return () => window.removeEventListener('keydown', escape);
-  }, [onClose]);
-
   const band = (value: number | null | undefined) =>
     value === null || value === undefined ? '—' : fmtValue(value, sheet.unit ?? null, currency);
 
@@ -129,10 +123,23 @@ function Sheet({ sheet, kpi, currency, rationale, onClose }: {
     ['Needs', (sheet.requires_data ?? []).join(', ') || 'no data beyond the fact tables'],
   ];
 
+  /* Escape is handled by the dialog, and focus lands on it in a ref callback.
+   *
+   * It was a `keydown` listener registered in `useEffect`, which CI caught and
+   * a local run never did: the sheet was on screen — rendered, painted,
+   * clickable — while the listener that closes it did not exist yet, because
+   * Preact defers effects past paint. On the runner Escape did nothing.
+   *
+   * A ref callback runs during commit, synchronously with the node being
+   * attached, so by the time anyone can see the panel it already has focus and
+   * its own `onKeyDown`. Which is also what a dialog owes a keyboard user:
+   * 7.4 will do the focus trap, and this is the half that cannot wait. */
   return (
     <div class="sheet-backdrop" onClick={onClose}>
       <aside class="record-sheet" id="kpi-sheet" role="dialog" aria-modal="true"
-             aria-label={`${sheet.name} record sheet`}
+             aria-label={`${sheet.name} record sheet`} tabIndex={-1}
+             ref={(node) => node?.focus()}
+             onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
              onClick={(e) => e.stopPropagation()}>
         <header class="sheet-head">
           <div>
@@ -227,9 +234,21 @@ export function Scorecard({ summary }: { summary: Summary }) {
   const [chooser, setChooser] = useState(false);
   const [openKpi, setOpenKpi] = useState<string | null>(null);
 
-  useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(visible)); } catch { /* private mode */ }
-  }, [visible]);
+  /* Written where the choice is made, not in an effect afterwards.
+   *
+   * It was `useEffect(..., [visible])`, which reads as the idiomatic way to
+   * persist state and cost two CI failures: Preact flushes effects after paint
+   * via `requestAnimationFrame`, and a headless runner with no compositor can
+   * defer that past the reload the user (or the test) triggers next. The
+   * checkbox was ticked, the table showed the new column, and the preference
+   * was gone on the next page load — on CI every time, locally never.
+   *
+   * A preference belongs to the click, so it is saved by the click. */
+  const remember = (next: string[]) => {
+    setVisible(next);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+    return next;
+  };
 
   const columns = COLUMNS.filter((c) => visible.includes(c.key));
 
@@ -356,10 +375,9 @@ export function Scorecard({ summary }: { summary: Summary }) {
                      // record sheet; a table of anonymous numbers is not a
                      // configuration anyone wants.
                      disabled={column.key === 'name'}
-                     onChange={() => setVisible((current) =>
-                       current.includes(column.key)
-                         ? current.filter((k) => k !== column.key)
-                         : [...current, column.key])} />
+                     onChange={() => remember(visible.includes(column.key)
+                       ? visible.filter((k) => k !== column.key)
+                       : [...visible, column.key])} />
               {column.label}
             </label>
           ))}
