@@ -50,7 +50,7 @@
     p75: 0.55
     source: "Illustrative public SaaS composite, ARR 5-50M cohort"
   alert_bands: {green: 0.30, red: 0.10}
-  target_rule: "max(benchmark_p50, current * 1.1)"
+  target_rule: "MAX(benchmark_p50, current * 1.1)"
   interpretation: "The headline number every investor and board looks at first."
   pitfalls: >
     Flattered by one large logo in a small book. Always read alongside net new
@@ -92,7 +92,7 @@
     p75: 1.20
     source: "Illustrative public SaaS composite, B2B cohort"
   alert_bands: {green: 1.10, red: 0.95}
-  target_rule: "max(1.10, current + 0.05)"
+  target_rule: "MAX(1.10, current + 0.05)"
   interpretation: >
     Above 100% the existing book grows without any new logos — the strongest
     single indicator of product-market fit and pricing power.
@@ -237,7 +237,7 @@
     p75: 8
     source: "Illustrative public SaaS composite, gross-margin adjusted"
   alert_bands: {green: 12, red: 18}
-  target_rule: "min(current * 0.85, 12)"
+  target_rule: "MIN(current * 0.85, 12)"
   interpretation: >
     Months to earn back the cost of winning a customer. The single best measure
     of whether growth is fundable.

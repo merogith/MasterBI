@@ -166,6 +166,31 @@ class KPI(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _target_rule_parses(self) -> KPI:
+        """A target rule nobody can evaluate is an authoring error, not a run
+        that quietly aims at the benchmark median.
+
+        Checked here, at load, because that is where `applies_when` and the
+        alert-band direction are checked: a pack with a broken rule must fail
+        before any data exists, and a user KPI posted to
+        `POST /api/catalog/kpis` must be rejected with the reason rather than
+        accepted and silently ignored.
+
+        Imported inside the method: `metrics` imports `kpi` for the KPI model,
+        so a module-level import here would close the cycle.
+        """
+        if not self.target_rule:
+            return self
+        from ..metrics.targets import validate_rule
+
+        try:
+            validate_rule(self.target_rule)
+        except Exception as exc:                          # noqa: BLE001
+            raise ValueError(f"{self.id}: target_rule {self.target_rule!r} "
+                             f"cannot be evaluated — {exc}") from exc
+        return self
+
     def status(self, value: Optional[float]) -> str:
         """RAG status for a computed value.
 

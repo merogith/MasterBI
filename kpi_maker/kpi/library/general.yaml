@@ -71,7 +71,7 @@
     p75: 0.24
     source: Illustrative all-industry composite, pending a cited public distribution
   alert_bands: {green: 0.10, red: 0.0}
-  target_rule: "max(benchmark_p50, current * 1.1)"
+  target_rule: "MAX(benchmark_p50, current * 1.1)"
   interpretation: >
     The single number every board, lender and investor asks for first. Compared
     year-on-year rather than month-on-month so a seasonal business is not

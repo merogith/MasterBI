@@ -17,6 +17,7 @@ import pandas as pd
 
 from ..kpi.schema import KPI, KPISet
 from ..profile.schema import CompanyProfile
+from .targets import resolve_target
 
 # LTV horizon cap. Without this, low churn sends LTV to infinity and the
 # LTV/CAC ratio becomes fiction. See the `pitfalls` note on ltv_cac_ratio.
@@ -576,36 +577,12 @@ def _enps(ctx):
 # Driver
 # --------------------------------------------------------------------------
 
-def _resolve_target(kpi: KPI, current: Optional[float]) -> Optional[float]:
-    """Evaluate the KPI's target_rule. Falls back to the benchmark median."""
-    # A target the user typed is not a suggestion to be improved on.
-    if kpi.target_override is not None:
-        return float(kpi.target_override)
-
-    bench = kpi.benchmark
-    p50 = bench.p50 if bench else None
-    rule = kpi.target_rule
-
-    if rule and current is not None:
-        # A tiny fixed vocabulary rather than eval() — the rules are few and
-        # an LLM may propose them in Mode 3.
-        known = {
-            "max(benchmark_p50, current * 1.1)":
-                (lambda: max(p50, current * 1.1) if p50 is not None else current * 1.1),
-            "min(current * 0.85, 12)": (lambda: min(current * 0.85, 12)),
-            "max(1.10, current + 0.05)": (lambda: max(1.10, current + 0.05)),
-            "min(current * 0.85, benchmark_p50)":
-                (lambda: min(current * 0.85, p50) if p50 is not None else current * 0.85),
-        }
-        fn = known.get(rule.strip())
-        if fn is not None:
-            return float(fn())
-
-    if p50 is not None:
-        return float(p50)
-    if kpi.alert_bands is not None:
-        return float(kpi.alert_bands.green)
-    return None
+def _resolve_target(kpi: KPI, current: Optional[float],
+                    prior_year: Optional[float] = None,
+                    prior_month: Optional[float] = None) -> Optional[float]:
+    """Evaluate the KPI's target rule. See `metrics/targets.py` for why it is
+    no longer a lookup table of four exact strings."""
+    return resolve_target(kpi, current, prior_year, prior_month)
 
 
 def _last_valid(series: pd.Series, offset: int = 0) -> Optional[float]:
@@ -880,7 +857,7 @@ def compute(kpi_set: KPISet, tables: Dict[str, pd.DataFrame],
             current=current,
             prior_year=prior_year,
             prior_month=prior_month,
-            target=_resolve_target(kpi, current),
+            target=_resolve_target(kpi, current, prior_year, prior_month),
             status=kpi.status(current),
             benchmark_position=kpi.vs_benchmark(current),
             computed=True,
