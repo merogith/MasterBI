@@ -19,6 +19,7 @@ import pandas as pd
 from ..fmt import fmt_percent, fmt_value
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
+from .seasonality import deseasonalise
 
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "positive": 4}
 
@@ -129,7 +130,7 @@ def detect_all(results: List[MetricResult], tables: Dict[str, pd.DataFrame],
         "benchmark_gaps": lambda: _benchmark_gaps(results),
         "trend_breaks": lambda: _trend_breaks(results),
         "segment_outliers": lambda: _segment_outliers(tables, profile),
-        "operating_leverage": lambda: _operating_leverage(by_id),
+        "operating_leverage": lambda: _operating_leverage(by_id, tables),
         "arr_bridge": lambda: _arr_bridge(tables, profile),
         "channel_efficiency": lambda: _channel_efficiency(tables),
         "runway": lambda: _runway(by_id),
@@ -323,12 +324,22 @@ def _benchmark_gaps(results: List[MetricResult]) -> List[Finding]:
 
 
 def _trend_breaks(results: List[MetricResult], window: int = 6) -> List[Finding]:
-    """Compare the recent slope against the preceding slope on the same window."""
+    """Compare the recent slope against the preceding slope on the same window.
+
+    On the *seasonally adjusted* series where there is a season to adjust for.
+    A retailer's January is always worse than its December, so the raw
+    comparison reads the calendar rather than the business: the same company
+    produced three trend breaks with its history ending in February and none
+    ending in January. See `insight/seasonality.py` for the measurements and
+    for why the adjustment is estimated from the series rather than read off
+    `market.seasonality`.
+    """
     out = []
     for r in results:
         if not r.computed or r.series is None:
             continue
-        s = r.series.dropna()
+        adjustment = deseasonalise(r.series.dropna())
+        s = adjustment.series.dropna()
         if len(s) < window * 2:
             continue
         recent = s.iloc[-window:]
@@ -348,6 +359,15 @@ def _trend_breaks(results: List[MetricResult], window: int = 6) -> List[Finding]
         if abs(recent_slope - prior_slope) / scale < 0.02:
             continue
 
+        # The statement used to quote the first value of the prior window against
+        # the last value of the recent one, which for a decelerating series that
+        # is still rising reads "reversed direction ... moving from 2,850,434 to
+        # 3,347,383" — a sentence contradicting its own numbers. Quote what each
+        # window did instead, taken from the same slopes the test above uses, so
+        # the prose cannot disagree with the finding.
+        prior_change = prior_slope * (window - 1)
+        recent_change = recent_slope * (window - 1)
+
         better_is_up = r.kpi.direction.value == "higher_is_better"
         deteriorating = (recent_slope < prior_slope) if better_is_up else (recent_slope > prior_slope)
         turned = np.sign(recent_slope) != np.sign(prior_slope)
@@ -359,11 +379,15 @@ def _trend_breaks(results: List[MetricResult], window: int = 6) -> List[Finding]
             severity="high" if r.kpi.tier.value <= 1 else "medium",
             title=f"{r.kpi.name} has turned",
             statement=(
-                f"{r.kpi.name} improved over the prior {window} months but has "
-                f"reversed direction over the last {window}, moving from "
-                f"{_fmt(float(prior.iloc[0]), r.kpi.unit)} to "
-                f"{_fmt(float(recent.iloc[-1]), r.kpi.unit)}. The inflection is "
-                f"recent enough to still be addressable."
+                f"{r.kpi.name} {'rose' if prior_change > 0 else 'fell'} by "
+                f"{_fmt(abs(prior_change), r.kpi.unit)} over the prior {window} "
+                f"months and {'rose' if recent_change > 0 else 'fell'} by "
+                f"{_fmt(abs(recent_change), r.kpi.unit)} over the last {window}, "
+                f"and now stands at {_fmt(float(recent.iloc[-1]), r.kpi.unit)}"
+                + (f" (seasonally adjusted — {_pct(adjustment.strength, 0)} of "
+                   f"this metric's variation is the calendar)"
+                   if adjustment.applied else "")
+                + ". The inflection is recent enough to still be addressable."
             ),
             # `current` and `prior` are the two numbers the statement above
             # already quotes. They are here so the ranker can size the move:
@@ -372,7 +396,9 @@ def _trend_breaks(results: List[MetricResult], window: int = 6) -> List[Finding]
             evidence={"current": float(recent.iloc[-1]),
                       "prior": float(prior.iloc[0]),
                       "recent_slope": float(recent_slope),
-                      "prior_slope": float(prior_slope)},
+                      "prior_slope": float(prior_slope),
+                      "seasonally_adjusted": adjustment.applied,
+                      "seasonal_strength": round(adjustment.strength, 4)},
             kpi_ids=[r.kpi.id],
             impact="high",
             effort="medium",
@@ -418,23 +444,65 @@ def _segment_outliers(tables: Dict[str, pd.DataFrame], profile: CompanyProfile) 
     )]
 
 
-def _operating_leverage(by_id: Dict[str, MetricResult]) -> List[Finding]:
-    arr_g, hc_g = by_id.get("arr_growth_yoy"), by_id.get("headcount_growth")
-    if not arr_g or not hc_g or arr_g.current is None or hc_g.current is None:
+def _yoy_total(frame: pd.DataFrame, column: str, months: int = 12
+               ) -> Optional[tuple]:
+    """Trailing-twelve-month total against the twelve before it.
+
+    A trailing year on both sides is what makes this comparison safe for a
+    seasonal business without any adjustment at all: every month appears once
+    on each side, so December's peak cancels itself.
+    """
+    if frame is None or column not in frame.columns or "month" not in frame.columns:
+        return None
+    monthly = frame.groupby("month")[column].sum().sort_index()
+    if len(monthly) < months * 2:
+        return None
+    recent = float(monthly.iloc[-months:].sum())
+    prior = float(monthly.iloc[-months * 2:-months].sum())
+    if abs(prior) < 1e-9:
+        return None
+    return recent, prior, recent / prior - 1.0
+
+
+def _operating_leverage(by_id: Dict[str, MetricResult],
+                        tables: Dict[str, pd.DataFrame]) -> List[Finding]:
+    """Is revenue growing faster than the cost base, whatever the business is?
+
+    This read `by_id["arr_growth_yoy"]` and `by_id["headcount_growth"]`, so it
+    fired for subscriptions and for nothing else — an e-commerce run has no
+    `arr_growth_yoy` and never will. The question it asks is not a subscription
+    question, though: every business either scales revenue faster than its
+    people or it does not.
+
+    So it is computed from `monthly_financials.revenue` and `headcount.fte`,
+    the two tables **every** archetype emits, rather than from ids only one
+    pack declares. The KPI ids below are for drill-through; whichever of them
+    the run happens to have selected is linked, and none of them gates the
+    finding.
+    """
+    revenue = _yoy_total(tables.get("monthly_financials"), "revenue")
+    people = _yoy_total(tables.get("headcount"), "fte")
+    if revenue is None or people is None:
         return []
-    gap = arr_g.current - hc_g.current
+    rev_growth, hc_growth = revenue[2], people[2]
+    gap = rev_growth - hc_growth
+
+    def links(*candidates: str) -> List[str]:
+        return [c for c in candidates if c in by_id] or ["revenue_per_fte"]
+
     if gap >= _param("operating_leverage", "positive_gap"):
         return [Finding(
             id="operating_leverage_positive",
             severity="positive",
             title="The business is gaining operating leverage",
             statement=(
-                f"ARR grew {_pct(arr_g.current, 1)} against headcount growth of "
-                f"{_pct(hc_g.current, 1)} — a {_pct(gap, 1)} gap. Revenue is scaling faster "
-                f"than the cost base."
+                f"Revenue grew {_pct(rev_growth, 1)} over the last twelve months "
+                f"against headcount growth of {_pct(hc_growth, 1)} — a "
+                f"{_pct(gap, 1)} gap. Revenue is scaling faster than the cost base."
             ),
-            evidence={"arr_growth": arr_g.current, "headcount_growth": hc_g.current, "gap": gap},
-            kpi_ids=["arr_per_fte", "arr_growth_yoy"],
+            evidence={"current": rev_growth, "expected": hc_growth, "gap": gap},
+            kpi_ids=links("arr_per_fte", "revenue_per_fte", "revenue_per_head",
+                          "arr_growth_yoy", "revenue_growth_yoy"),
         )]
     if gap <= _param("operating_leverage", "negative_gap"):
         return [Finding(
@@ -442,13 +510,16 @@ def _operating_leverage(by_id: Dict[str, MetricResult]) -> List[Finding]:
             severity="high",
             title="Headcount is growing faster than revenue",
             statement=(
-                f"Headcount grew {_pct(hc_g.current, 1)} while ARR grew {_pct(arr_g.current, 1)}. "
-                f"The business is buying growth with people rather than leverage, which "
-                f"compounds into the cost base."
+                f"Headcount grew {_pct(hc_growth, 1)} over the last twelve months "
+                f"while revenue grew {_pct(rev_growth, 1)}. The business is buying "
+                f"growth with people rather than leverage, which compounds into "
+                f"the cost base."
             ),
-            evidence={"arr_growth": arr_g.current, "headcount_growth": hc_g.current, "gap": gap},
-            kpi_ids=["arr_per_fte", "headcount_growth"],
-            recommendation="Freeze net new hiring outside revenue-generating roles until ARR per FTE recovers.",
+            evidence={"current": rev_growth, "expected": hc_growth, "gap": gap},
+            kpi_ids=links("arr_per_fte", "revenue_per_fte", "revenue_per_head",
+                          "headcount_growth"),
+            recommendation=("Freeze net new hiring outside revenue-generating "
+                            "roles until revenue per head recovers."),
             impact="high",
             effort="low",
         )]

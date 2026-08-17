@@ -354,8 +354,8 @@ def test_a_transactional_run_gets_more_than_three_detectors(run):
     }
     fired = {name for f in findings for prefix, name in prefixes.items()
              if f.id.startswith(prefix)}
-    assert len(fired) >= 5, f"{archetype} fired only {sorted(fired)}"
-    assert "driver_decomposition" in fired and "concentration" in fired
+    assert len(fired) >= 6, f"{archetype} fired only {sorted(fired)}"
+    assert {"driver_decomposition", "concentration", "operating_leverage"} <= fired
 
 
 def test_a_detector_that_cannot_apply_says_so_rather_than_failing(run):
@@ -388,6 +388,70 @@ def test_channel_efficiency_is_not_bound_to_the_saas_funnel():
     findings = _channel_efficiency({"marketing": marketing})
     assert findings, "a marketing table with `leads` produced nothing"
     assert "per lead" in findings[0].statement, findings[0].statement
+
+
+def test_a_trend_break_statement_agrees_with_its_own_numbers(run):
+    """It quoted the first value of the prior window against the last value of
+    the recent one, so a decelerating series that was still rising read
+    "reversed direction ... moving from 2,850,434 to 3,347,383" — a sentence
+    contradicting itself, on the screen where ranking is the whole point."""
+    _archetype, profile, tables, results = run
+    by_id = {r.kpi.id: r for r in results if r.computed}
+    findings = [f for f in detect_all(results, tables, profile)
+                if f.id.startswith("trend_")]
+    assert findings, "no trend break to check"
+
+    for finding in findings:
+        kpi = by_id[finding.id[len("trend_"):]].kpi
+        # "... <verb> by X over the prior N months and <verb> by Y over the
+        # last N ...". The second clause is the one the finding is about.
+        _, _, tail = finding.statement.partition("months and ")
+        recent_clause, _, _ = tail.partition("over the last")
+        assert recent_clause, finding.statement
+
+        wrong_way = "fell" if kpi.direction.value == "higher_is_better" else "rose"
+        assert wrong_way in recent_clause, (
+            f"{finding.id} claims a turn but its recent clause reads "
+            f"'{recent_clause.strip()}'")
+        assert finding.evidence["recent_slope"] != finding.evidence["prior_slope"]
+
+
+def test_operating_leverage_is_not_a_subscription_question(run):
+    """It read `by_id["arr_growth_yoy"]`, an id only the SaaS pack declares, so
+    it fired for subscriptions and for nothing else. Every business either
+    scales revenue faster than its people or it does not."""
+    archetype, profile, tables, results = run
+    findings = [f for f in detect_all(results, tables, profile)
+                if f.id.startswith("operating_leverage")]
+    assert findings, f"{archetype} got no operating-leverage finding"
+    assert "arr_growth_yoy" not in {k for f in findings for k in f.kpi_ids} \
+        or archetype == "saas"
+    assert "Revenue grew" in findings[0].statement or \
+           "revenue grew" in findings[0].statement
+
+
+def test_operating_leverage_compares_a_year_against_a_year():
+    """Trailing twelve months on both sides, so a December peak appears once on
+    each and cancels itself. A six-month comparison here would have needed the
+    seasonal adjustment that `_trend_breaks` uses."""
+    from kpi_maker.insight.detectors import _operating_leverage
+
+    months = pd.period_range(end=pd.Period("2026-02", freq="M"), periods=24,
+                             freq="M")
+    peak = {11: 3.0, 12: 4.0}
+    financials = pd.DataFrame([
+        {"month": m, "revenue": 100_000.0 * peak.get(m.month, 1.0)
+         * (1.30 if i >= 12 else 1.0)}
+        for i, m in enumerate(months)])
+    headcount = pd.DataFrame([{"month": m, "fte": 50.0} for m in months])
+
+    findings = _operating_leverage({}, {"monthly_financials": financials,
+                                        "headcount": headcount})
+    assert findings and findings[0].id == "operating_leverage_positive"
+    # 30% revenue growth against flat headcount, and not a number distorted by
+    # where in the year the window happens to end.
+    assert findings[0].evidence["current"] == pytest.approx(0.30)
+    assert findings[0].evidence["expected"] == pytest.approx(0.0)
 
 
 def test_the_registry_and_the_name_list_agree():
