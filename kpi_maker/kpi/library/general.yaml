@@ -209,6 +209,7 @@
   tier: 1
   timing: leading
   direction: higher_is_better
+  driver_parent: free_cash_flow_ratio
   formula: cash / average monthly net burn over the last three months
   compute:
     kind: formula
@@ -239,6 +240,7 @@
   tier: 2
   timing: lagging
   direction: higher_is_better
+  driver_parent: marketing_intensity
   formula: revenue / total marketing spend
   compute:
     kind: formula
@@ -267,6 +269,7 @@
   tier: 2
   timing: leading
   direction: higher_is_better
+  driver_parent: marketing_intensity
   formula: total marketing spend across all channels
   compute:
     kind: formula
@@ -399,6 +402,7 @@
   tier: 3
   timing: leading
   direction: target_band
+  driver_parent: free_cash_flow_ratio
   formula: capital expenditure / revenue
   compute:
     kind: formula
@@ -459,6 +463,7 @@
   tier: 2
   timing: leading
   direction: higher_is_better
+  driver_parent: revenue_per_head
   formula: total full-time equivalents across all functions
   compute:
     kind: formula
@@ -508,6 +513,7 @@
   tier: 2
   timing: lagging
   direction: lower_is_better
+  driver_parent: workforce_size
   formula: leavers in the month / total full-time equivalents, annualised
   compute:
     kind: formula

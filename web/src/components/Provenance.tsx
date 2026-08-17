@@ -17,9 +17,37 @@ import { fmtValue } from '../lib/format';
  * asks to be taken on faith, and this one never needed to be.
  */
 
-function Scorecard({ kpis, rationale, currency }: {
+type DriverNodes = Record<string, { name: string; parent: string | null }>;
+
+/** What this metric rolls up into: "ARR -> NRR -> GRR".
+ *
+ *  The record sheets have described this the whole time. It answers "why is
+ *  this on here" with a structural claim rather than a scoring one — GRR is on
+ *  the scorecard because it drives NRR, which drives ARR — and that is the
+ *  half of the question a selection score cannot answer. */
+function DriverPath({ kpiId, nodes }: { kpiId: string; nodes: DriverNodes }) {
+  const path: string[] = [];
+  const seen = new Set<string>();
+  let current: string | null = kpiId;
+  while (current !== null && !seen.has(current)) {
+    const node: DriverNodes[string] | undefined = nodes[current];
+    if (node === undefined) break;
+    seen.add(current);
+    path.unshift(node.name);
+    current = node.parent;
+  }
+  if (path.length < 2) return null;
+  return (
+    <span class="driver-path" title="What this metric rolls up into">
+      {path.join(' → ')}
+    </span>
+  );
+}
+
+function Scorecard({ kpis, rationale, nodes, currency }: {
   kpis: Kpi[];
   rationale: Record<string, string>;
+  nodes: DriverNodes;
   currency: string;
 }) {
   return (
@@ -50,6 +78,7 @@ function Scorecard({ kpis, rationale, currency }: {
                     use than its selection rationale: "needs the headcount
                     table, which this run does not have" is actionable. */}
                 {kpi.computed ? rationale[kpi.kpi_id] ?? '' : kpi.reason ?? ''}
+                <DriverPath kpiId={kpi.kpi_id} nodes={nodes} />
               </td>
             </tr>
           ))}
@@ -94,6 +123,7 @@ export function Provenance({ summary }: { summary: Summary }) {
         <div class="provenance-body">
           <h3 class="section-title">The scorecard, and why each metric is on it</h3>
           <Scorecard kpis={kpis} rationale={summary.rationale ?? {}}
+                     nodes={summary.drivers?.nodes ?? {}}
                      currency={summary.currency ?? 'USD'} />
 
           {dropped.length > 0 && (

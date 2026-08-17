@@ -193,6 +193,16 @@ export interface Summary {
   // KPIs the engine considered and rejected, each with its reason. "Why isn't
   // X on my dashboard" had an answer the whole time, computed and unread.
   north_star?: Kpi | null;
+  /** The value-driver tree over this run's KPIs. `driver_parent` is authored on
+   *  56 of the 80 record sheets and had exactly one consumer — its own field
+   *  declaration — until `kpi/drivers.py`. */
+  drivers?: {
+    roots: string[];
+    dangling: Record<string, string>;
+    nodes: Record<string, {
+      name: string; parent: string | null; children: string[]; depth: number;
+    }>;
+  };
   severity_counts?: Record<string, number>;
   rationale?: Record<string, string>;
   dropped?: Record<string, string>;

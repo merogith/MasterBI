@@ -225,6 +225,47 @@ def _artifacts(run_dir: Path, run_id: str) -> List[Dict[str, Any]]:
     return out
 
 
+def _driver_tree(kpi_set: Dict[str, Any],
+                 profile: CompanyProfile) -> Dict[str, Any]:
+    """The driver graph for a run, from the KPI set it already wrote out.
+
+    `driver_parent` is populated on 56 of the 80 shipped record sheets and had
+    exactly one consumer before `kpi/drivers.py`: the field declaration. This
+    is the first thing that reads it.
+
+    The ancestry map comes from **this profile's own packs**, never from
+    `load_library()` with no argument. Ids are only unique within the packs a
+    profile can load together — `gross_margin_pct` exists in both `saas.yaml`
+    and `ecommerce.yaml`, deliberately, because no company loads both — so a
+    merged library silently shadows one with the other and lifts a SaaS metric
+    onto a retailer's parent.
+    """
+    from ..kpi.drivers import build
+    from ..profile import sectors
+
+    class _Node:                       # the three attributes `build` looks at
+        __slots__ = ("id", "name", "driver_parent")
+
+        def __init__(self, row: Dict[str, Any]) -> None:
+            self.id = row.get("id", "")
+            self.name = row.get("name", self.id)
+            self.driver_parent = row.get("driver_parent")
+
+    rows = kpi_set.get("kpis") or []
+    if not rows:
+        return {"roots": [], "nodes": {}, "dangling": {}}
+
+    try:
+        packs = list(sectors.resolve_packs(profile.business_model.type.value).value)
+        ancestry = {k.id: k.driver_parent
+                    for k in load_library(packs, include_user=False)}
+    except Exception:                                    # noqa: BLE001
+        # A tree without the lift is worse than one with it, and far better
+        # than a 500 on the results screen.
+        ancestry = None
+    return build([_Node(row) for row in rows], ancestry).as_dict()
+
+
 def _build_summary(run_id: str, run_dir: Path, profile: CompanyProfile) -> Dict[str, Any]:
     """Everything the results screen needs, in one payload."""
     facts_path = run_dir / "facts.csv"
@@ -272,6 +313,12 @@ def _build_summary(run_id: str, run_dir: Path, profile: CompanyProfile) -> Dict[
         "kpis": kpis,
         "findings": findings,
         "severity_counts": by_sev,
+        # The value-driver tree over the KPIs this run actually selected.
+        # Built here rather than stored, because it is a view over
+        # `kpi_set.json` — which already carries `driver_parent` on every
+        # sheet — and a second copy on disk would be one more thing that can
+        # disagree with the first.
+        "drivers": _driver_tree(kpi_set, profile),
         "rationale": kpi_set.get("rationale", {}),
         "dropped": kpi_set.get("dropped", {}),
         "warnings": [v for k, v in kpi_set.get("rationale", {}).items()

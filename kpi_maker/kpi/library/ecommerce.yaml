@@ -47,6 +47,7 @@
   tier: 1
   timing: lagging
   direction: higher_is_better
+  driver_parent: net_revenue
   formula: "count of orders, trailing twelve months"
   compute:
     kind: formula
@@ -98,6 +99,7 @@
   tier: 1
   timing: leading
   direction: higher_is_better
+  driver_parent: orders_count
   formula: "orders / sessions"
   compute:
     kind: formula
@@ -127,6 +129,7 @@
   tier: 2
   timing: leading
   direction: lower_is_better
+  driver_parent: conversion_rate
   formula: "1 - orders / add-to-carts"
   compute:
     kind: formula
@@ -153,6 +156,7 @@
   tier: 1
   timing: lagging
   direction: lower_is_better
+  driver_parent: net_revenue
   formula: "returns / (gross revenue - discounts)"
   compute:
     kind: formula
@@ -182,6 +186,7 @@
   tier: 2
   timing: lagging
   direction: lower_is_better
+  driver_parent: aov
   formula: "discounts / gross revenue"
   compute:
     kind: formula
@@ -241,6 +246,7 @@
   tier: 1
   timing: lagging
   direction: higher_is_better
+  driver_parent: contribution_margin
   formula: "gross profit / net revenue"
   compute:
     kind: formula
@@ -270,6 +276,7 @@
   tier: 1
   timing: lagging
   direction: higher_is_better
+  driver_parent: active_buyers
   formula: "repeat buyers / all buyers in the month"
   compute:
     kind: formula
@@ -299,6 +306,7 @@
   tier: 1
   timing: lagging
   direction: higher_is_better
+  driver_parent: orders_count
   formula: "distinct buyers who ordered in the month"
   compute:
     kind: formula
@@ -321,6 +329,7 @@
   tier: 2
   timing: lagging
   direction: higher_is_better
+  driver_parent: gross_margin_pct
   formula: "annualised units sold / units on hand"
   compute:
     kind: formula
@@ -348,6 +357,7 @@
   tier: 3
   timing: leading
   direction: lower_is_better
+  driver_parent: inventory_turns
   formula: "average days out of stock per category per month"
   compute:
     kind: formula
@@ -370,6 +380,7 @@
   tier: 2
   timing: lagging
   direction: lower_is_better
+  driver_parent: contribution_margin
   formula: "marketing spend / net revenue"
   compute:
     kind: formula
@@ -426,6 +437,7 @@
   tier: 3
   timing: leading
   direction: higher_is_better
+  driver_parent: orders_count
   formula: "total sessions across channels"
   compute:
     kind: formula
@@ -447,6 +459,7 @@
   tier: 1
   timing: lagging
   direction: higher_is_better
+  driver_parent: contribution_margin
   formula: "EBITDA / net revenue"
   compute:
     kind: formula
@@ -504,6 +517,7 @@
   tier: 2
   timing: lagging
   direction: higher_is_better
+  driver_parent: net_revenue
   formula: "trailing twelve month net revenue / headcount"
   compute:
     kind: formula
@@ -533,6 +547,7 @@
   # schema has no such direction and target_band is the honest fit — the SaaS
   # pack's own headcount_growth makes the same call.
   direction: target_band
+  driver_parent: revenue_per_fte
   formula: "year-on-year change in total FTE"
   compute:
     kind: formula
