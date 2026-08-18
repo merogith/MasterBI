@@ -38,7 +38,7 @@ export function Studio({ runId }: { runId: string }) {
   const timer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    Promise.all([getSpec(runId), getOptions(), listCatalogKpis(), getAiStatus(),
+    Promise.all([getSpec(runId), getOptions(runId), listCatalogKpis(), getAiStatus(),
                  // A run that has not produced tables yet is not an error here;
                  // the editors that need them simply have nothing to target.
                  listTables(runId).catch(() => [])])

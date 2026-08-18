@@ -426,19 +426,32 @@ def test_the_readme_counts_the_sector_packs_correctly() -> None:
     e-commerce pack and 0.1's cross-sector fallback had both landed. A file
     that contradicts itself is worse than one that is merely out of date.
     """
-    from kpi_maker.profile.sectors import supported_sectors
+    from kpi_maker.profile.sectors import declared_sectors, supported_sectors
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     words = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}
-    n = len(supported_sectors())
+    n, total = len(supported_sectors()), len(declared_sectors())
 
     assert f"**{words[n]} sectors have their own KPI pack**" in readme, (
         f"{n} sectors have their own pack; the Known gaps section says "
         "something else")
-    for stated in re.findall(r"(\d+) of 10 have their own archetype and pack",
-                             readme):
-        assert int(stated) == n, (
-            f"the status table says {stated} of 10; there are {n}")
+
+    # The denominator too, and this is why: 4.1 took it from ten to twenty and
+    # the pattern was pinned to the literal `of 10`, so it matched nothing and
+    # the check went quietly vacuous while the README said "2 of 10".
+    stated = re.findall(r"(\d+) of (\d+) have their own archetype and pack",
+                        readme)
+    assert stated, "the status table no longer states the sector counts at all"
+    for have, out_of in stated:
+        assert (int(have), int(out_of)) == (n, total), (
+            f"the status table says {have} of {out_of}; it is {n} of {total}")
+
+    remaining = {2: "eighteen", 8: "eight", 18: "eighteen"}.get(total - n)
+    if remaining:
+        assert f"The other\n  {remaining} run on" in readme or \
+            f"The other {remaining} run on" in readme, (
+                f"{total - n} sectors run on the fallback; Known gaps says "
+                "something else")
 
 
 def test_there_is_one_front_end() -> None:
@@ -689,3 +702,22 @@ def test_no_overlay_registers_its_escape_key_in_an_effect() -> None:
     assert not offenders, \
         "an overlay is back to a window listener registered after paint: " \
         + ", ".join(offenders)
+
+
+def test_the_studio_asks_for_its_own_run_s_tables() -> None:
+    """The server scopes the fact-table list to a run's archetype, and only if
+    it is told which run.
+
+    The endpoint and the caller are in different languages, so nothing else
+    connects them: `getOptions()` with no argument gets the union back and the
+    Studio silently returns to offering a retailer `mrr_movements`. That is the
+    same shape as the Cancel drift check — a fix that works only while both
+    halves agree needs something asserting they still do.
+    """
+    studio = (ROOT / "web" / "src" / "views" / "Studio.tsx").read_text(encoding="utf-8")
+    assert "getOptions(runId)" in studio, \
+        "the Studio asks for the catalogue without saying which run it is for"
+
+    shim = (ROOT / "tools" / "static_shim.js").read_text(encoding="utf-8")
+    assert "data/runs/${run}/options.json" in shim, \
+        "the hosted demo serves the union to every run again"

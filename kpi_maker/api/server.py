@@ -28,7 +28,7 @@ from pydantic import BaseModel
 
 from .. import paths
 from ..cli import load_profile, run_pipeline
-from ..contract.schemas import FACT_SCHEMAS
+from ..contract.schemas import schemas_for
 from ..design.contrast import AA_TEXT, GRAPHICAL, MIN_DELTA_E, ColourError, ratio
 from ..design.logo import LogoError, load_logo
 from ..design.palette import derive_tokens
@@ -1038,16 +1038,39 @@ def ingest_quality(body: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @app.get("/api/catalog/options")
-def catalog_options() -> Dict[str, Any]:
+def catalog_options(run_id: Optional[str] = None) -> Dict[str, Any]:
     """What the studio is allowed to offer. Served from the engine's own
-    registries so the UI cannot drift from what the pipeline supports."""
+    registries so the UI cannot drift from what the pipeline supports.
+
+    `run_id` scopes the fact tables to that run's archetype. Without it the
+    union is returned, which is what a caller with no run can be told.
+
+    2.3a fixed four places that judged an upload against every archetype's
+    tables at once and named this as the fifth, deferred because the endpoint
+    had no run to resolve an archetype from. It does now. Left as it was, the
+    Studio's "fill gaps" panel offered a retailer `mrr_movements`, `pipeline`,
+    `product_usage` and `sales_capacity` — four tables their archetype never
+    emits, and ticking one asked the generator to model a subscription book for
+    a shop.
+    """
+    archetype = None
+    if run_id:
+        try:
+            archetype = _load_spec(RUNS_DIR / run_id).resolve_archetype()
+        except Exception:                                # noqa: BLE001
+            # A missing or unreadable spec is not a reason to fail the whole
+            # catalogue — the union is a worse answer, not a broken one.
+            archetype = None
     return {
         "artifacts": ALL_ARTIFACTS,
         "detectors": DETECTOR_NAMES,
         "themes": ["light", "dark", "auto"],
         "ops": describe_ops(),
         "shapes": shape_catalog(),
-        "fact_tables": sorted(FACT_SCHEMAS),
+        "fact_tables": sorted(schemas_for(archetype)),
+        # Named so the panel can say whose tables these are rather than
+        # implying the list is universal.
+        "archetype": archetype,
         "sections": [{"id": sid, "title": SECTION_REGISTRY[sid].title}
                      for sid in default_order()],
         "exhibits": default_exhibits(),

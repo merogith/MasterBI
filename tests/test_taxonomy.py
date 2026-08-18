@@ -13,12 +13,22 @@ it the source rather than a fourth copy.
 **On the official codes.** They are carried for credibility and for the
 benchmark lookup 4.4 needs, and they are deliberately not load-bearing: the
 archetype, the packs and the search work off `id`, `label` and `aliases`, so a
-wrong code is a wrong label rather than a wrong scorecard. The NAICS two-digit
-sector list was checked against census.gov; Eurostat is unreachable from this
-environment, so the NACE titles are transcribed and the file says so. These
-tests therefore check *shape and consistency*, and do not claim to have
-verified the titles — a test that asserted a transcription against itself would
-be worse than no test.
+wrong code is a wrong label rather than a wrong scorecard.
+
+They are now **checked against a published source**, which the first version of
+this file could not do — every Eurostat host and national mirror is blocked by
+this environment's egress policy, so the NACE titles were transcribed and these
+tests only checked their shape. That was not good enough, and it hid a real
+bug: four sectors carried a section title truncated to its first word, because
+`{section_title: Arts, entertainment and recreation}` is a YAML flow mapping
+that splits on its own commas. A shape check cannot see a wrong string.
+
+The way through was **ISIC Rev. 4**, which is reachable: NACE Rev. 2 is the
+European implementation of it and its sections and divisions are identical,
+with NACE adding detail only below the level this taxonomy uses. The UN's
+classification ships in the `isic` package on PyPI — one of the few hosts this
+environment allows — and the twenty-one section and eighteen division titles
+taken from it are vendored below. All twenty sectors match it exactly.
 """
 from __future__ import annotations
 
@@ -27,6 +37,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -37,9 +48,6 @@ from kpi_maker.profile.schema import BusinessModel  # noqa: E402
 from kpi_maker.survey.questions import QUESTION_BY_ID  # noqa: E402
 
 TAXONOMY = taxonomy.load()
-
-#: NACE section letters. 21 of them, A-U, confirmed independently.
-NACE_SECTIONS = set("ABCDEFGHIJKLMNOPQRSTU")
 
 #: NAICS 2022 two-digit sectors, three of which are ranges. Checked against
 #: census.gov: 11, 21, 22, 23, 31-33, 42, 44-45, 48-49, 51-56, 61, 62, 71, 72,
@@ -132,22 +140,119 @@ def test_every_sector_carries_both_classifications(sector):
         sector.naics.code
     assert sector.nace.title and sector.naics.title
 
+# --------------------------------------------------------------------------
+# The official codes, checked against a published source
+# --------------------------------------------------------------------------
 
-def test_the_file_says_what_was_verified_and_what_was_not():
+#: ISIC Rev. 4 sections, from the UN Statistics Division's classification as
+#: published in the `isic` package on PyPI. **NACE Rev. 2's sections and
+#: divisions are identical to ISIC Rev. 4's** — NACE is the European
+#: implementation of ISIC and adds detail only at group and class level, below
+#: anything this taxonomy uses — so checking against ISIC checks the NACE codes
+#: at exactly the level they are stated.
+#:
+#: Vendored rather than imported: this is reference data that must not change
+#: under the suite, and a runtime dependency on a third-party package for
+#: twenty-one strings would be a worse trade than twenty-one strings.
+NACE_SECTIONS = {
+    "A": "Agriculture, forestry and fishing",
+    "B": "Mining and quarrying",
+    "C": "Manufacturing",
+    "D": "Electricity, gas, steam and air conditioning supply",
+    "E": "Water supply; sewerage, waste management and remediation activities",
+    "F": "Construction",
+    "G": "Wholesale and retail trade; repair of motor vehicles and motorcycles",
+    "H": "Transportation and storage",
+    "I": "Accommodation and food service activities",
+    "J": "Information and communication",
+    "K": "Financial and insurance activities",
+    "L": "Real estate activities",
+    "M": "Professional, scientific and technical activities",
+    "N": "Administrative and support service activities",
+    "O": "Public administration and defence; compulsory social security",
+    "P": "Education",
+    "Q": "Human health and social work activities",
+    "R": "Arts, entertainment and recreation",
+    "S": "Other service activities",
+    "T": "Activities of households as employers; undifferentiated goods- and "
+         "services-producing activities of households for own use",
+    "U": "Activities of extraterritorial organizations and bodies",
+}
+
+#: Every division this taxonomy names, same source. Only the ones in use: a
+#: transcription of all 88 would be 70 lines nothing checks.
+NACE_DIVISIONS = {
+    "10": "Manufacture of food products",
+    "25": "Manufacture of fabricated metal products, except machinery and equipment",
+    "41": "Construction of buildings",
+    "46": "Wholesale trade, except of motor vehicles and motorcycles",
+    "47": "Retail trade, except of motor vehicles and motorcycles",
+    "49": "Land transport and transport via pipelines",
+    "55": "Accommodation",
+    "56": "Food and beverage service activities",
+    "58": "Publishing activities",
+    "62": "Computer programming, consultancy and related activities",
+    "63": "Information service activities",
+    "68": "Real estate activities",
+    "70": "Activities of head offices; management consultancy activities",
+    "71": "Architectural and engineering activities; technical testing and analysis",
+    "73": "Advertising and market research",
+    "85": "Education",
+    "86": "Human health activities",
+    "93": "Sports activities and amusement and recreation activities",
+}
+
+
+@pytest.mark.parametrize("sector", TAXONOMY.sectors, ids=lambda s: s.id)
+def test_every_nace_code_matches_the_published_classification(sector):
+    """Not "the code looks well-formed" — the code and its title, against the
+    source.
+
+    The shape-only version of this check passed while **four sectors carried a
+    truncated section title**: `{section_title: Arts, entertainment and
+    recreation}` is a YAML flow mapping, so it split on its own commas and
+    stored "Arts" with the rest as a junk key. Nothing noticed, because nothing
+    compared the string to anything, and `classification()` does not print the
+    section title — so it was invisible on screen too.
+    """
+    assert NACE_SECTIONS[sector.nace.section] == sector.nace.section_title, \
+        f"{sector.id}: section {sector.nace.section} title does not match ISIC/NACE"
+    assert NACE_DIVISIONS[sector.nace.code] == sector.nace.title, \
+        f"{sector.id}: division {sector.nace.code} title does not match ISIC/NACE"
+
+
+@pytest.mark.parametrize("sector", TAXONOMY.sectors, ids=lambda s: s.id)
+def test_a_code_block_carries_exactly_the_fields_it_should(sector):
+    """The other half of the same bug: the junk key existed because nothing
+    said what a `nace:` block is allowed to contain."""
+    raw = yaml.safe_load(
+        (ROOT / "kpi_maker" / "profile" / "taxonomy.yaml").read_text(encoding="utf-8"))
+    entry = next(e for e in raw["sectors"] if e["id"] == sector.id)
+    assert set(entry["nace"]) == {"section", "section_title", "division",
+                                  "division_title"}, entry["nace"]
+    assert set(entry["naics"]) == {"code", "title"}, entry["naics"]
+
+
+def test_every_classification_records_how_it_was_checked():
     """An uncited benchmark is worse than none, and the same holds for a code.
 
-    Eurostat is blocked from this environment, so the NACE titles are
-    transcribed. Recording that is the difference between a limitation and a
-    quiet claim — and it is what tells the next person which half to re-check.
+    The first version of this asserted the *opposite* claim — that the NACE
+    entry admits to being transcribed rather than checked — which was the right
+    assertion while it was true and the wrong one to keep. What has to hold in
+    both worlds is that the file states its authority, its source and the
+    check, so the next person knows what was actually done.
     """
     systems = TAXONOMY.systems
     for name in ("nace", "naics"):
         assert systems[name]["url"].startswith("https://")
         assert systems[name]["authority"]
         assert systems[name]["verification"], f"{name} does not say how it was checked"
-    assert "not machine-checked" in systems["nace"]["verification"].lower() \
-        or "transcribed" in systems["nace"]["verification"].lower(), \
-        "the NACE entry implies a verification that did not happen"
+
+    # NACE cannot be checked against Eurostat from here, so it says what it was
+    # checked against instead. A claim of "verified" with no named source would
+    # be the thing this file exists to avoid.
+    assert "ISIC" in systems["nace"]["checked_against"], systems["nace"]
+    assert "census.gov" in systems["naics"]["verification"]
 
 
 def test_the_classification_line_names_both_systems():

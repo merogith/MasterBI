@@ -56,7 +56,10 @@ button, input, select { font: inherit; }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; }
 .brand-mark {
   width: 20px; height: 20px; border-radius: 6px;
-  background: linear-gradient(135deg, var(--accent), #1baf7a);
+  /* `#1baf7a` was the slot-3 green before it was darkened to clear the
+     3:1 graphical floor. Left literal, the mark kept a value the engine
+     had moved — the exact drift `tokens.css` exists to prevent. */
+  background: linear-gradient(135deg, var(--accent), var(--series-3));
 }
 .brand-name { font-weight: 600; font-size: 15px; }
 .topnav { display: flex; gap: 4px; }

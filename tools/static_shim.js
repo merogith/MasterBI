@@ -69,7 +69,7 @@
     catch (_) { return fail(`Corrupt pre-built data: ${rel}`, 500); }
   }
 
-  function staticRoute(path, method, init) {
+  function staticRoute(path, method, init, query) {
     if (path === '/api/samples') return prebuilt('data/samples.json');
     if (path === '/api/survey')  return prebuilt('data/survey.json');
     if (path === '/api/runs' && method === 'GET') return prebuilt('data/runs.json');
@@ -99,7 +99,14 @@
       return Promise.resolve(json({ status: 'idle' }));
     }
 
-    if (path === '/api/catalog/options') return prebuilt('data/catalog/options.json');
+    // The fact-table list is archetype-scoped since 2.3a's last loose end was
+    // closed, so the demo has to answer per run too — serving the union here
+    // would put `mrr_movements` back in a retailer's Studio, which is the bug.
+    if (path === '/api/catalog/options') {
+      const run = new URLSearchParams(query || '').get('run_id');
+      return run ? prebuilt(`data/runs/${run}/options.json`)
+                 : prebuilt('data/catalog/options.json');
+    }
     if (path === '/api/catalog/kpis')    return prebuilt('data/catalog/kpis.json');
     if (path === '/api/ai/status')       return prebuilt('data/ai/status.json');
 
@@ -172,7 +179,8 @@
     if (raw.startsWith('/files/')) {
       return Promise.resolve(fail('That file only exists on a local run.', 404));
     }
-    return staticRoute(raw.split('?')[0], (init.method || 'GET').toUpperCase(), init);
+    return staticRoute(raw.split('?')[0], (init.method || 'GET').toUpperCase(),
+                       init, raw.split('?')[1] || '');
   };
 
   /* --------------------------------------------------------------- probing */

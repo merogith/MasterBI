@@ -13,13 +13,21 @@
 # archetype, the packs and the search all work off `id`, `label` and `aliases`.
 # A wrong code is then a wrong label rather than a wrong scorecard.
 #
-# **What was verified, and what was not.** The NAICS 2022 two-digit sector list
-# was checked against census.gov while writing this. Eurostat is unreachable
-# from the build environment — the egress proxy refuses `ec.europa.eu`,
-# `eur-lex.europa.eu` and every national statistics office mirror tried — so
-# the NACE section and division titles here are transcribed rather than
-# machine-checked, and `systems.nace.verification` says exactly that. Re-check
-# against the URL below before the codes are used to key a benchmark.
+# **What was verified, and how.** The NAICS 2022 two-digit sector list was
+# checked against census.gov. Every Eurostat host and national mirror is
+# blocked by this environment's egress policy, so NACE could not be checked
+# against Eurostat directly — but it did not have to be: **NACE Rev. 2 is the
+# European implementation of ISIC Rev. 4, and their sections and divisions are
+# identical**, with NACE adding detail only at group and class level, below
+# anything used here. The UN's ISIC Rev. 4 is reachable (it ships on PyPI), and
+# `tests/test_taxonomy.py` checks every section letter, division code and title
+# in this file against it on every run. All twenty match exactly.
+#
+# That check found a real bug on its first run, which is why it exists: four
+# sectors had a section title truncated to its first word, because
+# `{section_title: Arts, entertainment and recreation}` is a YAML flow mapping
+# and splits on its own commas. Every code block below is written in block
+# form with quoted values now, and a test asserts the allowed field names.
 version: 1
 
 systems:
@@ -33,16 +41,20 @@ systems:
       applies to European statistics incrementally from 2025; the divisions
       used here are unchanged between the two.
     verification: >-
-      Transcribed, not machine-checked: Eurostat and every mirror are blocked
-      by this environment's egress policy. Section count and structure
-      confirmed independently; individual titles were not.
+      Checked against ISIC Rev. 4 (UN Statistics Division), whose sections and
+      divisions NACE Rev. 2 reproduces identically — Eurostat itself is blocked
+      by this environment's egress policy. All 21 sections and every division
+      used here match, asserted by tests/test_taxonomy.py on every run.
+    checked_against: ISIC Rev. 4, UN Statistics Division
   naics:
     name: NAICS 2022
     authority: U.S. Census Bureau
     url: https://www.census.gov/naics/
     structure: 20 two-digit sectors, three of them code ranges
     vintage: "2022"
-    verification: Two-digit sector list checked against census.gov.
+    verification: >-
+      Two-digit sector list checked against census.gov; every code here begins
+      with one of them, asserted by tests/test_taxonomy.py.
 
 # `archetype` names a generator in `datagen.GENERATORS`. `why` is required
 # whenever the archetype is an approximation, and it renders to the user — so
@@ -56,18 +68,28 @@ sectors:
   - id: saas
     label: Software / subscription
     aliases: [software, saas, b2b software, platform, app, cloud]
-    nace: {section: J, section_title: Information and communication,
-           division: "62", division_title: "Computer programming, consultancy and related activities"}
-    naics: {code: "5112", title: "Software Publishers"}
+    nace:
+      section: "J"
+      section_title: "Information and communication"
+      division: "62"
+      division_title: "Computer programming, consultancy and related activities"
+    naics:
+      code: "5112"
+      title: "Software Publishers"
     archetype: saas
     packs: [saas]
 
   - id: it_services
     label: IT services and managed services
     aliases: [it services, msp, managed services, systems integrator, hosting]
-    nace: {section: J, section_title: Information and communication,
-           division: "62", division_title: "Computer programming, consultancy and related activities"}
-    naics: {code: "5415", title: "Computer Systems Design and Related Services"}
+    nace:
+      section: "J"
+      section_title: "Information and communication"
+      division: "62"
+      division_title: "Computer programming, consultancy and related activities"
+    naics:
+      code: "5415"
+      title: "Computer Systems Design and Related Services"
     archetype: saas
     why: >-
       retainers and managed-service contracts recur monthly, which is the
@@ -78,9 +100,14 @@ sectors:
   - id: media
     label: Media, publishing and content
     aliases: [media, publishing, newspaper, magazine, streaming, podcast]
-    nace: {section: J, section_title: Information and communication,
-           division: "58", division_title: "Publishing activities"}
-    naics: {code: "5111", title: "Newspaper, Periodical, Book, and Directory Publishers"}
+    nace:
+      section: "J"
+      section_title: "Information and communication"
+      division: "58"
+      division_title: "Publishing activities"
+    naics:
+      code: "5111"
+      title: "Newspaper, Periodical, Book, and Directory Publishers"
     archetype: saas
     why: >-
       a subscriber book behaves like a recurring-revenue book; advertising
@@ -90,9 +117,14 @@ sectors:
   - id: fitness
     label: Gyms, clubs and memberships
     aliases: [gym, fitness, membership, club, studio, leisure]
-    nace: {section: R, section_title: Arts, entertainment and recreation,
-           division: "93", division_title: "Sports activities and amusement and recreation activities"}
-    naics: {code: "7139", title: "Other Amusement and Recreation Industries"}
+    nace:
+      section: "R"
+      section_title: "Arts, entertainment and recreation"
+      division: "93"
+      division_title: "Sports activities and amusement and recreation activities"
+    naics:
+      code: "7139"
+      title: "Other Amusement and Recreation Industries"
     archetype: saas
     why: >-
       a membership base joins, renews and lapses exactly as a subscription
@@ -103,18 +135,28 @@ sectors:
   - id: ecommerce
     label: E-commerce or D2C
     aliases: [ecommerce, e-commerce, online store, d2c, dtc, webshop]
-    nace: {section: G, section_title: "Wholesale and retail trade; repair of motor vehicles and motorcycles",
-           division: "47", division_title: "Retail trade, except of motor vehicles and motorcycles"}
-    naics: {code: "4541", title: "Electronic Shopping and Mail-Order Houses"}
+    nace:
+      section: "G"
+      section_title: "Wholesale and retail trade; repair of motor vehicles and motorcycles"
+      division: "47"
+      division_title: "Retail trade, except of motor vehicles and motorcycles"
+    naics:
+      code: "4541"
+      title: "Electronic Shopping and Mail-Order Houses"
     archetype: ecommerce
     packs: [ecommerce]
 
   - id: retail
     label: Retail (physical)
     aliases: [retail, shop, store, high street, chain]
-    nace: {section: G, section_title: "Wholesale and retail trade; repair of motor vehicles and motorcycles",
-           division: "47", division_title: "Retail trade, except of motor vehicles and motorcycles"}
-    naics: {code: "44-45", title: "Retail Trade"}
+    nace:
+      section: "G"
+      section_title: "Wholesale and retail trade; repair of motor vehicles and motorcycles"
+      division: "47"
+      division_title: "Retail trade, except of motor vehicles and motorcycles"
+    naics:
+      code: "44-45"
+      title: "Retail Trade"
     archetype: ecommerce
     why: >-
       physical retail sells discrete units at a price, which is the
@@ -124,9 +166,14 @@ sectors:
   - id: distribution
     label: Distribution or wholesale
     aliases: [wholesale, distribution, distributor, importer, trade]
-    nace: {section: G, section_title: "Wholesale and retail trade; repair of motor vehicles and motorcycles",
-           division: "46", division_title: "Wholesale trade, except of motor vehicles and motorcycles"}
-    naics: {code: "42", title: "Wholesale Trade"}
+    nace:
+      section: "G"
+      section_title: "Wholesale and retail trade; repair of motor vehicles and motorcycles"
+      division: "46"
+      division_title: "Wholesale trade, except of motor vehicles and motorcycles"
+    naics:
+      code: "42"
+      title: "Wholesale Trade"
     archetype: ecommerce
     why: >-
       distribution is transactional at a lower margin and a higher volume
@@ -135,9 +182,14 @@ sectors:
   - id: manufacturing
     label: Manufacturing
     aliases: [manufacturing, factory, industrial, production, plant]
-    nace: {section: C, section_title: Manufacturing,
-           division: "25", division_title: "Manufacture of fabricated metal products, except machinery and equipment"}
-    naics: {code: "31-33", title: "Manufacturing"}
+    nace:
+      section: "C"
+      section_title: "Manufacturing"
+      division: "25"
+      division_title: "Manufacture of fabricated metal products, except machinery and equipment"
+    naics:
+      code: "31-33"
+      title: "Manufacturing"
     archetype: ecommerce
     why: >-
       units shipped at a price is transactional; what is missing is the
@@ -147,9 +199,14 @@ sectors:
   - id: food_production
     label: Food and beverage production
     aliases: [food production, beverage, brewery, bakery, fmcg, cpg]
-    nace: {section: C, section_title: Manufacturing,
-           division: "10", division_title: "Manufacture of food products"}
-    naics: {code: "311", title: "Food Manufacturing"}
+    nace:
+      section: "C"
+      section_title: "Manufacturing"
+      division: "10"
+      division_title: "Manufacture of food products"
+    naics:
+      code: "311"
+      title: "Food Manufacturing"
     archetype: ecommerce
     why: >-
       cases shipped at a price is transactional; yield, shelf life and
@@ -159,9 +216,14 @@ sectors:
   - id: logistics
     label: Logistics and transport
     aliases: [logistics, transport, haulage, freight, courier, shipping]
-    nace: {section: H, section_title: Transportation and storage,
-           division: "49", division_title: "Land transport and transport via pipelines"}
-    naics: {code: "48-49", title: "Transportation and Warehousing"}
+    nace:
+      section: "H"
+      section_title: "Transportation and storage"
+      division: "49"
+      division_title: "Land transport and transport via pipelines"
+    naics:
+      code: "48-49"
+      title: "Transportation and Warehousing"
     archetype: ecommerce
     why: shipments priced per movement behave like orders
     packs: [general]
@@ -169,9 +231,14 @@ sectors:
   - id: hospitality
     label: Hotels and accommodation
     aliases: [hotel, accommodation, hospitality, guesthouse, resort]
-    nace: {section: I, section_title: Accommodation and food service activities,
-           division: "55", division_title: "Accommodation"}
-    naics: {code: "721", title: "Accommodation"}
+    nace:
+      section: "I"
+      section_title: "Accommodation and food service activities"
+      division: "55"
+      division_title: "Accommodation"
+    naics:
+      code: "721"
+      title: "Accommodation"
     archetype: ecommerce
     why: >-
       room-nights behave like orders with a strong seasonal profile;
@@ -181,9 +248,14 @@ sectors:
   - id: food_service
     label: Restaurants and food service
     aliases: [restaurant, cafe, food service, catering, bar, takeaway]
-    nace: {section: I, section_title: Accommodation and food service activities,
-           division: "56", division_title: "Food and beverage service activities"}
-    naics: {code: "722", title: "Food Services and Drinking Places"}
+    nace:
+      section: "I"
+      section_title: "Accommodation and food service activities"
+      division: "56"
+      division_title: "Food and beverage service activities"
+    naics:
+      code: "722"
+      title: "Food Services and Drinking Places"
     archetype: ecommerce
     why: covers behave like orders with a strong weekly and seasonal profile
     packs: [general]
@@ -191,9 +263,14 @@ sectors:
   - id: healthcare
     label: Healthcare services
     aliases: [healthcare, clinic, hospital, dental, medical, care]
-    nace: {section: Q, section_title: Human health and social work activities,
-           division: "86", division_title: "Human health activities"}
-    naics: {code: "621", title: "Ambulatory Health Care Services"}
+    nace:
+      section: "Q"
+      section_title: "Human health and social work activities"
+      division: "86"
+      division_title: "Human health activities"
+    naics:
+      code: "621"
+      title: "Ambulatory Health Care Services"
     archetype: ecommerce
     why: >-
       episodes of care behave like orders; case mix and payer mix are not
@@ -203,9 +280,14 @@ sectors:
   - id: education
     label: Education and training
     aliases: [education, school, training, courses, academy, edtech]
-    nace: {section: P, section_title: Education,
-           division: "85", division_title: "Education"}
-    naics: {code: "61", title: "Educational Services"}
+    nace:
+      section: "P"
+      section_title: "Education"
+      division: "85"
+      division_title: "Education"
+    naics:
+      code: "61"
+      title: "Educational Services"
     archetype: ecommerce
     why: >-
       enrolments behave like orders; cohort progression and completion are
@@ -215,9 +297,14 @@ sectors:
   - id: real_estate
     label: Real estate and property
     aliases: [real estate, property, lettings, estate agent, landlord]
-    nace: {section: L, section_title: Real estate activities,
-           division: "68", division_title: "Real estate activities"}
-    naics: {code: "53", title: "Real Estate and Rental and Leasing"}
+    nace:
+      section: "L"
+      section_title: "Real estate activities"
+      division: "68"
+      division_title: "Real estate activities"
+    naics:
+      code: "53"
+      title: "Real Estate and Rental and Leasing"
     archetype: ecommerce
     why: >-
       transactions and fees behave like orders; yield, occupancy and asset
@@ -227,9 +314,14 @@ sectors:
   - id: marketplace
     label: Marketplace or platform
     aliases: [marketplace, platform, two-sided, aggregator, listings]
-    nace: {section: J, section_title: Information and communication,
-           division: "63", division_title: "Information service activities"}
-    naics: {code: "4541", title: "Electronic Shopping and Mail-Order Houses"}
+    nace:
+      section: "J"
+      section_title: "Information and communication"
+      division: "63"
+      division_title: "Information service activities"
+    naics:
+      code: "4541"
+      title: "Electronic Shopping and Mail-Order Houses"
     archetype: ecommerce
     why: >-
       the transactional archetype models the demand side; take rate and the
@@ -240,9 +332,14 @@ sectors:
   - id: services
     label: Professional services
     aliases: [consulting, professional services, advisory, accountancy, law]
-    nace: {section: M, section_title: Professional, scientific and technical activities,
-           division: "70", division_title: "Activities of head offices; management consultancy activities"}
-    naics: {code: "5416", title: "Management, Scientific, and Technical Consulting Services"}
+    nace:
+      section: "M"
+      section_title: "Professional, scientific and technical activities"
+      division: "70"
+      division_title: "Activities of head offices; management consultancy activities"
+    naics:
+      code: "5416"
+      title: "Management, Scientific, and Technical Consulting Services"
     archetype: ecommerce
     why: >-
       project fees behave like orders; utilisation, realisation and the
@@ -252,9 +349,14 @@ sectors:
   - id: agency
     label: Marketing and creative agencies
     aliases: [agency, marketing agency, creative, design studio, advertising]
-    nace: {section: M, section_title: Professional, scientific and technical activities,
-           division: "73", division_title: "Advertising and market research"}
-    naics: {code: "5418", title: "Advertising, Public Relations, and Related Services"}
+    nace:
+      section: "M"
+      section_title: "Professional, scientific and technical activities"
+      division: "73"
+      division_title: "Advertising and market research"
+    naics:
+      code: "5418"
+      title: "Advertising, Public Relations, and Related Services"
     archetype: ecommerce
     why: >-
       retainers and project fees behave like orders; utilisation and
@@ -264,9 +366,14 @@ sectors:
   - id: engineering
     label: Architecture and engineering
     aliases: [engineering, architecture, surveying, design engineering, technical]
-    nace: {section: M, section_title: Professional, scientific and technical activities,
-           division: "71", division_title: "Architectural and engineering activities; technical testing and analysis"}
-    naics: {code: "5413", title: "Architectural, Engineering, and Related Services"}
+    nace:
+      section: "M"
+      section_title: "Professional, scientific and technical activities"
+      division: "71"
+      division_title: "Architectural and engineering activities; technical testing and analysis"
+    naics:
+      code: "5413"
+      title: "Architectural, Engineering, and Related Services"
     archetype: ecommerce
     why: >-
       staged fees behave like orders; work in progress and stage completion
@@ -276,9 +383,14 @@ sectors:
   - id: construction
     label: Construction and contracting
     aliases: [construction, building, contractor, civils, trades]
-    nace: {section: F, section_title: Construction,
-           division: "41", division_title: "Construction of buildings"}
-    naics: {code: "23", title: "Construction"}
+    nace:
+      section: "F"
+      section_title: "Construction"
+      division: "41"
+      division_title: "Construction of buildings"
+    naics:
+      code: "23"
+      title: "Construction"
     archetype: ecommerce
     why: >-
       contract values behave like large orders; retentions, variations and

@@ -3,11 +3,21 @@
 Values are the validated reference palette. Both modes were run through
 `validate_palette.js` at the exact slots used here:
 
-    light categorical (#2a78d6,#eb6834,#1baf7a) --pairs all -> ALL PASS
-        WARN: aqua at 2.74:1 vs surface -> relief rule applies, so every chart
-        using slot 3 ships direct labels, and the dashboard always includes the
-        scorecard table view.
+    light categorical (#2a78d6,#eb6834,#1aa674) --pairs all -> ALL PASS
     dark  categorical (#3987e5,#d95926,#199e70) --pairs all -> ALL PASS
+
+This block used to record a WARN — "aqua at 2.74:1 vs surface, relief rule
+applies" — for a slot-3 green that has since been moved. It is the same
+sentence twice: the note below on `series_3` explains the move, and leaving the
+old measurement at the top of the file made the module disagree with itself.
+Measured as shipped, against each mode's own surface:
+
+    light  series_1 4.30   series_2 3.12   series_3 3.03
+    dark   series_1 4.79   series_2 4.48   series_3 5.11
+
+Every one clears the 3:1 graphical floor `design/palette.derive_tokens`
+imposes on a user's brand colour — which was the whole point of moving it, and
+is what `tests/design.py` now pins.
     sequential blue ordinal ramp (5 steps, light)              -> ALL PASS
 
 Categorical use is capped at THREE slots. That is the documented all-pairs-safe

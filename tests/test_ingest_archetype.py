@@ -201,3 +201,54 @@ def test_the_generated_table_map_matches_the_engine():
     assert derived == TABLE_KPIS, (
         "kpi_maker/ingest/table_kpis.py is stale — run "
         "`python tools/gen_table_kpis.py`")
+
+
+# --------------------------------------------------------------------------
+# The fifth place, deferred in 2.3a and closed here
+# --------------------------------------------------------------------------
+
+def test_the_studio_offers_a_retailer_its_own_tables(tmp_path, monkeypatch):
+    """`GET /api/catalog/options` returned `sorted(FACT_SCHEMAS)` — the union.
+
+    2.3a fixed four places that judged an upload against every archetype's
+    tables at once, and named this as the fifth: the Studio's "fill gaps"
+    panel offered a retailer `mrr_movements`, `pipeline`, `product_usage` and
+    `sales_capacity`, four tables their archetype never emits, and ticking one
+    asked the generator to model a subscription book for a shop. It was
+    deferred because the endpoint had no run to resolve an archetype from,
+    which is now a query parameter.
+    """
+    from kpi_maker.api import server
+    from kpi_maker.cli import run_pipeline
+
+    monkeypatch.setattr(server, "RUNS_DIR", tmp_path)
+    profile = load_profile(ROOT / "samples" / "kestrel_retail.json")
+    run_pipeline(profile, tmp_path / "shop", quiet=True)
+
+    scoped = server.catalog_options(run_id="shop")
+    assert scoped["archetype"] == "ecommerce"
+
+    subscription_only = {"mrr_movements", "pipeline", "product_usage",
+                         "sales_capacity"}
+    offered = set(scoped["fact_tables"])
+    assert not (offered & subscription_only), \
+        f"a retailer is offered {sorted(offered & subscription_only)}"
+    # And it gains the four it does have, so this is a correction rather than
+    # a truncation.
+    assert {"orders", "traffic", "inventory", "buyers"} <= offered, sorted(offered)
+
+    # The union is still the honest answer to a caller with no run — the
+    # Builder asks before a run exists.
+    unscoped = server.catalog_options()
+    assert unscoped["archetype"] is None
+    assert subscription_only <= set(unscoped["fact_tables"])
+
+
+def test_an_unreadable_run_falls_back_to_the_union_rather_than_failing(tmp_path,
+                                                                      monkeypatch):
+    """A missing spec is not a reason to 500 the whole catalogue."""
+    from kpi_maker.api import server
+
+    monkeypatch.setattr(server, "RUNS_DIR", tmp_path)
+    got = server.catalog_options(run_id="no-such-run")
+    assert got["archetype"] is None and got["fact_tables"]

@@ -95,6 +95,11 @@ def build(out_dir: Path) -> int:
         write_json(site / "data" / "runs" / run_id / "summary.json",
                    {"run_id": run_id, "status": "done", "summary": summary})
 
+        # Archetype-scoped, so it is per run rather than per site. A retailer's
+        # Studio must not offer to fill `mrr_movements`.
+        write_json(site / "data" / "runs" / run_id / "options.json",
+                   api.catalog_options(run_id=run_id))
+
         tables = api.list_tables(run_id)
         for table in tables:
             table["url"] = relativise(table["url"])

@@ -463,6 +463,8 @@ export interface CatalogOptions {
   exhibits: string[];
   widths: string[];
   fact_tables: string[];
+  /** Whose tables those are, or null when the union was returned. */
+  archetype?: string | null;
   ops: { name: string; label: string; help: string; params: Record<string, unknown> }[];
 }
 
@@ -495,7 +497,12 @@ export type Spec = Record<string, any>;
 
 export const getSpec = (runId: string) => api<Spec>(`/api/runs/${runId}/spec`);
 export const getPlan = (runId: string) => api<PlanReport>(`/api/runs/${runId}/plan`);
-export const getOptions = () => api<CatalogOptions>('/api/catalog/options');
+/** `run_id` scopes the fact tables to that run's archetype. Without it the
+ *  server answers with the union, which is right for a caller that has no run
+ *  and wrong for the Studio — a retailer was being offered `mrr_movements`. */
+export const getOptions = (runId?: string) =>
+  api<CatalogOptions>('/api/catalog/options'
+    + (runId ? `?run_id=${encodeURIComponent(runId)}` : ''));
 export const getAiStatus = () => api<AiStatus>('/api/ai/status');
 
 export const listCatalogKpis = () =>
