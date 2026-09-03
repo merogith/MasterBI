@@ -209,6 +209,14 @@ jobs:
             echo "$name: 9 artifacts, $count charts"
           done
 
+      - name: Every KPI pack passes its own linter
+        # 4.3a's gate. Phase 4 authors ~600 record sheets, and the failures
+        # that matter are invisible in a diff: a driver_parent pointing at a
+        # deleted id, an applies_when naming a renamed field, a `kind: builtin`
+        # with nothing computing it. The last rule is the one that catches a
+        # pack shipping a quality warning its user cannot act on.
+        run: python -m kpi_maker.authoring lint --all --quiet
+
       - name: Every declared sector runs
         # The check that would have caught eight of ten business models raising
         # FileNotFoundError out of the selection engine.

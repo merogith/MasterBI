@@ -14,6 +14,8 @@ from typing import Dict, List
 TABLE_KPIS: Dict[str, List[str]] = {
     "buyers": [
         "active_buyers",
+        "cost_per_new_buyer",
+        "new_buyer_share",
         "repeat_purchase_rate",
     ],
     "headcount": [
@@ -27,12 +29,14 @@ TABLE_KPIS: Dict[str, List[str]] = {
         "workforce_size",
     ],
     "inventory": [
+        "inventory_cover_days",
         "inventory_turns",
         "stockout_days",
     ],
     "marketing": [
         "acquisition_spend",
         "acquisition_spend_growth",
+        "cost_per_new_buyer",
         "cost_per_order",
         "lead_to_mql_rate",
         "marketing_efficiency_ratio",
@@ -57,6 +61,7 @@ TABLE_KPIS: Dict[str, List[str]] = {
         "cash_runway",
         "contribution_margin",
         "conversion_rate",
+        "cost_per_new_buyer",
         "cost_per_order",
         "crpo_growth",
         "customer_count",
@@ -72,6 +77,7 @@ TABLE_KPIS: Dict[str, List[str]] = {
         "gross_margin_pct",
         "grr",
         "headcount_growth",
+        "inventory_cover_days",
         "inventory_turns",
         "lead_to_mql_rate",
         "logo_churn_rate",
@@ -83,6 +89,7 @@ TABLE_KPIS: Dict[str, List[str]] = {
         "mql_to_sql_rate",
         "net_new_arr",
         "net_revenue",
+        "new_buyer_share",
         "nrr",
         "operating_margin",
         "opex_ratio",

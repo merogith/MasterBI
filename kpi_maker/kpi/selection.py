@@ -83,20 +83,31 @@ NORTH_STAR_BY_MODEL = {
 }
 
 
+def pack_files(packs: Optional[List[str]] = None) -> List[Path]:
+    """Which files a pack name actually loads.
+
+    A pack may span several files (`saas.yaml`, `saas_standard.yaml`, ...) so a
+    sector library can grow without any one file becoming unreviewable. That
+    convention is easy to miss from outside: `authoring/lint.py` first reported
+    `saas_standard` as reachable by no sector, because it compared file stems
+    against pack *names* and reimplemented the glob without the `_*` half. One
+    function, so the linter and the loader cannot disagree about what a pack is.
+    """
+    if not packs:
+        return sorted(LIBRARY_DIR.glob("*.yaml"))
+    files: List[Path] = []
+    for pack in packs:
+        matches = sorted(LIBRARY_DIR.glob(f"{pack}.yaml")) + \
+                  sorted(LIBRARY_DIR.glob(f"{pack}_*.yaml"))
+        if not matches:
+            raise FileNotFoundError(f"KPI pack not found: {pack}")
+        files.extend(matches)
+    return files
+
+
 def _load_packs(packs: Optional[List[str]] = None) -> List[KPI]:
     """Load and validate KPI record sheets from the shipped library."""
-    # A pack may span several files (`saas.yaml`, `saas_product.yaml`, ...) so
-    # a sector library can grow without any one file becoming unreviewable.
-    if packs:
-        files: List[Path] = []
-        for pack in packs:
-            matches = sorted(LIBRARY_DIR.glob(f"{pack}.yaml")) + \
-                      sorted(LIBRARY_DIR.glob(f"{pack}_*.yaml"))
-            if not matches:
-                raise FileNotFoundError(f"KPI pack not found: {pack}")
-            files.extend(matches)
-    else:
-        files = sorted(LIBRARY_DIR.glob("*.yaml"))
+    files = pack_files(packs)
 
     # A duplicate id WITHIN one sector's packs is an authoring bug and still
     # raises. Across sectors it is correct and expected: a retailer's gross

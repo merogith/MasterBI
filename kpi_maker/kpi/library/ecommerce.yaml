@@ -561,3 +561,107 @@
   pitfalls: >
     Seasonal retail hires distort the fourth quarter. Compare like months.
   serves_objectives: [margin_expansion]
+
+# Three leading indicators, added in 4.3a because the authoring linter refused
+# the pack: it was 20% leading against the 30% floor, and every retail run
+# carried "only 22% of the selected KPIs are leading" as a warning the user
+# could do nothing about. Selection can only choose what the pack offers.
+#
+# All three are computed from tables the transactional archetype already emits,
+# and none is a reclassification of an existing metric — moving a lagging sheet
+# into the leading column to clear a threshold would be gaming the check rather
+# than fixing what it measures.
+
+- id: new_buyer_share
+  name: New Buyer Share
+  short_name: New Buyers
+  perspective: customer
+  tier: 2
+  timing: leading
+  direction: higher_is_better
+  driver_parent: active_buyers
+  formula: "new buyers / active buyers, monthly"
+  compute:
+    kind: formula
+    expression: "SAFE_DIV(SUM(buyers.new_buyers), SUM(buyers.active_buyers))"
+  unit: pct
+  owner_role: CMO
+  source_systems: [ecommerce_platform]
+  benchmark:
+    p25: 0.22
+    p50: 0.34
+    p75: 0.48
+    source: "Illustrative D2C composite, first-time buyers as a share of actives"
+  alert_bands: {green: 0.30, red: 0.18}
+  interpretation: >
+    Today's new buyers are next year's repeat base, which is why this leads
+    revenue by roughly a purchase cycle. A book that stops taking on new buyers
+    keeps growing for a while on repeat rate alone, and then stops.
+  pitfalls: >
+    A discount-led acquisition push lifts this without improving the business:
+    buyers acquired on a heavy first-order discount repeat at a much lower rate,
+    so read it beside repeat purchase rate rather than on its own.
+  serves_objectives: [growth, retention]
+
+- id: cost_per_new_buyer
+  name: Cost per New Buyer
+  short_name: CAC
+  perspective: financial
+  tier: 2
+  timing: leading
+  direction: lower_is_better
+  driver_parent: marketing_pct_revenue
+  formula: "marketing spend / new buyers, monthly"
+  compute:
+    kind: formula
+    expression: "SAFE_DIV(SUM(marketing.spend), SUM(buyers.new_buyers))"
+  unit: currency
+  owner_role: CMO
+  source_systems: [ads, ecommerce_platform]
+  benchmark:
+    p25: 18.0
+    p50: 32.0
+    p75: 58.0
+    source: "Illustrative D2C composite, blended paid and organic acquisition"
+  alert_bands: {green: 30.0, red: 60.0}
+  interpretation: >
+    Acquisition cost turns before margin does: it rises while the P&L still
+    looks healthy, because the spend lands this month and the revenue it buys
+    arrives over the following ones.
+  pitfalls: >
+    Blended across paid and organic, so it falls whenever organic traffic grows
+    and says nothing about whether paid is working. It also charges the whole
+    month's spend to that month's new buyers, which understates cost when
+    acquisition is accelerating and overstates it when it is slowing.
+  serves_objectives: [growth, margin_expansion]
+
+- id: inventory_cover_days
+  name: Inventory Cover
+  short_name: Cover
+  perspective: internal_process
+  tier: 2
+  timing: leading
+  direction: target_band
+  driver_parent: inventory_turns
+  formula: "units on hand / average daily units sold"
+  compute:
+    kind: formula
+    expression: "SAFE_DIV(SUM(inventory.units_on_hand) * 30, SUM(inventory.units_sold))"
+  unit: days
+  owner_role: COO
+  source_systems: [erp]
+  benchmark:
+    p25: 32.0
+    p50: 48.0
+    p75: 74.0
+    source: "Illustrative multi-category retail composite"
+  alert_bands: {green: 45.0, red: 90.0}
+  interpretation: >
+    How long the shelf lasts at the current rate of sale, which is the earliest
+    warning of both failure modes: cover falling predicts the stockouts that
+    cost sales, cover rising predicts the markdowns that cost margin.
+  pitfalls: >
+    An average across categories hides both. A business can hold ninety days of
+    slow lines and six of its bestsellers and show a comfortable blended figure
+    while losing sales every week.
+  serves_objectives: [margin_expansion, efficiency]
