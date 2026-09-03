@@ -98,6 +98,7 @@ SUBSCRIPTION = ("saas",)
 ECOMMERCE = ("ecommerce",)
 PROJECT = ("project",)
 PRODUCTION = ("production",)
+MARKETPLACE = ("marketplace",)
 
 
 def _ok(condition: bool, detail: str = "") -> CheckResult:
@@ -313,6 +314,10 @@ MARGIN_BANDS = {
     "ecommerce": (0.15, 0.80),
     "project": (0.20, 0.75),
     "production": (0.08, 0.65),
+    # On the **take**, not on GMV. See the note in `schemas.py`: a
+    # marketplace that reported GMV as revenue would show a 4% margin and
+    # be twenty times its real size.
+    "marketplace": (0.55, 0.95),
 }
 UNKNOWN_MARGIN_BAND = (0.05, 0.98)
 
@@ -815,6 +820,163 @@ def _oee_band(t, p):
     # and above 95% the losses have been modelled away.
     return _ok(0.25 <= blended <= 0.95,
                f"blended OEE {blended:.1%} is outside a plausible band")
+
+
+# --------------------------------------------------------------------------
+# Marketplace
+# --------------------------------------------------------------------------
+#
+# The plan asked for two — `GMV x take_rate = revenue` and
+# `fills <= min(supply, demand)` — and both are here as written. The second is
+# the more interesting: it is the only identity in this file that is about a
+# *market* rather than about a business, and it is what makes a liquidity
+# problem visible as something other than weak demand.
+
+GMV = ("gmv",)
+LIQUIDITY = ("liquidity",)
+
+
+@check("net revenue = GMV x take rate", Tier.structural, GMV,
+       archetypes=MARKETPLACE)
+def _take(t, p):
+    g = t["gmv"]
+    expected = g["gross_merchandise_value"] * g["take_rate"]
+    if np.allclose(g["net_revenue"], expected, rtol=1e-6, atol=1e-6):
+        return _ok(True)
+    worst = float((g["net_revenue"] - expected).abs().max())
+    return _ok(False, f"off by up to {worst:,.2f}")
+
+
+@check("matches never exceed either side of the market", Tier.structural,
+       LIQUIDITY, archetypes=MARKETPLACE)
+def _fills_within_both_sides(t, p):
+    liq = t["liquidity"]
+    over_supply = int((liq["matches"] > liq["supply_listings"] + 1e-6).sum())
+    over_demand = int((liq["matches"] > liq["demand_requests"] + 1e-6).sum())
+    return _ok(not (over_supply or over_demand),
+               f"{over_supply} month(s) matched more than was listed and "
+               f"{over_demand} more than was asked for — a match needs both "
+               f"sides, and a model where it does not is not a market")
+
+
+@check("match rate is matches over demand", Tier.structural, LIQUIDITY,
+       archetypes=MARKETPLACE)
+def _match_rate_definition(t, p):
+    liq = t["liquidity"]
+    live = liq[liq["demand_requests"] > 0]
+    if live.empty:
+        return CheckResult(True, "no demand", skipped=True)
+    return _ok(np.allclose(live["match_rate"],
+                           live["matches"] / live["demand_requests"],
+                           rtol=1e-6, atol=1e-6),
+               "the match rate and the two counts disagree")
+
+
+@check("matched transactions tie to the GMV lines", Tier.structural,
+       ("liquidity", "gmv"), archetypes=MARKETPLACE)
+def _matches_tie(t, p):
+    matched = t["liquidity"].groupby("month")["matches"].sum()
+    orders = t["gmv"].groupby("month")["orders"].sum()
+    joined = orders.reindex(matched.index).fillna(0.0)
+    return _ok(np.allclose(joined.to_numpy(), matched.to_numpy(),
+                           rtol=1e-6, atol=1e-6),
+               "a match is a transaction, and the two tables disagree on how "
+               "many there were")
+
+
+@check("net revenue ties to the P&L", Tier.structural,
+       ("gmv", "monthly_financials"), archetypes=MARKETPLACE)
+def _net_revenue_ties(t, p):
+    by_month = t["gmv"].groupby("month")["net_revenue"].sum()
+    fin = t["monthly_financials"].set_index("month")["revenue"]
+    joined = by_month.reindex(fin.index).fillna(0.0)
+    return _ok(np.allclose(joined.to_numpy(), fin.to_numpy(), rtol=1e-6, atol=1e-6),
+               "the take and the revenue line disagree. If they are apart by "
+               "roughly the take rate, GMV is being reported as revenue")
+
+
+@check("net revenue never exceeds the value that passed through",
+       Tier.structural, GMV, archetypes=MARKETPLACE)
+def _take_within_gmv(t, p):
+    """The one mistake this archetype's whole design exists to prevent.
+
+    A platform that reports GMV where it means the take is twenty times its real
+    size at a fifth of its real margin, and the two columns sit next to each
+    other. Swap them and this is what fires.
+    """
+    g = t["gmv"]
+    over = int((g["net_revenue"] > g["gross_merchandise_value"] + 1e-6).sum())
+    return _ok(not over,
+               f"{over} row(s) keep more than passed through them — GMV and the "
+               f"take have probably been swapped")
+
+
+@check("a supplier's history is coherent", Tier.structural, ("suppliers",),
+       archetypes=MARKETPLACE)
+def _supplier_history(t, p):
+    """Entity-grain, so it is deliberately *not* compared against the monthly
+    tables.
+
+    The first version of this checked that seller GMV summed to no more than the
+    platform's, and it failed on the first run for a reason worth keeping: the
+    supplier book is `keep_full` — it carries the warm-up, because a seller who
+    joined before the reported window is still the seller trading inside it —
+    while `gmv` is trimmed to the window. Sixty months of one against thirty-six
+    of the other is not a contradiction in the data, it is a comparison that
+    cannot be made. Any identity spanning an entity table and a monthly one has
+    the same problem.
+    """
+    s = t["suppliers"]
+    backwards = int((s["last_active_month"] < s["joined_month"]).sum())
+    idle = s[s["is_active"].astype(bool) & (s["listings"] <= 0)]
+    return _ok(not backwards and idle.empty,
+               f"{backwards} seller(s) last active before they joined, "
+               f"{len(idle)} active with nothing listed")
+
+
+@check("trailing-year take matches profile revenue", Tier.calibration, GMV,
+       archetypes=MARKETPLACE)
+def _take_vs_profile(t, p):
+    target = p.financials.revenue
+    if target <= 0:
+        return CheckResult(True, "no stated revenue", skipped=True)
+    by_month = t["gmv"].groupby("month")["net_revenue"].sum().sort_index()
+    if len(by_month) < 12:
+        return CheckResult(True, "less than a year of GMV", skipped=True)
+    trailing = float(by_month.iloc[-12:].sum())
+    drift = abs(trailing - target) / target
+    return _ok(drift < 0.02,
+               f"trailing-year take {trailing:,.0f} vs profile {target:,.0f} "
+               f"({drift:.1%} drift)")
+
+
+@check("active buyer count matches profile", Tier.calibration, ("customers",),
+       archetypes=MARKETPLACE)
+def _buyers_vs_profile_marketplace(t, p):
+    target = p.market.customer_count
+    if target <= 0:
+        return CheckResult(True, "no stated customer count", skipped=True)
+    from ..datagen.base import calibration_tolerance
+    active = int(t["customers"]["is_active"].sum())
+    drift = abs(active - target) / target
+    gate = calibration_tolerance(target) * 2.0
+    return _ok(drift <= gate,
+               f"{active} active buyers vs profile {target} "
+               f"({drift:.1%} drift, gate {gate:.1%})")
+
+
+@check("take rate is plausible", Tier.calibration, GMV, archetypes=MARKETPLACE)
+def _take_rate_band(t, p):
+    g = t["gmv"]
+    gmv = float(g["gross_merchandise_value"].sum())
+    if gmv <= 0:
+        return CheckResult(True, "no GMV", skipped=True)
+    blended = float(g["net_revenue"].sum()) / gmv
+    # A band, like AOV, utilisation and OEE before it. Nobody states a take rate
+    # in the survey, so it is an outcome: below 1% the platform is not a
+    # business and above 40% it is a retailer pretending to be a platform.
+    return _ok(0.01 <= blended <= 0.40,
+               f"blended take rate {blended:.1%} is outside a plausible band")
 
 
 def growth_note(tables: Dict[str, pd.DataFrame], profile) -> Optional[str]:

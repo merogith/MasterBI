@@ -76,5 +76,18 @@
       "Yield"
     ],
     "watch_for": "Scrap by product family, and how many months hit full schedule"
+  },
+  {
+    "id": "lumen_exchange",
+    "file": "lumen_exchange.json",
+    "title": "Lumen Exchange",
+    "tagline": "Demand it cannot serve",
+    "story": "A €11.5M B2B platform clearing €98M of trade a year at an 11.7% take. Revenue is growing 34% and neither of its two real problems shows in that line: premium listings dried up for eight months while buyers kept asking, and the largest category's sellers have negotiated the commission down almost two points.",
+    "tags": [
+      "Take rate",
+      "Liquidity",
+      "Two-sided"
+    ],
+    "watch_for": "The gap between requests and listings, and take rate by category"
   }
 ]

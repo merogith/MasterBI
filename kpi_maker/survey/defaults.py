@@ -109,6 +109,14 @@ ARCHETYPE_GROSS_MARGIN_BY_STAGE: Dict[str, Dict[str, float]] = {
         "pre_revenue": 0.22, "early": 0.26, "growth": 0.30,
         "established": 0.34, "mature": 0.36, "turnaround": 0.27,
     },
+    # A platform, on the **take** rather than on GMV — see the note in
+    # `contract/schemas.py`. Cost of sales is payment processing, fraud and
+    # transaction support, so the margin is closer to software's than to
+    # retail's even though the goods passing through are somebody else's.
+    "marketplace": {
+        "pre_revenue": 0.62, "early": 0.68, "growth": 0.73,
+        "established": 0.77, "mature": 0.79, "turnaround": 0.70,
+    },
 }
 
 ARCHETYPE_OPEX_BY_STAGE: Dict[str, Dict[str, Dict[str, float]]] = {
@@ -142,6 +150,17 @@ ARCHETYPE_OPEX_BY_STAGE: Dict[str, Dict[str, Dict[str, float]]] = {
         "established":  {"sales": 0.065, "marketing": 0.030, "rnd": 0.040, "ga": 0.085},
         "mature":       {"sales": 0.060, "marketing": 0.025, "rnd": 0.035, "ga": 0.080},
         "turnaround":   {"sales": 0.060, "marketing": 0.025, "rnd": 0.035, "ga": 0.090},
+    },
+    # A platform buys demand and recruits supply, so marketing is the largest
+    # line by some distance and stays large — two-sided acquisition does not
+    # stop when one side is solved.
+    "marketplace": {
+        "pre_revenue":  {"sales": 0.140, "marketing": 0.360, "rnd": 0.240, "ga": 0.140},
+        "early":        {"sales": 0.130, "marketing": 0.300, "rnd": 0.210, "ga": 0.120},
+        "growth":       {"sales": 0.120, "marketing": 0.280, "rnd": 0.180, "ga": 0.110},
+        "established":  {"sales": 0.110, "marketing": 0.240, "rnd": 0.160, "ga": 0.100},
+        "mature":       {"sales": 0.100, "marketing": 0.210, "rnd": 0.140, "ga": 0.090},
+        "turnaround":   {"sales": 0.100, "marketing": 0.230, "rnd": 0.140, "ga": 0.110},
     },
 }
 

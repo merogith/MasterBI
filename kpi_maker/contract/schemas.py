@@ -470,6 +470,80 @@ PRODUCTION_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
 
 
 # --------------------------------------------------------------------------
+# Marketplace
+# --------------------------------------------------------------------------
+#
+# A business that matches two sides and takes a cut of what passes between
+# them. Everything else in this file describes one side of a transaction; this
+# is the only archetype where the *supply* is a book of its own, and that is the
+# whole difference — a marketplace fails from the seller side far more often
+# than from the buyer side, and no table in the transactional archetype can say
+# so.
+#
+# **Which number is revenue, stated once here so nothing has to guess.**
+# `monthly_financials.revenue` is the **take** — net revenue, what the platform
+# keeps — and GMV is a separate and much larger number in its own table. That
+# is the agent treatment ASC 606 requires of anyone who never owns the goods,
+# and getting it the other way round would report a business twenty times its
+# real size at a fifth of its real margin. Every identity below reads net
+# revenue for the P&L and GMV only from `gmv`.
+
+MARKETPLACE_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
+
+    "gmv": pa.DataFrameSchema(
+        {
+            "month": MONTH,
+            "category": pa.Column(nullable=False),
+            "orders": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "gross_merchandise_value": _money(ge=NON_NEGATIVE),
+            "take_rate": pa.Column(float, coerce=True,
+                                   checks=pa.Check.in_range(0.0, 1.0)),
+            "net_revenue": _money(ge=NON_NEGATIVE),
+        },
+        strict=False, name="gmv",
+        description=("Month x category. `gross_merchandise_value x take_rate = "
+                     "net_revenue`, and only the last of those three is the "
+                     "platform's revenue."),
+    ),
+
+    "liquidity": pa.DataFrameSchema(
+        {
+            "month": MONTH,
+            "category": pa.Column(nullable=False),
+            "supply_listings": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "demand_requests": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "matches": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "match_rate": pa.Column(float, coerce=True,
+                                    checks=pa.Check.in_range(0.0, 1.0)),
+        },
+        strict=False, name="liquidity",
+        description=("Month x category. A match needs both sides, so `matches` "
+                     "can never exceed either — which is the constraint that "
+                     "makes a marketplace a marketplace."),
+    ),
+
+    "suppliers": pa.DataFrameSchema(
+        {
+            "supplier_id": IDENTIFIER,
+            "category": pa.Column(nullable=False),
+            "joined_month": MONTH,
+            "last_active_month": MONTH,
+            "listings": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "gross_merchandise_value": _money(ge=NON_NEGATIVE),
+            "is_active": pa.Column(bool, coerce=True),
+        },
+        strict=False, unique=["supplier_id"], name="suppliers",
+        description=("One row per seller. No month column — entity grain. The "
+                     "side no other archetype has."),
+    ),
+
+    # The demand side is buyer-shaped, so it reuses the transactional
+    # definition rather than inventing a fifth `customers`.
+    "customers": ECOMMERCE_SCHEMAS["customers"],
+}
+
+
+# --------------------------------------------------------------------------
 # The per-archetype lookup
 # --------------------------------------------------------------------------
 
@@ -478,6 +552,7 @@ SCHEMAS_BY_ARCHETYPE: Dict[str, Dict[str, pa.DataFrameSchema]] = {
     "ecommerce": {**UNIVERSAL_SCHEMAS, **ECOMMERCE_SCHEMAS},
     "project": {**UNIVERSAL_SCHEMAS, **PROJECT_SCHEMAS},
     "production": {**UNIVERSAL_SCHEMAS, **PRODUCTION_SCHEMAS},
+    "marketplace": {**UNIVERSAL_SCHEMAS, **MARKETPLACE_SCHEMAS},
 }
 
 # The best-effort set for callers with no archetype to hand. Ingestion is the

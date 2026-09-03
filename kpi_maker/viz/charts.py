@@ -701,7 +701,8 @@ def aov_and_conversion(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     fig.update_layout(
         hovermode="x unified",
         yaxis2=dict(overlaying="y", side="right", tickformat=".1%",
-                    showgrid=False, tickfont=dict(color=LIGHT["muted"], size=11)),
+                    showgrid=False, automargin=True,
+                    tickfont=dict(color=LIGHT["muted"], size=11)),
     )
     return ChartSpec(
         id="aov_conversion", title="Average order value and conversion rate",
@@ -879,6 +880,7 @@ def backlog_and_book_to_bill(tables: Dict[str, pd.DataFrame]) -> Optional[ChartS
     fig.update_layout(
         hovermode="x unified",
         yaxis2=dict(overlaying="y", side="right", showgrid=False,
+                    automargin=True,
                     tickfont=dict(color=LIGHT["muted"], size=11)),
         shapes=[dict(type="line", xref="paper", x0=0, x1=1, yref="y2",
                      y0=1.0, y1=1.0,
@@ -1105,5 +1107,160 @@ def scrap_by_family(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
         note="Scrapped units cost what they cost and earn nothing, so this is a "
              "gross-margin chart wearing an engineering label. The dashed line "
              "is the company blend.",
+        trace_tokens={0: "series_1"},
+    )
+
+
+# --------------------------------------------------------------------------
+# Marketplace exhibits
+# --------------------------------------------------------------------------
+#
+# The third and last set, for the same reason as the other two: moving a sector
+# onto its own generator correctly removes the transactional exhibits it was
+# borrowing, and an archetype with nothing to look at is one nobody will use.
+
+@chart("gmv_and_take", order=50, takes=("tables",))
+def gmv_and_take(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """The two numbers a platform board reads, and the reason they are two.
+
+    GMV is the market's size and the take is the platform's revenue. Showing
+    only the first flatters; showing only the second hides where the business
+    actually sits. The take rate is on its own axis because it is a rate, and
+    because a platform growing GMV while conceding commission is the failure
+    this pairing exists to expose.
+    """
+    gmv = tables.get("gmv")
+    if gmv is None or gmv.empty:
+        return None
+    grouped = gmv.groupby("month").agg(
+        value=("gross_merchandise_value", "sum"),
+        take=("net_revenue", "sum")).sort_index()
+    rate = grouped["take"] / grouped["value"].replace(0, np.nan)
+    x = _months(grouped.index)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=x, y=grouped["value"].values, name="GMV",
+        marker=dict(color=_rgba(LIGHT["series_1"], 0.35)),
+        hovertemplate="%{x}<br><b>%{customdata}</b><extra>GMV</extra>",
+        customdata=[_money(v) for v in grouped["value"].values],
+    ))
+    fig.add_trace(go.Bar(
+        x=x, y=grouped["take"].values, name="Net revenue",
+        marker=dict(color=LIGHT["series_1"]),
+        hovertemplate="%{x}<br><b>%{customdata}</b><extra>Net revenue</extra>",
+        customdata=[_money(v) for v in grouped["take"].values],
+    ))
+    fig.add_trace(go.Scatter(
+        x=x, y=rate.values, mode="lines", name="Take rate", yaxis="y2",
+        line=dict(color=LIGHT["series_2"], width=2),
+        hovertemplate="%{x}<br><b>%{y:.2%}</b><extra>Take rate</extra>",
+    ))
+    _base_layout(fig, height=360)
+    fig.update_layout(
+        barmode="overlay", hovermode="x unified", showlegend=True,
+        legend=dict(orientation="h", y=1.12, x=0,
+                    font=dict(color=LIGHT["text_secondary"], size=11)),
+        yaxis2=dict(overlaying="y", side="right", tickformat=".1%",
+                    showgrid=False, automargin=True,
+                    tickfont=dict(color=LIGHT["muted"], size=11)),
+    )
+    blended = float(grouped["take"].tail(12).sum()
+                    / max(grouped["value"].tail(12).sum(), 1e-9))
+    return ChartSpec(
+        id="gmv_and_take", title="GMV, net revenue and the take rate",
+        subtitle=f"{blended:.1%} of everything transacted stayed with the "
+                 f"platform over the last twelve months",
+        figure=fig, tab="overview", width="full",
+        note="Only the solid bar is revenue. A platform reporting the outline "
+             "as its top line is describing a business twenty times its size at "
+             "a fifth of its margin.",
+        trace_tokens={0: "series_1", 1: "series_1", 2: "series_2"},
+    )
+
+
+@chart("liquidity_trend", order=51, takes=("tables",))
+def liquidity_trend(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """Both sides of the market and what cleared between them.
+
+    A marketplace fails from the seller side far more often than from the buyer
+    side, and in the revenue line the two are indistinguishable. Here they are
+    not: demand holding up while supply falls away is a recruitment problem, and
+    it is the one thing a platform can still act on when it happens.
+    """
+    liq = tables.get("liquidity")
+    if liq is None or liq.empty:
+        return None
+    grouped = liq.groupby("month").agg(
+        supply=("supply_listings", "sum"), demand=("demand_requests", "sum"),
+        matches=("matches", "sum")).sort_index()
+    x = _months(grouped.index)
+
+    fig = go.Figure()
+    for column, label, token, dash in (
+            ("demand", "Requests", "series_2", "dot"),
+            ("supply", "Listings", "series_3", "dash"),
+            ("matches", "Matched", "series_1", None)):
+        fig.add_trace(go.Scatter(
+            x=x, y=grouped[column].values, mode="lines", name=label,
+            line=dict(color=LIGHT[token], width=2.2 if dash is None else 1.6,
+                      dash=dash) if dash else dict(color=LIGHT[token], width=2.2),
+            hovertemplate="%{x}<br><b>%{y:,.0f}</b><extra>" + label + "</extra>",
+        ))
+    _base_layout(fig, height=360)
+    fig.update_layout(
+        hovermode="x unified", showlegend=True,
+        legend=dict(orientation="h", y=1.12, x=0,
+                    font=dict(color=LIGHT["text_secondary"], size=11)))
+    rate = float(grouped["matches"].tail(12).sum()
+                 / max(grouped["demand"].tail(12).sum(), 1e-9))
+    return ChartSpec(
+        id="liquidity_trend", title="Supply, demand and what cleared",
+        subtitle=f"{rate:.0%} of requests found a match over the last twelve "
+                 f"months",
+        figure=fig, tab="growth", width="full",
+        note="Whichever line is lower is the side the platform is short of. "
+             "Matched can never cross either of them, so the gap to the lower "
+             "line is the market's own friction.",
+        trace_tokens={0: "series_2", 1: "series_3", 2: "series_1"},
+    )
+
+
+@chart("take_by_category", order=52, takes=("tables",))
+def take_by_category(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """Commission by category — what a blended take rate averages away."""
+    gmv = tables.get("gmv")
+    if gmv is None or gmv.empty or "category" not in gmv.columns:
+        return None
+    grouped = gmv.groupby("category").agg(
+        value=("gross_merchandise_value", "sum"), take=("net_revenue", "sum"))
+    grouped = grouped[grouped["value"] > 0]
+    if grouped.empty:
+        return None
+    grouped["rate"] = grouped["take"] / grouped["value"]
+    grouped = grouped.sort_values("rate")
+    labels = [str(name).replace("_", " ") for name in grouped.index]
+    blended = float(grouped["take"].sum() / grouped["value"].sum())
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=grouped["rate"].values, y=labels, orientation="h",
+        marker=dict(color=LIGHT["series_1"]),
+        hovertemplate="%{y}<br><b>%{x:.2%} take</b><extra></extra>",
+    ))
+    _base_layout(fig, height=300)
+    fig.update_layout(
+        xaxis=dict(tickformat=".1%", showgrid=True, gridcolor=LIGHT["grid"]),
+        shapes=[dict(type="line", yref="paper", y0=0, y1=1, xref="x",
+                     x0=blended, x1=blended,
+                     line=dict(color=LIGHT["axis"], width=1, dash="dash"))],
+    )
+    return ChartSpec(
+        id="take_by_category", title="Take rate by category",
+        subtitle=f"Blended {blended:.1%}, and the spread is the negotiating "
+                 f"position",
+        figure=fig, tab="people", width="half",
+        note="A category conceding commission usually has sellers with "
+             "somewhere else to go. The dashed line is the platform blend.",
         trace_tokens={0: "series_1"},
     )

@@ -1,0 +1,130 @@
+{
+  "identity": {
+    "name": "Lumen Exchange",
+    "country": "NL",
+    "currency": "EUR",
+    "fiscal_year_start": "01-01",
+    "language": "en"
+  },
+  "industry": {
+    "taxonomy": "NAICS",
+    "code": "454110",
+    "internal_sector": "marketplace.equipment_and_services",
+    "vertical_tags": [
+      "b2b",
+      "two_sided",
+      "platform"
+    ]
+  },
+  "business_model": {
+    "type": "marketplace",
+    "customer_type": "B2B",
+    "revenue_model": [
+      "commission"
+    ],
+    "sales_motion": "self_serve",
+    "contract_terms": "none",
+    "annual_prepay_share": 0.0,
+    "avg_contract_months": 0
+  },
+  "size": {
+    "headcount_total": 145,
+    "headcount_by_function": {
+      "engineering": 45,
+      "operations": 28,
+      "supply_growth": 20,
+      "demand_marketing": 19,
+      "trust_safety": 17,
+      "ga": 16
+    },
+    "revenue_band": "10-50M",
+    "stage": "growth",
+    "age_years": 7
+  },
+  "market": {
+    "geographies": {
+      "NL": 0.34,
+      "DE": 0.27,
+      "BE": 0.16,
+      "FR": 0.13,
+      "GB": 0.1
+    },
+    "segments": [
+      {
+        "name": "enterprise_buyer",
+        "share": 0.14,
+        "avg_acv": 34000,
+        "logo_churn_annual": 0.19,
+        "expansion_annual": 0.12
+      },
+      {
+        "name": "sme_buyer",
+        "share": 0.51,
+        "avg_acv": 7400,
+        "logo_churn_annual": 0.38,
+        "expansion_annual": 0.05
+      },
+      {
+        "name": "occasional",
+        "share": 0.35,
+        "avg_acv": 1900,
+        "logo_churn_annual": 0.62,
+        "expansion_annual": 0.0
+      }
+    ],
+    "customer_count": 1450,
+    "concentration_top10_pct": 0.11,
+    "seasonality": "low"
+  },
+  "financials": {
+    "revenue": 11500000,
+    "gross_margin_pct": 0.74,
+    "opex_split": {
+      "sales": 0.12,
+      "marketing": 0.29,
+      "rnd": 0.19,
+      "ga": 0.11
+    },
+    "cash": 14200000,
+    "net_debt": 0,
+    "growth_rate_yoy": 0.34
+  },
+  "org_culture": {
+    "data_maturity": "warehouse",
+    "decision_cadence": "weekly",
+    "planning_horizon": "quarterly",
+    "risk_appetite": "aggressive",
+    "kpi_experience": "high"
+  },
+  "intent": {
+    "primary_objective": "growth",
+    "secondary": [
+      "margin_expansion",
+      "retention"
+    ],
+    "horizon_months": 12,
+    "audience": "board"
+  },
+  "data_availability": {
+    "has": [
+      "platform",
+      "payments",
+      "analytics",
+      "gl",
+      "hris",
+      "ads"
+    ],
+    "missing": [
+      "survey",
+      "support_desk"
+    ]
+  },
+  "provenance": {
+    "financials.gross_margin_pct": "sample",
+    "financials.revenue": "sample",
+    "market.segments": "sample",
+    "size.headcount_by_function": "sample"
+  },
+  "seed": 20250806,
+  "history_months": 36
+}

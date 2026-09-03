@@ -303,10 +303,11 @@ sectors:
     naics:
       code: "53"
       title: "Real Estate and Rental and Leasing"
-    archetype: ecommerce
+    archetype: marketplace
     why: >-
-      transactions and fees behave like orders; yield, occupancy and asset
-      values are not simulated
+      an agency earns a fee on a transaction it never owns, which is the
+      marketplace archetype's shape; a landlord's or developer's economics —
+      yield, occupancy and asset values — are not simulated
     packs: [general]
 
   - id: marketplace
@@ -320,10 +321,7 @@ sectors:
     naics:
       code: "4541"
       title: "Electronic Shopping and Mail-Order Houses"
-    archetype: ecommerce
-    why: >-
-      the transactional archetype models the demand side; take rate and the
-      supply side are not simulated
+    archetype: marketplace
     packs: [general]
 
   # ---- project-shaped ---------------------------------------------------
