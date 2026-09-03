@@ -184,9 +184,9 @@ def validate_sheet(kpi: KPI, *, pack: str = "", known_ids: Optional[Set[str]] = 
     if kpi.benchmark is not None and not (kpi.benchmark.source or "").strip():
         add("error", "benchmark", "has a benchmark with no citation")
 
-    if kpi.benchmark is not None and "llustrative" in (kpi.benchmark.source or ""):
+    if kpi.benchmark is not None and _is_a_prior(kpi.benchmark):
         add("info", "benchmark-placeholder",
-            "cites an illustrative composite rather than a published source")
+            "cites an internal prior rather than a published distribution")
 
     if not (kpi.interpretation or "").strip():
         add("warn", "interpretation",
@@ -194,6 +194,21 @@ def validate_sheet(kpi: KPI, *, pack: str = "", known_ids: Optional[Set[str]] = 
             "read it — 3.5 renders that beside the number")
 
     return out
+
+
+def _is_a_prior(benchmark) -> bool:
+    """A band nobody measured, whatever it calls itself.
+
+    Two phrasings now: the record sheets' "Illustrative composite" and 4.4's
+    derived cost-structure bands, which say so at greater length. Counted rather
+    than gated — 4.4 could not reach a published distribution from this
+    environment, and failing a pack over work that is blocked on a network is
+    how an author learns to ignore a linter.
+    """
+    source = (benchmark.source or "")
+    return ("llustrative" in source
+            or "not a published distribution" in source
+            or "internal prior" in (benchmark.vintage or ""))
 
 
 def compiles(kpi: KPI, universe: Iterable[str]) -> Optional[str]:

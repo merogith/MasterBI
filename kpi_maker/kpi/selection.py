@@ -347,6 +347,16 @@ def select(profile: CompanyProfile, extra_packs: Optional[List[str]] = None,
     packs = packs + list(extra_packs or [])
     library, load_notes = _load_with_overrides(packs)
 
+    # Re-band for this company before anything reads a benchmark. Scoring gives
+    # a benchmarked KPI half a point, `metrics/targets.py` resolves against the
+    # quartiles, and `KPI.status` scores a `target_band` metric on the
+    # inter-quartile range — so a band resolved after selection would be a band
+    # the choice of scorecard never saw. See `profile/benchmarks.py` for what
+    # each number is allowed to claim.
+    from ..profile import benchmarks
+
+    library = benchmarks.resolve(library, profile)
+
     pinned = set(overrides.pinned) if overrides is not None else set()
     excluded = set(overrides.excluded) if overrides is not None else set()
 

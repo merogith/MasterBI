@@ -48,6 +48,8 @@ from .base import (
     generator,
     month_range,
     monthly_growth,
+    payroll_budget,
+    people_share,
     segment_financials,
     to_reported,
     trim_warmup,
@@ -456,16 +458,26 @@ def _build_headcount(profile, financials, months, rng) -> pd.DataFrame:
     total = max(profile.size.headcount_total, 1)
     mix = {"engineering": 0.31, "operations": 0.19, "supply_growth": 0.14,
            "demand_marketing": 0.13, "trust_safety": 0.12, "ga": 0.11}
+    # Relative pay per head; the absolute level comes from the P&L. Measured
+    # before that change this generator paid its roster **101% of everything the
+    # company spent** — more wages than it had money.
+    weight = {"engineering": 1.45, "operations": 0.85, "supply_growth": 1.10,
+              "demand_marketing": 1.05, "trust_safety": 0.72, "ga": 1.05}
     revenue = financials["revenue"].to_numpy()
     scale = revenue / max(revenue[-1], 1.0)
+    budget = payroll_budget(financials, people_share("marketplace"))
+    budget.index = list(months)
     rows = []
     for t, month in enumerate(months):
+        weighted = {f: total * sh * (0.55 + 0.45 * scale[t]) * weight[f]
+                    for f, sh in mix.items()}
+        pool = sum(weighted.values()) or 1.0
         for function, share in mix.items():
             fte = max(total * share * (0.55 + 0.45 * scale[t]), 0.0)
             monthly_rate = 0.21 / 12.0
             rows.append({
                 "month": month, "function": function, "fte": round(fte, 1),
-                "cost": fte * float(rng.normal(6400, 320)),
+                "cost": float(budget.loc[month]) * weighted[function] / pool,
                 "leavers": int(rng.poisson(fte * monthly_rate)),
                 "hires": int(rng.poisson(fte * monthly_rate * 1.3)),
             })

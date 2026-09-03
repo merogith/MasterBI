@@ -355,6 +355,38 @@ def yoy_growth(monthly_revenue: pd.Series, report_start: int) -> Optional[float]
     return end / prior - 1.0
 
 
+def payroll_budget(financials: pd.DataFrame, share: float) -> pd.Series:
+    """What the roster is allowed to cost each month, indexed by month.
+
+    **A roster cannot cost more than the company spends**, and four of the five
+    generators let it. Each drew a per-head salary — 5,800 here, 4,200 there,
+    11,000 for an engineer — with nothing tying the total to the P&L, so
+    measured across the samples payroll came out at **88% of total cost for
+    software, 88% for services and 101% for the platform**: no rent, no hosting,
+    no tools, no travel, no professional fees, and in one case more wages than
+    the business had money. `personnel_cost_ratio` divides one of these numbers
+    by the other and was therefore meaningless on three archetypes.
+
+    So the budget is a share of the cost the P&L actually reports, and the share
+    is `profile/benchmarks.PEOPLE_SHARE_OF_COST` — the same number the peer band
+    for that KPI is derived from, stated once with its reasons. Each generator
+    still decides how to spread it across its own functions; what it may not do
+    is invent the total.
+    """
+    return (financials["cogs"] + financials["total_opex"]) * float(share)
+
+
+def people_share(archetype: str) -> float:
+    """The payroll share of total cost for an archetype.
+
+    Imported lazily: `profile` imports the KPI schema, which imports the metrics
+    engine, which imports this module.
+    """
+    from ..profile.benchmarks import PEOPLE_SHARE_OF_COST
+
+    return PEOPLE_SHARE_OF_COST.get(archetype, 0.5)
+
+
 def segment_financials(financials: pd.DataFrame,
                        activity: Dict[str, Tuple[pd.DataFrame, str, bool]],
                        ) -> pd.DataFrame:

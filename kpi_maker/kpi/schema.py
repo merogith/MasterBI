@@ -71,10 +71,23 @@ class Origin(str, Enum):
 
 
 class Benchmark(BaseModel):
+    """A peer band. `p25` is the worst quartile and `p75` the best, whichever
+    direction the metric runs — which is why a cost ratio ships as
+    `p25: 0.48, p75: 0.22` and `vs_benchmark` reads it that way.
+
+    The three fields below `source` exist so a *published* distribution can be
+    cited completely rather than by name alone: how many companies are in it,
+    when it was measured, and where to check. `profile/benchmarks.py` fills them
+    where it knows them and leaves them empty where it does not, which is itself
+    the honest signal — a band with no vintage is a prior, not a measurement.
+    """
     p25: Optional[float] = None
     p50: Optional[float] = None
     p75: Optional[float] = None
     source: str  # mandatory: an uncited benchmark is worse than none
+    n: Optional[int] = None
+    vintage: Optional[str] = None
+    url: Optional[str] = None
 
 
 class AlertBands(BaseModel):

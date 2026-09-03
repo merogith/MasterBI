@@ -39,6 +39,8 @@ from .base import (
     generator,
     month_range,
     monthly_growth,
+    payroll_budget,
+    people_share,
     segment_financials,
     to_reported,
     trim_warmup,
@@ -406,22 +408,41 @@ def _build_inventory(orders, months, rng) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+# What one head costs, relative to the roster's average. The absolute level is
+# not stated here — see `payroll_budget`.
+_PAY_WEIGHT = {"operations": 0.85, "marketing": 1.15, "merchandising": 1.05,
+               "technology": 1.45, "customer_service": 0.70, "ga": 1.10}
+
+
 def _build_headcount(profile, financials, months, rng) -> pd.DataFrame:
-    """Headcount by function, tracking revenue with a lag."""
+    """Headcount by function, tracking revenue with a lag.
+
+    The roster's *cost* is a share of what the P&L says the company spent, not a
+    per-head salary invented here — see `base.payroll_budget` for the four
+    generators that got that wrong and what it did to `personnel_cost_ratio`.
+    Relative pay by function is still modelled, because a technologist and a
+    customer-service adviser do not cost the same and the mix moving is a real
+    story.
+    """
     total = max(profile.size.headcount_total, 1)
     mix = {"operations": 0.34, "marketing": 0.18, "merchandising": 0.16,
            "technology": 0.14, "customer_service": 0.12, "ga": 0.06}
     revenue = financials["revenue"].to_numpy()
     scale = revenue / max(revenue[-1], 1.0)
+    budget = payroll_budget(financials, people_share("ecommerce"))
+    budget.index = list(months)
     rows = []
     for t, month in enumerate(months):
+        weighted = {f: total * sh * (0.55 + 0.45 * scale[t]) * _PAY_WEIGHT[f]
+                    for f, sh in mix.items()}
+        pool = sum(weighted.values()) or 1.0
         for function, share in mix.items():
             fte = max(total * share * (0.55 + 0.45 * scale[t]), 0.0)
             monthly_rate = 0.18 / 12.0
             rows.append({
                 "month": month, "function": function,
                 "fte": round(fte, 1),
-                "cost": fte * float(rng.normal(5800, 300)),
+                "cost": float(budget.loc[month]) * weighted[function] / pool,
                 "leavers": int(rng.poisson(fte * monthly_rate)),
                 "hires": int(rng.poisson(fte * monthly_rate * 1.25)),
             })

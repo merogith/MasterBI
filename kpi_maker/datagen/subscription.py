@@ -33,6 +33,8 @@ from .base import (  # noqa: F401
     calibration_tolerance,
     generator,
     month_range,
+    payroll_budget,
+    people_share,
     segment_financials,
     to_reported,
     trim_warmup,
@@ -412,6 +414,11 @@ def _build_headcount(profile, financials, months, rng) -> pd.DataFrame:
     base_attrition = {"sales": 0.26, "customer_success": 0.20, "marketing": 0.17,
                       "engineering": 0.12, "ga": 0.10}
     rows = []
+    # Relative pay by function. Engineering and sales cost more per head; the
+    # absolute level is solved from the P&L below.
+    _PAY_WEIGHT = {"engineering": 1.38, "sales": 1.19, "marketing": 1.00,
+                   "customer_success": 0.88, "ga": 0.94}
+
     for _, fin in financials.iterrows():
         ratio = (fin["revenue"] / end_revenue) ** 0.8 if end_revenue else 0.0
         for function, end_fte in profile.size.headcount_by_function.items():
@@ -420,11 +427,19 @@ def _build_headcount(profile, financials, months, rng) -> pd.DataFrame:
             rows.append({
                 "month": fin["month"], "function": function, "fte": fte,
                 "leavers": int(rng.poisson(fte * monthly_rate)),
-                # Function-weighted cost: engineering and sales cost more per head.
-                "cost": fte * {"engineering": 11000, "sales": 9500, "marketing": 8000,
-                               "customer_success": 7000, "ga": 7500}.get(function, 8000),
+                # Function-weighted, and the weights are all that is stated: the
+                # roster's total cost comes from what the P&L spent rather than
+                # from a per-head salary. Measured before that change, payroll
+                # was 88% of this company's entire cost base.
+                "cost": fte * _PAY_WEIGHT.get(function, 1.0),
             })
-    return pd.DataFrame(rows)
+    frame = pd.DataFrame(rows)
+    budget = payroll_budget(financials.set_index("month"),
+                            people_share("saas"))
+    weighted = frame.groupby("month")["cost"].transform("sum").replace(0, np.nan)
+    frame["cost"] = (frame["cost"] / weighted
+                     * frame["month"].map(budget)).fillna(0.0)
+    return frame
 
 
 def _build_gtm(profile, rng, months, movements, financials):

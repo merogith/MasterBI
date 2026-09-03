@@ -65,6 +65,8 @@ from .base import (
     generator,
     month_range,
     monthly_growth,
+    payroll_budget,
+    people_share,
     segment_financials,
     to_reported,
     trim_warmup,
@@ -578,26 +580,38 @@ def _build_headcount(profile, timesheets, financials, months, rng) -> pd.DataFra
                    "ga": "ga_cost"}
     opex = financials.set_index("month")
 
+    # The roster's total cost is a share of what the P&L spent, and the split
+    # between delivery and overhead follows the two cost lines. The first
+    # version charged delivery with the *whole* of cost of sales and overhead
+    # with 72% of each opex line, which put payroll at **88% of everything the
+    # firm spent** — no subcontractors, no travel, no software, no premises.
+    # A services firm is people-heavy and it is not that.
+    budget = payroll_budget(financials, people_share("project"))
+    budget.index = list(months)
+    cogs_share = (cogs / (cogs + financials.set_index("month")["total_opex"])
+                  ).fillna(0.5).clip(0.0, 1.0)
+
     rows = []
     for month in months:
         row_standard = float(standard.loc[month].sum())
+        pot = float(budget.loc[month])
+        delivery_pot = pot * float(cogs_share.loc[month])
         for role in delivery_fte.columns:
             fte = float(delivery_fte.loc[month, role])
             if fte <= 0:
                 continue
             share = (float(standard.loc[month, role]) / row_standard
                      if row_standard > 0 else 0.0)
-            rows.append(_person_row(month, role, fte,
-                                    float(cogs.loc[month]) * share, rng))
+            rows.append(_person_row(month, role, fte, delivery_pot * share, rng))
         scale = 0.55 + 0.45 * float(trajectory.loc[month])
+        overhead_pot = pot - delivery_pot
         for function, share in overhead_mix.items():
             fte = overhead_total * share * scale
-            # Most of a back-office line is the people in it; the remainder is
-            # tools, premises and everything else that lands in the same
-            # bucket. Kept below the line so the roster never costs more than
-            # the P&L says the function did.
-            cost = float(opex.loc[month, opex_people[function]]) * 0.72
-            rows.append(_person_row(month, function, fte, cost, rng))
+            line = float(opex.loc[month, opex_people[function]])
+            weight = line / max(float(sum(
+                opex.loc[month, c] for c in opex_people.values())), 1e-9)
+            rows.append(_person_row(month, function, fte,
+                                    overhead_pot * weight, rng))
     return pd.DataFrame(rows)
 
 

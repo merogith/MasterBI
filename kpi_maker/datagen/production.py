@@ -60,6 +60,8 @@ from .base import (
     generator,
     month_range,
     monthly_growth,
+    payroll_budget,
+    people_share,
     segment_financials,
     to_reported,
     trim_warmup,
@@ -551,16 +553,26 @@ def _build_headcount(profile, financials, months, rng) -> pd.DataFrame:
     total = max(profile.size.headcount_total, 1)
     mix = {"production": 0.52, "maintenance": 0.09, "quality": 0.07,
            "supply_chain": 0.11, "engineering": 0.08, "sales": 0.07, "ga": 0.06}
+    # Relative pay per head. The absolute level is not stated here: the roster's
+    # total comes from what the P&L spent — see `base.payroll_budget`.
+    weight = {"production": 0.78, "maintenance": 1.05, "quality": 0.95,
+              "supply_chain": 0.95, "engineering": 1.45, "sales": 1.30,
+              "ga": 1.15}
     revenue = financials["revenue"].to_numpy()
     scale = revenue / max(revenue[-1], 1.0)
+    budget = payroll_budget(financials, people_share("production"))
+    budget.index = list(months)
     rows = []
     for t, month in enumerate(months):
+        weighted = {f: total * sh * (0.60 + 0.40 * scale[t]) * weight[f]
+                    for f, sh in mix.items()}
+        pool = sum(weighted.values()) or 1.0
         for function, share in mix.items():
             fte = max(total * share * (0.60 + 0.40 * scale[t]), 0.0)
             monthly_rate = 0.19 / 12.0        # shop-floor turnover runs higher
             rows.append({
                 "month": month, "function": function, "fte": round(fte, 1),
-                "cost": fte * float(rng.normal(4200, 220)),
+                "cost": float(budget.loc[month]) * weighted[function] / pool,
                 "leavers": int(rng.poisson(fte * monthly_rate)),
                 "hires": int(rng.poisson(fte * monthly_rate * 1.15)),
             })
