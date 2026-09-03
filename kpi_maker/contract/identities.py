@@ -97,6 +97,7 @@ def check(name: str, tier: Tier, requires: tuple = (),
 SUBSCRIPTION = ("saas",)
 ECOMMERCE = ("ecommerce",)
 PROJECT = ("project",)
+PRODUCTION = ("production",)
 
 
 def _ok(condition: bool, detail: str = "") -> CheckResult:
@@ -311,6 +312,7 @@ MARGIN_BANDS = {
     "saas": (0.45, 0.95),
     "ecommerce": (0.15, 0.80),
     "project": (0.20, 0.75),
+    "production": (0.08, 0.65),
 }
 UNKNOWN_MARGIN_BAND = (0.05, 0.98)
 
@@ -635,6 +637,184 @@ def _utilisation_band(t, p):
     return _ok(0.40 <= utilisation <= 0.95,
                f"blended utilisation {utilisation:.1%} is outside a plausible "
                f"professional-services band")
+
+
+# --------------------------------------------------------------------------
+# Production
+# --------------------------------------------------------------------------
+#
+# The plan asked for three: `units x price = revenue`, `output <= capacity`, and
+# `OEE = availability x performance x quality`. All three are here as written,
+# which is the first time that has happened — a plant's arithmetic is genuinely
+# this clean, because every term is a count of something physical.
+#
+# The fourth is the one the plan did not name and a factory could not do
+# without: stock rolls forward. What was made and not shipped is still in the
+# building, and a model where it is not has quietly invented or destroyed goods.
+
+MAKE = ("production",)
+SHIP = ("shipments",)
+
+
+@check("gross revenue = units shipped x unit price", Tier.structural, SHIP,
+       archetypes=PRODUCTION)
+def _units_times_price(t, p):
+    s = t["shipments"]
+    expected = s["units_shipped"] * s["unit_price"]
+    if np.allclose(s["gross_revenue"], expected, rtol=1e-6, atol=1e-6):
+        return _ok(True)
+    worst = float((s["gross_revenue"] - expected).abs().max())
+    return _ok(False, f"off by up to {worst:,.2f}")
+
+
+@check("output never exceeds the capacity that was scheduled", Tier.structural,
+       MAKE, archetypes=PRODUCTION)
+def _output_within_capacity(t, p):
+    m = t["production"]
+    total = m["units_produced"] + m["units_scrapped"]
+    over = int((total > m["capacity_units"] * (1 + 1e-9) + 1e-6).sum())
+    return _ok(not over,
+               f"{over} line-month(s) made more than the line could have made "
+               f"in the hours it was scheduled for")
+
+
+@check("scheduled capacity never exceeds the line's nameplate", Tier.structural,
+       MAKE, archetypes=PRODUCTION)
+def _capacity_within_nameplate(t, p):
+    m = t["production"]
+    over = int((m["capacity_units"] > m["nameplate_units"] * (1 + 1e-9) + 1e-6).sum())
+    return _ok(not over,
+               f"{over} line-month(s) scheduled beyond what the line physically "
+               f"runs — capacity is a ceiling, not a target")
+
+
+@check("OEE = availability x performance x quality", Tier.structural, MAKE,
+       archetypes=PRODUCTION)
+def _oee(t, p):
+    m = t["production"]
+    expected = m["availability"] * m["performance"] * m["quality"]
+    if np.allclose(m["oee"], expected, rtol=1e-9, atol=1e-9):
+        return _ok(True)
+    worst = float((m["oee"] - expected).abs().max())
+    return _ok(False, f"off by up to {worst:.6f} — the whole value of OEE is "
+                      f"that it decomposes, so a total that is not the product "
+                      f"of its three losses is a different number wearing the "
+                      f"same name")
+
+
+@check("runtime never exceeds planned hours", Tier.structural, MAKE,
+       archetypes=PRODUCTION)
+def _runtime_within_plan(t, p):
+    m = t["production"]
+    return _ok((m["runtime_hours"] <= m["planned_hours"] + 1e-6).all(),
+               f"{int((m['runtime_hours'] > m['planned_hours'] + 1e-6).sum())} "
+               f"line-month(s) ran longer than they were scheduled for")
+
+
+@check("quality is good units over everything made", Tier.structural, MAKE,
+       archetypes=PRODUCTION)
+def _quality_definition(t, p):
+    m = t["production"]
+    total = m["units_produced"] + m["units_scrapped"]
+    live = m[total > 0]
+    if live.empty:
+        return CheckResult(True, "no output", skipped=True)
+    made = live["units_produced"] + live["units_scrapped"]
+    return _ok(np.allclose(live["quality"], live["units_produced"] / made,
+                           rtol=1e-6, atol=1e-6),
+               "the quality rate and the scrap count disagree")
+
+
+@check("stock rolls forward", Tier.structural, ("inventory",),
+       archetypes=PRODUCTION)
+def _stock_rollforward(t, p):
+    inv = t["inventory"]
+    expected = (inv["opening_units"] + inv["units_produced"]
+                - inv["units_shipped"])
+    if not np.allclose(inv["closing_units"], expected, rtol=1e-6, atol=1e-6):
+        worst = float((inv["closing_units"] - expected).abs().max())
+        return _ok(False, f"closing stock is off by up to {worst:,.1f} units "
+                          f"from opening + made - shipped")
+    return _ok((inv["closing_units"] >= -1e-6).all(),
+               "stock went negative — more was shipped than was ever made")
+
+
+@check("what was made and what was shipped reconcile across the two tables",
+       Tier.structural, ("production", "inventory", "shipments"),
+       archetypes=PRODUCTION)
+def _made_and_shipped_tie(t, p):
+    made = t["production"].groupby("month")["units_produced"].sum()
+    booked = t["inventory"].groupby("month")["units_produced"].sum()
+    shipped = t["shipments"].groupby("month")["units_shipped"].sum()
+    stocked = t["inventory"].groupby("month")["units_shipped"].sum()
+    for left, right, what in ((made, booked, "made"), (shipped, stocked, "shipped")):
+        joined = right.reindex(left.index).fillna(0.0)
+        if not np.allclose(joined.to_numpy(), left.to_numpy(),
+                           rtol=1e-6, atol=1e-6):
+            return _ok(False, f"the stock ledger and the {what} lines disagree "
+                              f"on units")
+    return _ok(True)
+
+
+@check("shipment revenue ties to the P&L", Tier.structural,
+       ("shipments", "monthly_financials"), archetypes=PRODUCTION)
+def _shipments_tie(t, p):
+    s = t["shipments"]
+    net = s["gross_revenue"] - s["discounts"] - s["returns"]
+    by_month = s.assign(net=net).groupby("month")["net"].sum()
+    fin = t["monthly_financials"].set_index("month")["revenue"]
+    joined = by_month.reindex(fin.index).fillna(0.0)
+    return _ok(np.allclose(joined.to_numpy(), fin.to_numpy(), rtol=1e-6, atol=1e-6),
+               "the shipment lines and the revenue line disagree — one of them "
+               "was changed without the other")
+
+
+@check("trailing-year shipped revenue matches profile revenue", Tier.calibration,
+       SHIP, archetypes=PRODUCTION)
+def _shipped_vs_profile(t, p):
+    target = p.financials.revenue
+    if target <= 0:
+        return CheckResult(True, "no stated revenue", skipped=True)
+    s = t["shipments"]
+    net = s["gross_revenue"] - s["discounts"] - s["returns"]
+    by_month = s.assign(net=net).groupby("month")["net"].sum().sort_index()
+    if len(by_month) < 12:
+        return CheckResult(True, "less than a year of shipments", skipped=True)
+    trailing = float(by_month.iloc[-12:].sum())
+    drift = abs(trailing - target) / target
+    return _ok(drift < 0.02,
+               f"trailing-year shipped revenue {trailing:,.0f} vs profile "
+               f"{target:,.0f} ({drift:.1%} drift)")
+
+
+@check("active customer count matches profile", Tier.calibration, ("customers",),
+       archetypes=PRODUCTION)
+def _accounts_vs_profile(t, p):
+    target = p.market.customer_count
+    if target <= 0:
+        return CheckResult(True, "no stated customer count", skipped=True)
+    from ..datagen.base import calibration_tolerance
+    active = int(t["customers"]["is_active"].sum())
+    drift = abs(active - target) / target
+    gate = calibration_tolerance(target) * 2.0
+    return _ok(drift <= gate,
+               f"{active} active accounts vs profile {target} "
+               f"({drift:.1%} drift, gate {gate:.1%})")
+
+
+@check("OEE is plausible", Tier.calibration, MAKE, archetypes=PRODUCTION)
+def _oee_band(t, p):
+    m = t["production"]
+    weight = m["capacity_units"]
+    if float(weight.sum()) <= 0:
+        return CheckResult(True, "no scheduled capacity", skipped=True)
+    blended = float((m["oee"] * weight).sum() / weight.sum())
+    # A band, like AOV and utilisation before it: nobody states an OEE in the
+    # survey, so this is an outcome. World-class is around 85% and discrete
+    # manufacturing averages near 60%; below 25% the plant would not be open,
+    # and above 95% the losses have been modelled away.
+    return _ok(0.25 <= blended <= 0.95,
+               f"blended OEE {blended:.1%} is outside a plausible band")
 
 
 def growth_note(tables: Dict[str, pd.DataFrame], profile) -> Optional[str]:

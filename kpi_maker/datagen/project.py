@@ -519,12 +519,23 @@ def _build_financials(profile, timesheets, months, rng) -> pd.DataFrame:
     # Working capital is debtors and unbilled work, not stock. A services firm
     # that grows fast funds its clients' payment terms, which is where the cash
     # goes and why a profitable agency can still run out of it.
-    receivables = fin["revenue"] * (DEBTOR_DAYS / 30.0)
+    # Against trailing revenue rather than one month, which is how DSO is
+    # actually computed — a single seasonal month otherwise produces a
+    # working-capital movement larger than the month itself.
+    receivables = (fin["revenue"].rolling(3, min_periods=1).mean()
+                   * (DEBTOR_DAYS / 30.0))
     fin["capex"] = fin["revenue"] * 0.008
     fin["free_cash_flow"] = (fin["ebitda"] - fin["capex"]
                              - receivables.diff().fillna(0.0))
     fin["net_burn"] = -fin["free_cash_flow"]
-    fin["cash"] = profile.financials.cash + fin["free_cash_flow"].cumsum()
+    # Anchored so the LAST month is the balance the profile states, which is
+    # what a user means by "we have this much cash" — `subscription.py` has
+    # always read it that way and the other generators did not, so a stated
+    # balance was silently the one from three years ago. On a plant funding a
+    # growing working-capital base that is not a rounding difference: Orbis
+    # opened its reported window at **-2.2M** against a stated 3.1M.
+    fin["cash"] = fin["free_cash_flow"].cumsum()
+    fin["cash"] += profile.financials.cash - float(fin["cash"].iloc[-1])
     return fin
 
 

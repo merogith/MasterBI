@@ -63,5 +63,18 @@
       "Backlog"
     ],
     "watch_for": "Book-to-bill against the revenue line, and realisation by service line"
+  },
+  {
+    "id": "orbis_works",
+    "file": "orbis_works.json",
+    "title": "Orbis Works",
+    "tagline": "Running out of line, not out of demand",
+    "story": "A €38M precision components maker, 240 people, thirty-four years old. The plant is scheduled to its ceiling in half the months of the last year, so the next order costs a machine rather than a shift — and the premium line has been scrapping two and a half times its normal rate since a material change nobody has connected to the margin.",
+    "tags": [
+      "OEE",
+      "Capacity",
+      "Yield"
+    ],
+    "watch_for": "Scrap by product family, and how many months hit full schedule"
   }
 ]

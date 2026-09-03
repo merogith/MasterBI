@@ -63,6 +63,7 @@ PROFILES: Dict[str, Path] = {
     "saas": ROOT / "samples" / "northwind_saas.json",
     "ecommerce": ROOT / "samples" / "kestrel_retail.json",
     "project": ROOT / "samples" / "halberd_consulting.json",
+    "production": ROOT / "samples" / "orbis_works.json",
 }
 
 

@@ -383,6 +383,93 @@ PROJECT_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
 
 
 # --------------------------------------------------------------------------
+# Production
+# --------------------------------------------------------------------------
+#
+# A business that makes physical things: factories, food and drink, industrial.
+# The transactional archetype gets its revenue line right — units shipped at a
+# price — and misses the two facts a plant is actually run on, which its own
+# taxonomy note said out loud: *"what is missing is the capacity ceiling, not
+# the revenue shape"* and *"yield and line efficiency are not simulated"*.
+#
+# Both are here. Output is bounded by what the line could have made, and OEE
+# decomposes the gap into the three losses a plant manager can act on
+# separately — the line was not running, it ran slowly, or what it made was
+# scrap. A blended "efficiency" number tells you none of that, which is why the
+# three are columns rather than one.
+
+PRODUCTION_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
+
+    "production": pa.DataFrameSchema(
+        {
+            "month": MONTH,
+            "line": pa.Column(nullable=False),
+            "product_family": pa.Column(nullable=False),
+            "nameplate_units": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "capacity_units": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "planned_hours": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "runtime_hours": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "ideal_rate": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "units_produced": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "units_scrapped": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "availability": pa.Column(float, coerce=True,
+                                      checks=pa.Check.in_range(0.0, 1.0)),
+            "performance": pa.Column(float, coerce=True,
+                                     checks=pa.Check.in_range(0.0, 1.0)),
+            "quality": pa.Column(float, coerce=True,
+                                 checks=pa.Check.in_range(0.0, 1.0)),
+            "oee": pa.Column(float, coerce=True,
+                             checks=pa.Check.in_range(0.0, 1.0)),
+        },
+        strict=False, name="production",
+        description=("Month x line x product family. `capacity_units` is what "
+                     "was scheduled, `nameplate_units` what the line could run "
+                     "flat out, and OEE is the product of the three losses."),
+    ),
+
+    "shipments": pa.DataFrameSchema(
+        {
+            "month": MONTH,
+            "product_family": pa.Column(nullable=False),
+            "channel": pa.Column(nullable=False),
+            "units_shipped": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "unit_price": _money(ge=NON_NEGATIVE),
+            "gross_revenue": _money(ge=NON_NEGATIVE),
+            "discounts": _money(ge=NON_NEGATIVE),
+            "returns": _money(ge=NON_NEGATIVE),
+        },
+        strict=False, name="shipments",
+        description=("Month x product family x channel. `units_shipped x "
+                     "unit_price = gross_revenue`, which is the identity the "
+                     "whole archetype hangs off."),
+    ),
+
+    # Same name as the retail table, different columns — see the note on
+    # `customers`. A factory counts what it made and what left the building; a
+    # shop counts what sold and how long it sat.
+    "inventory": pa.DataFrameSchema(
+        {
+            "month": MONTH,
+            "product_family": pa.Column(nullable=False),
+            "opening_units": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "units_produced": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "units_shipped": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "closing_units": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "days_cover": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+        },
+        strict=False, name="inventory",
+        description=("Month x product family, rolled forward: opening plus made "
+                     "minus shipped is closing, and it never goes negative."),
+    ),
+
+    # A manufacturer's customer book is order-shaped — few, large accounts that
+    # place repeat orders — so it reuses the transactional definition rather
+    # than inventing a fourth `customers`.
+    "customers": ECOMMERCE_SCHEMAS["customers"],
+}
+
+
+# --------------------------------------------------------------------------
 # The per-archetype lookup
 # --------------------------------------------------------------------------
 
@@ -390,6 +477,7 @@ SCHEMAS_BY_ARCHETYPE: Dict[str, Dict[str, pa.DataFrameSchema]] = {
     "saas": {**UNIVERSAL_SCHEMAS, **SUBSCRIPTION_SCHEMAS},
     "ecommerce": {**UNIVERSAL_SCHEMAS, **ECOMMERCE_SCHEMAS},
     "project": {**UNIVERSAL_SCHEMAS, **PROJECT_SCHEMAS},
+    "production": {**UNIVERSAL_SCHEMAS, **PRODUCTION_SCHEMAS},
 }
 
 # The best-effort set for callers with no archetype to hand. Ingestion is the

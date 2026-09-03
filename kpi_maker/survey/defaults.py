@@ -103,6 +103,12 @@ ARCHETYPE_GROSS_MARGIN_BY_STAGE: Dict[str, Dict[str, float]] = {
         "pre_revenue": 0.30, "early": 0.34, "growth": 0.38,
         "established": 0.42, "mature": 0.44, "turnaround": 0.35,
     },
+    # Manufacturing: after materials, direct labour and scrap. The lowest of the
+    # four, and the reason a plant's operating margin lives or dies on volume.
+    "production": {
+        "pre_revenue": 0.22, "early": 0.26, "growth": 0.30,
+        "established": 0.34, "mature": 0.36, "turnaround": 0.27,
+    },
 }
 
 ARCHETYPE_OPEX_BY_STAGE: Dict[str, Dict[str, Dict[str, float]]] = {
@@ -125,6 +131,17 @@ ARCHETYPE_OPEX_BY_STAGE: Dict[str, Dict[str, Dict[str, float]]] = {
         "established":  {"sales": 0.100, "marketing": 0.045, "rnd": 0.018, "ga": 0.145},
         "mature":       {"sales": 0.090, "marketing": 0.040, "rnd": 0.015, "ga": 0.135},
         "turnaround":   {"sales": 0.095, "marketing": 0.040, "rnd": 0.015, "ga": 0.145},
+    },
+    # A plant's operating cost is the smallest of the four as a share of
+    # revenue, because most of what it spends is already in cost of sales.
+    # Engineering is real and is not marketing.
+    "production": {
+        "pre_revenue":  {"sales": 0.090, "marketing": 0.050, "rnd": 0.060, "ga": 0.110},
+        "early":        {"sales": 0.080, "marketing": 0.045, "rnd": 0.055, "ga": 0.100},
+        "growth":       {"sales": 0.070, "marketing": 0.035, "rnd": 0.045, "ga": 0.090},
+        "established":  {"sales": 0.065, "marketing": 0.030, "rnd": 0.040, "ga": 0.085},
+        "mature":       {"sales": 0.060, "marketing": 0.025, "rnd": 0.035, "ga": 0.080},
+        "turnaround":   {"sales": 0.060, "marketing": 0.025, "rnd": 0.035, "ga": 0.090},
     },
 }
 

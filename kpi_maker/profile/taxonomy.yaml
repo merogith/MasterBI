@@ -190,10 +190,7 @@ sectors:
     naics:
       code: "31-33"
       title: "Manufacturing"
-    archetype: ecommerce
-    why: >-
-      units shipped at a price is transactional; what is missing is the
-      capacity ceiling, not the revenue shape
+    archetype: production
     packs: [general]
 
   - id: food_production
@@ -207,10 +204,11 @@ sectors:
     naics:
       code: "311"
       title: "Food Manufacturing"
-    archetype: ecommerce
+    archetype: production
     why: >-
-      cases shipped at a price is transactional; yield, shelf life and
-      line efficiency are not simulated
+      yield and line efficiency are modelled by the production archetype;
+      shelf life, short-dated stock and seasonal agricultural input costs
+      are not
     packs: [general]
 
   - id: logistics

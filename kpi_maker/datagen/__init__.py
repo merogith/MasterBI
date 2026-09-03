@@ -6,6 +6,7 @@ line here — the pipeline does not change.
 """
 from . import (
                    ecommerce,  # noqa: F401  (registers "ecommerce")
+                   production,  # noqa: F401  (registers "production")
                    project,  # noqa: F401  (registers "project")
                    subscription,  # noqa: F401  (registers "saas")
 )

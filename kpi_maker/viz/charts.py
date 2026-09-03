@@ -828,6 +828,13 @@ def utilisation_and_realisation(tables: Dict[str, pd.DataFrame]) -> Optional[Cha
     ))
     _base_layout(fig, height=360)
     fig.update_layout(hovermode="x unified", yaxis=dict(tickformat=".0%"))
+    # Three series with no labels is a guessing game — the retention exhibit
+    # already turns the legend on for exactly this reason, and reading the
+    # chart on screen is what said this one needed it too.
+    fig.update_layout(showlegend=True,
+                      legend=dict(orientation="h", y=1.12, x=0,
+                                  font=dict(color=LIGHT["text_secondary"],
+                                            size=11)))
     return ChartSpec(
         id="utilisation_realisation",
         title="Utilisation and realisation",
@@ -935,5 +942,168 @@ def service_line_margin(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
         note="The dashed line is full standard rate. Anything short of it was "
              "given away, and the line that gives away most is rarely the one "
              "with the lowest headline margin.",
+        trace_tokens={0: "series_1"},
+    )
+
+
+# --------------------------------------------------------------------------
+# Production exhibits
+# --------------------------------------------------------------------------
+#
+# Same reasoning as the project set: moving manufacturing and food production
+# off `ecommerce` correctly takes away the four transactional exhibits they were
+# borrowing — a factory was being shown average order value and buyer mix — and
+# an archetype with nothing to look at is one nobody will use. These are the
+# three questions a plant review opens with.
+
+@chart("oee_trend", order=40, takes=("tables",))
+def oee_trend(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """OEE and the three losses it decomposes into.
+
+    Drawn together because the total on its own is not actionable: a plant at
+    75% wants to know whether the line was stopped, slow, or making scrap, and
+    those are three different people's problems. Weighted by scheduled capacity
+    so a big line counts for more than a small one.
+    """
+    make = tables.get("production")
+    if make is None or make.empty:
+        return None
+    weighted = make.assign(w=make["capacity_units"])
+    grouped = weighted.groupby("month").apply(
+        lambda g: pd.Series({
+            part: float((g[part] * g["w"]).sum() / max(g["w"].sum(), 1e-9))
+            for part in ("availability", "performance", "quality", "oee")
+        }), include_groups=False).sort_index()
+    x = _months(grouped.index)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=x, y=grouped["oee"].values, mode="lines", name="OEE",
+        line=dict(color=LIGHT["series_1"], width=2.5),
+        hovertemplate="%{x}<br><b>%{y:.1%}</b><extra>OEE</extra>",
+    ))
+    for part, token, dash in (("availability", "series_2", "dot"),
+                              ("quality", "series_3", "dash")):
+        fig.add_trace(go.Scatter(
+            x=x, y=grouped[part].values, mode="lines", name=part.title(),
+            line=dict(color=LIGHT[token], width=1.6, dash=dash),
+            hovertemplate="%{x}<br><b>%{y:.1%}</b>"
+                          f"<extra>{part.title()}</extra>",
+        ))
+    _base_layout(fig, height=360)
+    fig.update_layout(hovermode="x unified", yaxis=dict(tickformat=".0%"))
+    # Three series with no labels is a guessing game — the retention exhibit
+    # already turns the legend on for exactly this reason, and reading the
+    # chart on screen is what said this one needed it too.
+    fig.update_layout(showlegend=True,
+                      legend=dict(orientation="h", y=1.12, x=0,
+                                  font=dict(color=LIGHT["text_secondary"],
+                                            size=11)))
+    # Performance is deliberately not drawn: MAX_CATEGORICAL_SERIES is three,
+    # and availability and quality are the two that move here. The number is in
+    # the identity and in the workbook for anyone who wants it.
+    return ChartSpec(
+        id="oee_trend", title="Overall equipment effectiveness, and where it goes",
+        subtitle="OEE against the two losses that move it — the line was not "
+                 "running, or what it made was scrap",
+        figure=fig, tab="overview", width="full",
+        note="A total on its own is not actionable. Availability is a "
+             "maintenance conversation and quality is an engineering one, and "
+             "the blended number hides which of the two you are having.",
+        trace_tokens={0: "series_1", 1: "series_2", 2: "series_3"},
+    )
+
+
+@chart("capacity_headroom", order=41, takes=("tables",))
+def capacity_headroom(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """What the plant made against what it could have, month by month."""
+    make = tables.get("production")
+    if make is None or make.empty:
+        return None
+    grouped = make.groupby("month").agg(
+        made=("units_produced", "sum"), scrapped=("units_scrapped", "sum"),
+        scheduled=("capacity_units", "sum"),
+        nameplate=("nameplate_units", "sum")).sort_index()
+    x = _months(grouped.index)
+    output = grouped["made"] + grouped["scrapped"]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=x, y=grouped["nameplate"].values, mode="lines", name="Nameplate",
+        line=dict(color=LIGHT["axis"], width=1, dash="dash"),
+        hovertemplate="%{x}<br><b>%{y:,.0f} units</b><extra>Nameplate</extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=x, y=grouped["scheduled"].values, mode="lines", name="Scheduled",
+        line=dict(color=LIGHT["series_2"], width=2, dash="dot"),
+        hovertemplate="%{x}<br><b>%{y:,.0f} units</b><extra>Scheduled</extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=x, y=output.values, mode="lines", name="Made",
+        line=dict(color=LIGHT["series_1"], width=2),
+        fill="tozeroy", fillcolor=_rgba(LIGHT["series_1"], 0.10),
+        hovertemplate="%{x}<br><b>%{y:,.0f} units</b><extra>Made</extra>",
+    ))
+    _base_layout(fig, height=360)
+    fig.update_layout(hovermode="x unified")
+    # Three series with no labels is a guessing game — the retention exhibit
+    # already turns the legend on for exactly this reason, and reading the
+    # chart on screen is what said this one needed it too.
+    fig.update_layout(showlegend=True,
+                      legend=dict(orientation="h", y=1.12, x=0,
+                                  font=dict(color=LIGHT["text_secondary"],
+                                            size=11)))
+    headroom = 1.0 - float(grouped["scheduled"].tail(12).sum()
+                           / max(grouped["nameplate"].tail(12).sum(), 1e-9))
+    return ChartSpec(
+        id="capacity_headroom", title="Output against the ceiling",
+        subtitle=f"{headroom:.0%} of nameplate capacity unscheduled over the "
+                 f"last twelve months",
+        figure=fig, tab="growth", width="full",
+        note="The gap between made and scheduled is OEE. The gap between "
+             "scheduled and nameplate is how much more the plant could sell "
+             "before anyone has to buy a machine.",
+        trace_tokens={0: "axis", 1: "series_2", 2: "series_1"},
+    )
+
+
+@chart("scrap_by_family", order=42, takes=("tables",))
+def scrap_by_family(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """Scrap rate by product family — what a blended yield number hides."""
+    make = tables.get("production")
+    if make is None or make.empty or "product_family" not in make.columns:
+        return None
+    grouped = make.groupby("product_family").agg(
+        good=("units_produced", "sum"), scrap=("units_scrapped", "sum"))
+    grouped = grouped[(grouped["good"] + grouped["scrap"]) > 0]
+    if grouped.empty:
+        return None
+    grouped["rate"] = grouped["scrap"] / (grouped["good"] + grouped["scrap"])
+    grouped = grouped.sort_values("rate")
+    labels = [str(name).replace("_", " ") for name in grouped.index]
+    blended = float(grouped["scrap"].sum()
+                    / (grouped["good"].sum() + grouped["scrap"].sum()))
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=grouped["rate"].values, y=labels, orientation="h",
+        marker=dict(color=LIGHT["series_1"]),
+        hovertemplate="%{y}<br><b>%{x:.2%} scrapped</b><extra></extra>",
+    ))
+    _base_layout(fig, height=300)
+    fig.update_layout(
+        xaxis=dict(tickformat=".1%", showgrid=True, gridcolor=LIGHT["grid"]),
+        shapes=[dict(type="line", yref="paper", y0=0, y1=1, xref="x",
+                     x0=blended, x1=blended,
+                     line=dict(color=LIGHT["axis"], width=1, dash="dash"))],
+    )
+    worst = labels[-1]
+    return ChartSpec(
+        id="scrap_by_family", title="Scrap rate by product family",
+        subtitle=f"Blended {blended:.1%}, and {worst} is the line carrying it",
+        figure=fig, tab="people", width="half",
+        note="Scrapped units cost what they cost and earn nothing, so this is a "
+             "gross-margin chart wearing an engineering label. The dashed line "
+             "is the company blend.",
         trace_tokens={0: "series_1"},
     )

@@ -1,0 +1,131 @@
+{
+  "identity": {
+    "name": "Orbis Works",
+    "country": "DE",
+    "currency": "EUR",
+    "fiscal_year_start": "01-01",
+    "language": "en"
+  },
+  "industry": {
+    "taxonomy": "NAICS",
+    "code": "332999",
+    "internal_sector": "manufacturing.precision_components",
+    "vertical_tags": [
+      "b2b",
+      "industrial",
+      "components"
+    ]
+  },
+  "business_model": {
+    "type": "manufacturing",
+    "customer_type": "B2B",
+    "revenue_model": [
+      "transactional"
+    ],
+    "sales_motion": "field",
+    "contract_terms": "none",
+    "annual_prepay_share": 0.0,
+    "avg_contract_months": 0
+  },
+  "size": {
+    "headcount_total": 240,
+    "headcount_by_function": {
+      "production": 126,
+      "supply_chain": 26,
+      "maintenance": 21,
+      "engineering": 20,
+      "quality": 17,
+      "sales": 17,
+      "ga": 13
+    },
+    "revenue_band": "10-50M",
+    "stage": "established",
+    "age_years": 34
+  },
+  "market": {
+    "geographies": {
+      "DE": 0.54,
+      "FR": 0.15,
+      "PL": 0.13,
+      "IT": 0.1,
+      "NL": 0.08
+    },
+    "segments": [
+      {
+        "name": "oem",
+        "share": 0.31,
+        "avg_acv": 620000,
+        "logo_churn_annual": 0.08,
+        "expansion_annual": 0.09
+      },
+      {
+        "name": "tier_two",
+        "share": 0.44,
+        "avg_acv": 165000,
+        "logo_churn_annual": 0.16,
+        "expansion_annual": 0.05
+      },
+      {
+        "name": "aftermarket",
+        "share": 0.25,
+        "avg_acv": 48000,
+        "logo_churn_annual": 0.24,
+        "expansion_annual": 0.03
+      }
+    ],
+    "customer_count": 132,
+    "concentration_top10_pct": 0.44,
+    "seasonality": "medium"
+  },
+  "financials": {
+    "revenue": 38000000,
+    "gross_margin_pct": 0.31,
+    "opex_split": {
+      "sales": 0.065,
+      "marketing": 0.03,
+      "rnd": 0.04,
+      "ga": 0.085
+    },
+    "cash": 3100000,
+    "net_debt": 6800000,
+    "growth_rate_yoy": 0.09
+  },
+  "org_culture": {
+    "data_maturity": "bi_tool",
+    "decision_cadence": "weekly",
+    "planning_horizon": "annual",
+    "risk_appetite": "conservative",
+    "kpi_experience": "high"
+  },
+  "intent": {
+    "primary_objective": "margin_expansion",
+    "secondary": [
+      "quality",
+      "cost_reduction"
+    ],
+    "horizon_months": 12,
+    "audience": "board"
+  },
+  "data_availability": {
+    "has": [
+      "erp",
+      "mes",
+      "gl",
+      "hris",
+      "crm"
+    ],
+    "missing": [
+      "survey",
+      "support_desk",
+      "product_analytics"
+    ]
+  },
+  "provenance": {
+    "financials.gross_margin_pct": "sample",
+    "financials.revenue": "sample",
+    "market.segments": "sample",
+    "size.headcount_by_function": "sample"
+  },
+  "seed": 20250806,
+  "history_months": 36
+}
