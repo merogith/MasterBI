@@ -1,0 +1,130 @@
+{
+  "identity": {
+    "name": "Halberd Partners",
+    "country": "GB",
+    "currency": "GBP",
+    "fiscal_year_start": "01-01",
+    "language": "en"
+  },
+  "industry": {
+    "taxonomy": "NAICS",
+    "code": "541611",
+    "internal_sector": "services.technology_consulting",
+    "vertical_tags": [
+      "b2b",
+      "professional_services",
+      "consulting"
+    ]
+  },
+  "business_model": {
+    "type": "services",
+    "customer_type": "B2B",
+    "revenue_model": [
+      "project"
+    ],
+    "sales_motion": "field",
+    "contract_terms": "none",
+    "annual_prepay_share": 0.0,
+    "avg_contract_months": 0
+  },
+  "size": {
+    "headcount_total": 128,
+    "headcount_by_function": {
+      "consultant": 46,
+      "analyst": 31,
+      "manager": 22,
+      "partner": 8,
+      "sales": 8,
+      "ga": 9,
+      "marketing": 4
+    },
+    "revenue_band": "10-50M",
+    "stage": "growth",
+    "age_years": 11
+  },
+  "market": {
+    "geographies": {
+      "GB": 0.71,
+      "IE": 0.09,
+      "NL": 0.11,
+      "DE": 0.09
+    },
+    "segments": [
+      {
+        "name": "enterprise",
+        "share": 0.22,
+        "avg_acv": 320000,
+        "logo_churn_annual": 0.12,
+        "expansion_annual": 0.14
+      },
+      {
+        "name": "mid_market",
+        "share": 0.5,
+        "avg_acv": 95000,
+        "logo_churn_annual": 0.28,
+        "expansion_annual": 0.06
+      },
+      {
+        "name": "public_sector",
+        "share": 0.28,
+        "avg_acv": 42000,
+        "logo_churn_annual": 0.2,
+        "expansion_annual": 0.03
+      }
+    ],
+    "customer_count": 108,
+    "concentration_top10_pct": 0.38,
+    "seasonality": "medium"
+  },
+  "financials": {
+    "revenue": 14000000,
+    "gross_margin_pct": 0.42,
+    "opex_split": {
+      "sales": 0.11,
+      "marketing": 0.04,
+      "rnd": 0.02,
+      "ga": 0.15
+    },
+    "cash": 1900000,
+    "net_debt": 0,
+    "growth_rate_yoy": 0.19
+  },
+  "org_culture": {
+    "data_maturity": "bi_tool",
+    "decision_cadence": "monthly",
+    "planning_horizon": "annual",
+    "risk_appetite": "balanced",
+    "kpi_experience": "high"
+  },
+  "intent": {
+    "primary_objective": "margin_expansion",
+    "secondary": [
+      "growth",
+      "cost_reduction"
+    ],
+    "horizon_months": 12,
+    "audience": "board"
+  },
+  "data_availability": {
+    "has": [
+      "psa",
+      "crm",
+      "gl",
+      "hris",
+      "timesheets"
+    ],
+    "missing": [
+      "survey",
+      "support_desk",
+      "product_analytics"
+    ]
+  },
+  "provenance": {
+    "financials.gross_margin_pct": "sample",
+    "financials.revenue": "sample",
+    "market.segments": "sample",
+    "size.headcount_by_function": "sample"
+  },
+  "seed": 20250806,
+  "history_months": 36
+}

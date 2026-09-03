@@ -62,6 +62,7 @@ TARGET = ROOT / "kpi_maker" / "ingest" / "table_kpis.py"
 PROFILES: Dict[str, Path] = {
     "saas": ROOT / "samples" / "northwind_saas.json",
     "ecommerce": ROOT / "samples" / "kestrel_retail.json",
+    "project": ROOT / "samples" / "halberd_consulting.json",
 }
 
 

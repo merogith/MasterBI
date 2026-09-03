@@ -191,18 +191,29 @@ def build_profile(answers: Dict[str, Any], *, name: Optional[str] = None,
     cadence_answer = _explicit(answers, "cadence")
     cadence = cadence_answer or "monthly"
 
-    opex = dict(D.OPEX_BY_STAGE.get(stage, D.OPEX_BY_STAGE["growth"]))
+    # Both priors branch on the archetype as well as the stage: the tables in
+    # `defaults.py` were measured on subscription software, and applied to a
+    # consultancy they produce a 72% gross margin and a 0.7% EBITDA margin. See
+    # the note there. Resolved through `sectors` rather than off the sector id,
+    # so a sector moving onto its own archetype picks up that archetype's
+    # priors with nothing here to edit.
+    from ..profile import sectors
+
+    archetype = sectors.resolve_archetype(model).value
+    opex = D.opex_for(archetype, stage)
 
     margin_answer = _explicit(answers, "gross_margin")
     if margin_answer is not None:
         gross_margin = D.GROSS_MARGIN_BANDS[margin_answer]
         provenance["financials.gross_margin_pct"] = "user_survey"
     else:
-        gross_margin = D.GROSS_MARGIN_BY_STAGE.get(stage, 0.72)
-        provenance["financials.gross_margin_pct"] = f"benchmark_default:stage={stage}"
+        gross_margin = D.gross_margin_for(archetype, stage)
+        provenance["financials.gross_margin_pct"] = (
+            f"benchmark_default:archetype={archetype},stage={stage}")
 
     cash = revenue / 12.0 * D.CASH_MONTHS_BY_STAGE.get(stage, 6.0)
-    provenance["financials.opex_split"] = f"benchmark_default:stage={stage}"
+    provenance["financials.opex_split"] = (
+        f"benchmark_default:archetype={archetype},stage={stage}")
     provenance["financials.cash"] = f"benchmark_default:stage={stage}"
     provenance["size.headcount_by_function"] = "benchmark_default:saas_function_mix"
 

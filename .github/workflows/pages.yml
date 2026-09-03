@@ -79,7 +79,7 @@ jobs:
           # .nojekyll is deliberately zero bytes — its existence is the signal,
           # so -f rather than -s.
           test -f site/.nojekyll || { echo "missing: .nojekyll"; exit 1; }
-          for id in northwind_saas meridian_early atlas_enterprise kestrel_retail; do
+          for id in northwind_saas meridian_early atlas_enterprise kestrel_retail halberd_consulting; do
             test -s "site/data/runs/$id/summary.json" || { echo "no summary: $id"; exit 1; }
             test -s "site/data/runs/$id/tables.json"  || { echo "no tables: $id";  exit 1; }
             # Without this the Studio 404s for every visitor.

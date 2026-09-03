@@ -65,6 +65,81 @@ GROSS_MARGIN_BY_STAGE: Dict[str, float] = {
     "established": 0.76, "mature": 0.78, "turnaround": 0.70,
 }
 
+# --------------------------------------------------------------------------
+# The same two priors, for the archetypes they were not measured on
+# --------------------------------------------------------------------------
+#
+# Both tables above describe a subscription software business — 72% gross
+# margin and 68% of revenue in operating cost at growth stage is a venture-
+# funded SaaS company, and it was applied to every sector because for a long
+# time there were only two and the second one shipped with its own sample
+# profile rather than through the survey.
+#
+# It stopped being harmless when 4.1 took the sector list to twenty. Measured
+# on the first project-archetype run: a 110-person consultancy on $7.5M came
+# out at a **72% gross margin and a 0.7% EBITDA margin** — a firm that is
+# simultaneously a software vendor and insolvent. Nothing was wrong with the
+# generator; it honours the profile, and the profile was wrong.
+#
+# So the priors branch on the archetype, which is the level the shape of a P&L
+# actually varies at: what a business sells decides its cost of sales, and
+# twenty sector-specific tables would be nineteen invented numbers per column.
+# `saas` is deliberately absent from both — it falls through to the tables
+# above, unchanged, so nothing that ran before this moves.
+#
+# Coarse on purpose, like everything else here. 4.4 replaces them with
+# Damodaran's industry margins, which is a distribution with a citation rather
+# than a band midpoint with a reason.
+
+ARCHETYPE_GROSS_MARGIN_BY_STAGE: Dict[str, Dict[str, float]] = {
+    # Retail and distribution: gross margin is after landed product cost.
+    "ecommerce": {
+        "pre_revenue": 0.34, "early": 0.38, "growth": 0.42,
+        "established": 0.45, "mature": 0.46, "turnaround": 0.38,
+    },
+    # Services: gross margin is after the cost of the people who did the work,
+    # so it is bounded by utilisation and realisation and cannot run away.
+    "project": {
+        "pre_revenue": 0.30, "early": 0.34, "growth": 0.38,
+        "established": 0.42, "mature": 0.44, "turnaround": 0.35,
+    },
+}
+
+ARCHETYPE_OPEX_BY_STAGE: Dict[str, Dict[str, Dict[str, float]]] = {
+    # A retailer's operating cost is marketing and stores, and almost none of
+    # it is research.
+    "ecommerce": {
+        "pre_revenue":  {"sales": 0.10, "marketing": 0.22, "rnd": 0.040, "ga": 0.140},
+        "early":        {"sales": 0.09, "marketing": 0.19, "rnd": 0.035, "ga": 0.125},
+        "growth":       {"sales": 0.08, "marketing": 0.16, "rnd": 0.030, "ga": 0.110},
+        "established":  {"sales": 0.07, "marketing": 0.13, "rnd": 0.025, "ga": 0.100},
+        "mature":       {"sales": 0.06, "marketing": 0.11, "rnd": 0.020, "ga": 0.095},
+        "turnaround":   {"sales": 0.065, "marketing": 0.12, "rnd": 0.020, "ga": 0.105},
+    },
+    # A services firm sells through its senior people and markets through its
+    # reputation, so business development is large and marketing is small.
+    "project": {
+        "pre_revenue":  {"sales": 0.140, "marketing": 0.070, "rnd": 0.030, "ga": 0.200},
+        "early":        {"sales": 0.130, "marketing": 0.060, "rnd": 0.025, "ga": 0.180},
+        "growth":       {"sales": 0.110, "marketing": 0.050, "rnd": 0.020, "ga": 0.160},
+        "established":  {"sales": 0.100, "marketing": 0.045, "rnd": 0.018, "ga": 0.145},
+        "mature":       {"sales": 0.090, "marketing": 0.040, "rnd": 0.015, "ga": 0.135},
+        "turnaround":   {"sales": 0.095, "marketing": 0.040, "rnd": 0.015, "ga": 0.145},
+    },
+}
+
+
+def gross_margin_for(archetype: str, stage: str) -> float:
+    """The gross-margin prior for a company nobody has told us about yet."""
+    table = ARCHETYPE_GROSS_MARGIN_BY_STAGE.get(archetype, GROSS_MARGIN_BY_STAGE)
+    return table.get(stage, table.get("growth", 0.72))
+
+
+def opex_for(archetype: str, stage: str) -> Dict[str, float]:
+    """The operating-cost prior, as shares of revenue."""
+    table = ARCHETYPE_OPEX_BY_STAGE.get(archetype, OPEX_BY_STAGE)
+    return dict(table.get(stage, table["growth"]))
+
 # Cash as a multiple of monthly revenue — a proxy for runway.
 CASH_MONTHS_BY_STAGE: Dict[str, float] = {
     "pre_revenue": 18.0, "early": 12.0, "growth": 6.5,

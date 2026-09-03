@@ -340,10 +340,7 @@ sectors:
     naics:
       code: "5416"
       title: "Management, Scientific, and Technical Consulting Services"
-    archetype: ecommerce
-    why: >-
-      project fees behave like orders; utilisation, realisation and the
-      backlog are not simulated
+    archetype: project
     packs: [general]
 
   - id: agency
@@ -357,10 +354,7 @@ sectors:
     naics:
       code: "5418"
       title: "Advertising, Public Relations, and Related Services"
-    archetype: ecommerce
-    why: >-
-      retainers and project fees behave like orders; utilisation and
-      pass-through media spend are not simulated
+    archetype: project
     packs: [general]
 
   - id: engineering
@@ -374,10 +368,7 @@ sectors:
     naics:
       code: "5413"
       title: "Architectural, Engineering, and Related Services"
-    archetype: ecommerce
-    why: >-
-      staged fees behave like orders; work in progress and stage completion
-      are not simulated
+    archetype: project
     packs: [general]
 
   - id: construction
@@ -391,8 +382,9 @@ sectors:
     naics:
       code: "23"
       title: "Construction"
-    archetype: ecommerce
+    archetype: project
     why: >-
-      contract values behave like large orders; retentions, variations and
-      percentage-of-completion accounting are not simulated
+      contracts are delivered over time against staged completion, which the
+      project archetype models; retentions, variations and materials-heavy
+      cost structures are not simulated
     packs: [general]

@@ -149,16 +149,36 @@ def test_every_sector_runs() -> None:
         check(f"{model}: all four perspectives are represented",
               len(perspectives) == 4, str(sorted(p.value for p in perspectives)))
 
+        # The two halves are asserted separately, because they degrade
+        # separately — which is the entire design of `sectors.py` and was not
+        # what this test said. It split every sector into "exact in both" or
+        # "approximate in both", which held only while no sector was one and
+        # not the other. 4.2 made three: `services`, `agency` and `engineering`
+        # have their own generator archetype and are still on the cross-sector
+        # pack until 4.3b. The old shape reported that as three failures of the
+        # product rather than as one wrong assumption in the test.
+        #
+        # Third time a hardcoded shape has had to be rewritten as the property
+        # it was standing in for — after `len(universal) == 4` in 3.2 and
+        # `len(declared) == 10` in 4.1c.
         warned = "_sector_warning" in kpi_set.rationale
-        if model in exact:
-            check(f"{model}: an exact sector carries no approximation warning",
-                  not warned and spec.archetype_note() is None)
-        else:
-            check(f"{model}: an approximated pack says so", warned)
-            check(f"{model}: an approximated archetype says so",
-                  spec.archetype_note() is not None)
+        exact_packs = sectors.resolve_packs(model).exact
+        exact_archetype = sectors.resolve_archetype(model).exact
+
+        check(f"{model}: the pack warning is present exactly when the pack was "
+              f"approximated", warned is not exact_packs,
+              f"warned={warned} exact_packs={exact_packs}")
+        check(f"{model}: the archetype note is present exactly when the "
+              f"archetype was approximated",
+              (spec.archetype_note() is not None) is not exact_archetype,
+              f"note={spec.archetype_note() is not None} "
+              f"exact_archetype={exact_archetype}")
+        if warned:
             check(f"{model}: the warning names the sector",
                   model in kpi_set.rationale.get("_sector_warning", ""))
+        if model in exact:
+            check(f"{model}: a fully exact sector carries neither",
+                  not warned and spec.archetype_note() is None)
 
 
 # --------------------------------------------------------------------------

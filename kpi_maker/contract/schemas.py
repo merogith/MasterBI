@@ -293,12 +293,103 @@ ECOMMERCE_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
 
 
 # --------------------------------------------------------------------------
+# Project
+# --------------------------------------------------------------------------
+#
+# A firm that sells its people's time against engagements: agencies,
+# consultancies, engineering practices. What it has that neither of the other
+# two archetypes does is a *stock of sold work* — the backlog — and a capacity
+# constraint measured in hours rather than in units or seats. Both are in the
+# tables, because a services firm with no backlog table cannot be asked the one
+# question its board asks first.
+
+PROJECT_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
+
+    "projects": pa.DataFrameSchema(
+        {
+            "project_id": IDENTIFIER,
+            "customer_id": IDENTIFIER,
+            "service_line": pa.Column(nullable=False),
+            "segment": pa.Column(nullable=False),
+            "won_month": MONTH,
+            "start_month": MONTH,
+            "end_month": MONTH,
+            "contract_value": _money(ge=NON_NEGATIVE),
+            "budget_hours": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "actual_hours": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "recognised_revenue": _money(ge=NON_NEGATIVE),
+            "is_active": pa.Column(bool, coerce=True),
+        },
+        strict=False, unique=["project_id"], name="projects",
+        description=("One row per engagement. No month column — entity grain. "
+                     "`budget_hours` against `actual_hours` is the overrun, "
+                     "which is what realisation measures the cost of."),
+    ),
+
+    # Month x service line x role, which is the grain at which a services firm
+    # actually manages itself: a partner-heavy month on a fixed fee is a margin
+    # problem invisible at company level.
+    "timesheets": pa.DataFrameSchema(
+        {
+            "month": MONTH,
+            "service_line": pa.Column(nullable=False),
+            "role": pa.Column(nullable=False),
+            "billable_hours": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "available_hours": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "standard_rate": _money(ge=NON_NEGATIVE),
+            # Recognised fee over hours at the standard rate. Below 1.0 on an
+            # overrunning fixed fee, above it when a job comes in under budget,
+            # so it is bounded generously rather than at one.
+            "realisation": pa.Column(float, coerce=True,
+                                     checks=pa.Check.in_range(0.0, 3.0)),
+            "fee_revenue": _money(),
+        },
+        strict=False, name="timesheets",
+        description=("Month x service line x role. `billable_hours / "
+                     "available_hours` is utilisation; `fee_revenue` is what "
+                     "those hours actually earned."),
+    ),
+
+    "backlog": pa.DataFrameSchema(
+        {
+            "month": MONTH,
+            "opening_backlog": _money(ge=NON_NEGATIVE),
+            "bookings": _money(ge=NON_NEGATIVE),
+            "revenue_recognised": _money(ge=NON_NEGATIVE),
+            "closing_backlog": _money(ge=NON_NEGATIVE),
+        },
+        strict=False, unique=["month"], name="backlog",
+        description=("Month. Sold work not yet delivered, rolled forward. "
+                     "`bookings / revenue_recognised` is book-to-bill."),
+    ),
+
+    # Same name, third shape — see the note on the e-commerce one. A client of
+    # a services firm has engagements and a last active month where a
+    # subscriber has an ACV and a buyer has orders.
+    "customers": pa.DataFrameSchema(
+        {
+            "customer_id": IDENTIFIER,
+            "segment": pa.Column(nullable=False),
+            "acquired_month": MONTH,
+            "last_project_month": MONTH,
+            "projects": pa.Column(float, coerce=True, checks=NON_NEGATIVE),
+            "revenue": _money(),
+            "is_active": pa.Column(bool, coerce=True),
+        },
+        strict=False, unique=["customer_id"], name="customers",
+        description="One row per client. No month column — entity grain.",
+    ),
+}
+
+
+# --------------------------------------------------------------------------
 # The per-archetype lookup
 # --------------------------------------------------------------------------
 
 SCHEMAS_BY_ARCHETYPE: Dict[str, Dict[str, pa.DataFrameSchema]] = {
     "saas": {**UNIVERSAL_SCHEMAS, **SUBSCRIPTION_SCHEMAS},
     "ecommerce": {**UNIVERSAL_SCHEMAS, **ECOMMERCE_SCHEMAS},
+    "project": {**UNIVERSAL_SCHEMAS, **PROJECT_SCHEMAS},
 }
 
 # The best-effort set for callers with no archetype to hand. Ingestion is the

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -236,6 +236,22 @@ def _merge_same_kpi(findings: List[Finding]) -> List[Finding]:
 
 # --------------------------------------------------------------------------
 
+def _target_band(kpi) -> Optional[Tuple[float, float]]:
+    """The cohort range a `target_band` KPI is scored against, or None.
+
+    The same p25/p75 pair `KPI.status` uses, read here rather than recomputed,
+    so a statement about a breach cannot name a range the scoring did not use.
+    """
+    from ..kpi.schema import Direction
+
+    if kpi.direction != Direction.target_band:
+        return None
+    b = kpi.benchmark
+    if b is None or b.p25 is None or b.p75 is None:
+        return None
+    return (min(b.p25, b.p75), max(b.p25, b.p75))
+
+
 def _status_breaches(results: List[MetricResult]) -> List[Finding]:
     out = []
     for r in results:
@@ -252,7 +268,34 @@ def _status_breaches(results: List[MetricResult]) -> List[Finding]:
         direction = "below" if k.direction.value == "higher_is_better" else "above"
         green = k.alert_bands.green if k.alert_bands else None
         red = k.alert_bands.red if k.alert_bands else None
-        if r.status == "red":
+
+        band = _target_band(k)
+        if band is not None:
+            # A `target_band` metric is not scored against alert bands at all —
+            # `KPI.status` judges it against the cohort's inter-quartile range,
+            # and such a metric frequently carries no alert bands to quote. This
+            # branch quoted them anyway, so R&D Intensity shipped as *"stands at
+            # 2.0%, above the green threshold of —, but not yet at the red
+            # threshold of —"*: a sentence with no numbers in it, naming a
+            # comparison that was never made, and with the direction backwards
+            # — the value was below the band, not above it. Found by reading a
+            # real run's findings, which is now the seventh time.
+            low, high = band
+            side = "below" if r.current < low else "above"
+            threshold = low if side == "below" else high
+            edge = _fmt(threshold, k.unit)
+            # At display precision the value and the edge it crossed can round
+            # to the same string, and "stands at 2.0%, below the 2.0%-15.0%
+            # range" reads as a contradiction even though both numbers are
+            # right. Say what is true at the precision the reader can see.
+            if _fmt(r.current, k.unit) == edge:
+                crossed = (f"right at the {'bottom' if side == 'below' else 'top'} "
+                           f"of the {_fmt(low, k.unit)}–{_fmt(high, k.unit)} "
+                           f"range the middle half of its cohort sits in")
+            else:
+                crossed = (f"{side} the {_fmt(low, k.unit)}–{_fmt(high, k.unit)} "
+                           f"range the middle half of its cohort sits in")
+        elif r.status == "red":
             crossed = (
                 f"{direction} the red threshold of {_fmt(red, k.unit)}"
             )

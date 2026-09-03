@@ -96,6 +96,7 @@ def check(name: str, tier: Tier, requires: tuple = (),
 
 SUBSCRIPTION = ("saas",)
 ECOMMERCE = ("ecommerce",)
+PROJECT = ("project",)
 
 
 def _ok(condition: bool, detail: str = "") -> CheckResult:
@@ -296,14 +297,37 @@ def _acv_vs_profile(t, p):
                f"({drift:.1%} drift, gate {gate:.1%})")
 
 
-@check("gross margin within [0.3, 0.95]", Tier.calibration, FIN)
+#: What "a plausible gross margin" means, which is not one number. The check
+#: below asserted [0.30, 0.95] for every business, and that band is a
+#: subscription band: it would have failed a distributor at 18% and a
+#: contractor at 12% as corrupt data. It stayed invisible while there were two
+#: archetypes and the second one shipped its own sample profile.
+#:
+#: Widened rather than deleted, and narrowed where the archetype allows it —
+#: 30% is not a floor for retail and it is far too low a floor for software.
+#: The unknown case is the widest, because an upload nobody has classified is
+#: exactly when this check knows least.
+MARGIN_BANDS = {
+    "saas": (0.45, 0.95),
+    "ecommerce": (0.15, 0.80),
+    "project": (0.20, 0.75),
+}
+UNKNOWN_MARGIN_BAND = (0.05, 0.98)
+
+
+@check("gross margin is plausible for the archetype", Tier.calibration, FIN)
 def _margin_band(t, p):
+    from ..profile import sectors
+
+    archetype = sectors.resolve_archetype(p.business_model.type.value).value
+    low, high = MARGIN_BANDS.get(archetype, UNKNOWN_MARGIN_BAND)
     fin = t["monthly_financials"]
-    inside = fin["gross_margin_pct"].between(0.30, 0.95)
+    inside = fin["gross_margin_pct"].between(low, high)
     if bool(inside.all()):
         return _ok(True)
     worst = fin.loc[~inside, "gross_margin_pct"]
-    return _ok(False, f"{len(worst)} months outside the band "
+    return _ok(False, f"{len(worst)} months outside the {low:.0%}-{high:.0%} "
+                      f"band a {archetype!r} business is held to "
                       f"(min {worst.min():.1%}, max {worst.max():.1%})")
 
 
@@ -453,6 +477,164 @@ def _aov_band(t, p):
     # sizing has come adrift from the spend.
     return _ok(2.0 <= aov <= 5000.0,
                f"average order value {aov:,.2f} is outside a plausible retail band")
+
+
+# --------------------------------------------------------------------------
+# Project
+# --------------------------------------------------------------------------
+#
+# The plan asked for two: `hours x rate = revenue` and `utilisation <= 1`. Both
+# are here, and the first needed a third term before it was true of anything. A
+# services firm does not earn the standard rate — it earns the fee it agreed,
+# over however many hours the job actually took. Realisation is the ratio
+# between those two, and writing the identity as `hours x rate = revenue`
+# without it would either be false on every fixed-fee engagement or would force
+# the generator to pretend no job ever overruns. So realisation is a *derived*
+# column: the generator recognises revenue by percentage of completion and this
+# check asserts the arithmetic closes.
+#
+# The other three are what makes a backlog a backlog rather than a number
+# someone typed: it rolls forward, it never goes negative, and the revenue that
+# leaves it is the revenue in the P&L.
+
+TIME = ("timesheets",)
+
+
+@check("fee revenue = billable hours x standard rate x realisation",
+       Tier.structural, TIME, archetypes=PROJECT)
+def _fee_arithmetic(t, p):
+    ts = t["timesheets"]
+    expected = ts["billable_hours"] * ts["standard_rate"] * ts["realisation"]
+    if np.allclose(ts["fee_revenue"], expected, rtol=1e-6, atol=1e-6):
+        return _ok(True)
+    worst = float((ts["fee_revenue"] - expected).abs().max())
+    return _ok(False, f"off by up to {worst:,.2f} — realisation is derived from "
+                      f"the other three, so a gap means one of them was "
+                      f"rewritten without it")
+
+
+@check("billable hours never exceed available hours", Tier.structural, TIME,
+       archetypes=PROJECT)
+def _utilisation_ceiling(t, p):
+    ts = t["timesheets"]
+    over = int((ts["billable_hours"] > ts["available_hours"] + 1e-6).sum())
+    return _ok(not over,
+               f"{over} row(s) bill more hours than the people were available "
+               f"for, which is a utilisation above 100%")
+
+
+@check("timesheet fee revenue ties to the P&L", Tier.structural,
+       ("timesheets", "monthly_financials"), archetypes=PROJECT)
+def _fees_tie(t, p):
+    fees = t["timesheets"].groupby("month")["fee_revenue"].sum()
+    fin = t["monthly_financials"].set_index("month")["revenue"]
+    joined = fees.reindex(fin.index).fillna(0.0)
+    return _ok(np.allclose(joined.to_numpy(), fin.to_numpy(), rtol=1e-6, atol=1e-6),
+               "the timesheet lines and the revenue line disagree — one of them "
+               "was changed without the other")
+
+
+@check("backlog rolls forward", Tier.structural, ("backlog",), archetypes=PROJECT)
+def _backlog_rollforward(t, p):
+    b = t["backlog"]
+    expected = b["opening_backlog"] + b["bookings"] - b["revenue_recognised"]
+    if np.allclose(b["closing_backlog"], expected, rtol=1e-6, atol=1e-6):
+        return _ok(True)
+    worst = float((b["closing_backlog"] - expected).abs().max())
+    return _ok(False, f"closing backlog is off by up to {worst:,.2f} from "
+                      f"opening + bookings - revenue recognised")
+
+
+@check("backlog never negative", Tier.structural, ("backlog",), archetypes=PROJECT)
+def _backlog_non_negative(t, p):
+    b = t["backlog"]
+    return _ok((b["closing_backlog"] >= -1e-6).all(),
+               "sold work cannot go below zero — more revenue was recognised "
+               "than was ever booked")
+
+
+@check("recognised backlog revenue ties to the P&L", Tier.structural,
+       ("backlog", "monthly_financials"), archetypes=PROJECT)
+def _backlog_ties(t, p):
+    b = t["backlog"].set_index("month")["revenue_recognised"]
+    fin = t["monthly_financials"].set_index("month")["revenue"]
+    joined = b.reindex(fin.index).fillna(0.0)
+    return _ok(np.allclose(joined.to_numpy(), fin.to_numpy(), rtol=1e-6, atol=1e-6),
+               "the backlog movement and the revenue line disagree about what "
+               "was delivered")
+
+
+@check("recognised revenue never exceeds contract value", Tier.structural,
+       ("projects",), archetypes=PROJECT)
+def _recognition_ceiling(t, p):
+    pr = t["projects"]
+    over = pr[pr["recognised_revenue"] > pr["contract_value"] * (1 + 1e-9) + 1e-6]
+    return _ok(over.empty,
+               f"{len(over)} engagement(s) recognise more than they were sold "
+               f"for, which is revenue nobody agreed to pay")
+
+
+@check("a completed engagement has recognised its whole contract value",
+       Tier.structural, ("projects",), archetypes=PROJECT)
+def _completed_fully_recognised(t, p):
+    pr = t["projects"]
+    done = pr[~pr["is_active"].astype(bool)]
+    if done.empty:
+        return CheckResult(True, "no completed engagements", skipped=True)
+    gap = (done["contract_value"] - done["recognised_revenue"]).abs()
+    worst = float(gap.max())
+    return _ok(worst <= max(1e-6, float(done["contract_value"].max()) * 1e-9),
+               f"{int((gap > 1e-6).sum())} closed engagement(s) left revenue "
+               f"unrecognised, worst {worst:,.2f} — percentage of completion "
+               f"has to reach 100% when the work stops")
+
+
+@check("trailing-year fee revenue matches profile revenue", Tier.calibration,
+       TIME, archetypes=PROJECT)
+def _fees_vs_profile(t, p):
+    target = p.financials.revenue
+    if target <= 0:
+        return CheckResult(True, "no stated revenue", skipped=True)
+    by_month = t["timesheets"].groupby("month")["fee_revenue"].sum().sort_index()
+    if len(by_month) < 12:
+        return CheckResult(True, "less than a year of timesheets", skipped=True)
+    trailing = float(by_month.iloc[-12:].sum())
+    drift = abs(trailing - target) / target
+    return _ok(drift < 0.02,
+               f"trailing-year fees {trailing:,.0f} vs profile {target:,.0f} "
+               f"({drift:.1%} drift)")
+
+
+@check("active client count matches profile", Tier.calibration, ("customers",),
+       archetypes=PROJECT)
+def _clients_vs_profile(t, p):
+    target = p.market.customer_count
+    if target <= 0:
+        return CheckResult(True, "no stated customer count", skipped=True)
+    from ..datagen.base import calibration_tolerance
+    active = int(t["customers"]["is_active"].sum())
+    drift = abs(active - target) / target
+    gate = calibration_tolerance(target) * 2.0
+    return _ok(drift <= gate,
+               f"{active} active clients vs profile {target} "
+               f"({drift:.1%} drift, gate {gate:.1%})")
+
+
+@check("blended utilisation is plausible", Tier.calibration, TIME,
+       archetypes=PROJECT)
+def _utilisation_band(t, p):
+    ts = t["timesheets"]
+    available = float(ts["available_hours"].sum())
+    if available <= 0:
+        return CheckResult(True, "no available hours", skipped=True)
+    utilisation = float(ts["billable_hours"].sum()) / available
+    # A band rather than a point, for the same reason as e-commerce's AOV: the
+    # profile states no utilisation, so this is an outcome. What would be wrong
+    # is 20% (a firm that cannot pay its people) or 98% (nobody sells, trains or
+    # takes leave) — either means the hours have come adrift from the roster.
+    return _ok(0.40 <= utilisation <= 0.95,
+               f"blended utilisation {utilisation:.1%} is outside a plausible "
+               f"professional-services band")
 
 
 def growth_note(tables: Dict[str, pd.DataFrame], profile) -> Optional[str]:

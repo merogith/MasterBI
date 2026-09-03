@@ -50,6 +50,10 @@ export function BenchmarkChip({ kpi }: { kpi: Kpi }) {
     above_median: 'above median',
     below_median: 'below median',
     bottom_quartile: 'bottom quartile',
+    // A target_band metric has no better end, so it is scored against the
+    // cohort's middle half rather than against a quartile it could be "top" of.
+    in_band: 'in cohort band',
+    outside_band: 'outside cohort band',
   };
   return (
     <span class={`benchmark bench-${position}`}

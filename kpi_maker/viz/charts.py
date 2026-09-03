@@ -145,9 +145,20 @@ def _base_layout(fig: go.Figure, height: int = 320) -> go.Figure:
         font=dict(family=FONT_STACK, size=12, color=LIGHT["text_secondary"]),
         hoverlabel=dict(font=dict(family=FONT_STACK, size=12), bordercolor=LIGHT["axis"]),
         showlegend=False,
+        # `automargin` belongs here rather than in one renderer, and that is the
+        # bug it fixes. `viz/export.py` set it for the PNGs with a comment
+        # saying the benchmark exhibit "lost the start of every KPI name" —
+        # correct, and applied to exactly one of the two consumers. The
+        # interactive dashboard renders `spec.figure` itself, so on the screen a
+        # user actually looks at, "Position against the peer cohort median"
+        # showed **one character per bar**: %, R, n, y, %, y — the last letter
+        # of each KPI name squeezed into an 8px left margin. Every horizontal
+        # exhibit, every archetype, since the chart was written.
         xaxis=dict(showgrid=False, zeroline=False, linecolor=LIGHT["axis"],
-                   tickcolor=LIGHT["axis"], tickfont=dict(color=LIGHT["muted"], size=11)),
+                   tickcolor=LIGHT["axis"], automargin=True,
+                   tickfont=dict(color=LIGHT["muted"], size=11)),
         yaxis=dict(gridcolor=LIGHT["grid"], zeroline=False, showline=False,
+                   automargin=True,
                    tickfont=dict(color=LIGHT["muted"], size=11)),
     )
     return fig
@@ -521,9 +532,27 @@ def benchmark_position(results: List[MetricResult]) -> Optional[ChartSpec]:
             continue
         if r.current is None or r.kpi.benchmark.p50 == 0:
             continue
-        gap = (r.current - r.kpi.benchmark.p50) / abs(r.kpi.benchmark.p50)
-        if r.kpi.direction.value == "lower_is_better":
-            gap = -gap                      # so positive always means "better"
+        b = r.kpi.benchmark
+        if r.kpi.direction.value == "target_band":
+            # "Positive is better" is the subtitle's promise, and a target_band
+            # metric cannot keep it by distance from the median: being 90% above
+            # the R&D median and 90% below it are both bad, and this drew one of
+            # them as the best bar on the chart. Measured from the *band*
+            # instead — zero inside it, negative by how far outside, whichever
+            # side — so the normalisation the subtitle claims is actually true.
+            if b.p25 is None or b.p75 is None:
+                continue
+            lo, hi = min(b.p25, b.p75), max(b.p25, b.p75)
+            span = (hi - lo) or abs(hi) or 1.0
+            if lo <= r.current <= hi:
+                gap = 0.0
+            else:
+                gap = -abs(lo - r.current if r.current < lo
+                           else r.current - hi) / span
+        else:
+            gap = (r.current - b.p50) / abs(b.p50)
+            if r.kpi.direction.value == "lower_is_better":
+                gap = -gap                  # so positive always means "better"
         rows.append((r.kpi.short_name or r.kpi.name, float(np.clip(gap, -1.5, 1.5))))
     if not rows:
         return None
@@ -751,4 +780,160 @@ def buyer_mix(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
         note="A business growing on new buyers alone is renting its revenue. "
              "The repeat band is the part that does not have to be bought twice.",
         trace_tokens={0: "series_1", 1: "series_2"},
+    )
+
+
+# --------------------------------------------------------------------------
+# Project exhibits
+# --------------------------------------------------------------------------
+#
+# An archetype nobody can look at is an archetype nobody will use. Before these
+# three, a consultancy's dashboard carried *average order value*, *category
+# returns* and *buyer mix* — the transactional exhibits, because those are what
+# the tables it was being simulated with could draw. Moving the four
+# project-shaped sectors onto their own generator removed those four charts and
+# would have left one, so the three questions a services board actually opens
+# with are drawn here instead.
+
+@chart("utilisation_realisation", order=30, takes=("tables",))
+def utilisation_and_realisation(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """The two ratios that decide whether an hour was worth working.
+
+    Together rather than separately, and on one axis because both are
+    percentages of the same hour: utilisation is whether it was sold,
+    realisation is whether it was paid for at the rate it was sold at. A firm
+    can be busy and unprofitable, and only the pair says which.
+    """
+    ts = tables.get("timesheets")
+    if ts is None or ts.empty:
+        return None
+    grouped = ts.assign(
+        standard=ts["billable_hours"] * ts["standard_rate"]).groupby("month").agg(
+        billable=("billable_hours", "sum"), available=("available_hours", "sum"),
+        fee=("fee_revenue", "sum"), standard=("standard", "sum")).sort_index()
+    utilisation = grouped["billable"] / grouped["available"].replace(0, np.nan)
+    realisation = grouped["fee"] / grouped["standard"].replace(0, np.nan)
+    x = _months(grouped.index)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=x, y=utilisation.values, mode="lines", name="Utilisation",
+        line=dict(color=LIGHT["series_1"], width=2),
+        hovertemplate="%{x}<br><b>%{y:.1%}</b><extra>Utilisation</extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=x, y=realisation.values, mode="lines", name="Realisation",
+        line=dict(color=LIGHT["series_2"], width=2, dash="dot"),
+        hovertemplate="%{x}<br><b>%{y:.1%}</b><extra>Realisation</extra>",
+    ))
+    _base_layout(fig, height=360)
+    fig.update_layout(hovermode="x unified", yaxis=dict(tickformat=".0%"))
+    return ChartSpec(
+        id="utilisation_realisation",
+        title="Utilisation and realisation",
+        subtitle="Share of available hours that were billed, and share of "
+                 "standard fee those hours actually earned",
+        figure=fig, tab="overview", width="full",
+        note="Utilisation falling is a sales problem. Realisation falling is a "
+             "delivery or a pricing one, and it does not show in the revenue "
+             "line until the engagement closes.",
+        trace_tokens={0: "series_1", 1: "series_2"},
+    )
+
+
+@chart("backlog_cover", order=31, takes=("tables",))
+def backlog_and_book_to_bill(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """Sold work against work delivered — the leading half of a services P&L."""
+    backlog = tables.get("backlog")
+    if backlog is None or backlog.empty:
+        return None
+    frame = backlog.sort_values("month")
+    x = _months(frame["month"])
+    delivered = frame["revenue_recognised"].replace(0, np.nan)
+    ratio = frame["bookings"] / delivered
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=x, y=frame["closing_backlog"].values, name="Closing backlog",
+        marker=dict(color=LIGHT["series_1"]),
+        hovertemplate="%{x}<br><b>%{customdata}</b><extra>Backlog</extra>",
+        customdata=[_money(v) for v in frame["closing_backlog"].values],
+    ))
+    fig.add_trace(go.Scatter(
+        x=x, y=ratio.values, mode="lines", name="Book-to-bill", yaxis="y2",
+        line=dict(color=LIGHT["series_2"], width=2),
+        hovertemplate="%{x}<br><b>%{y:.2f}x</b><extra>Book-to-bill</extra>",
+    ))
+    _base_layout(fig, height=360)
+    # A second axis for the same reason `aov_conversion` has one: a stock in
+    # currency and a ratio share the story and cannot share a scale. The 1.0
+    # line is the whole point of the ratio, so it is drawn rather than left to
+    # be read off an axis.
+    fig.update_layout(
+        hovermode="x unified",
+        yaxis2=dict(overlaying="y", side="right", showgrid=False,
+                    tickfont=dict(color=LIGHT["muted"], size=11)),
+        shapes=[dict(type="line", xref="paper", x0=0, x1=1, yref="y2",
+                     y0=1.0, y1=1.0,
+                     line=dict(color=LIGHT["axis"], width=1, dash="dash"))],
+    )
+    months_cover = (frame["closing_backlog"].iloc[-1]
+                    / max(frame["revenue_recognised"].tail(12).mean(), 1e-9))
+    return ChartSpec(
+        id="backlog_cover", title="Backlog and book-to-bill",
+        subtitle=f"{months_cover:.1f} months of delivered revenue sitting in "
+                 f"sold work at the end of the period",
+        figure=fig, tab="growth", width="full",
+        note="Below the dashed line the firm is delivering faster than it is "
+             "selling, and the revenue line will follow two quarters later.",
+        trace_tokens={0: "series_1", 1: "series_2"},
+    )
+
+
+@chart("service_line_margin", order=32, takes=("tables",))
+def service_line_margin(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """Fee earned against fee at standard rate, by service line.
+
+    The gap is what each line concedes — through discount, through scope, or
+    through the wrong people doing the work — and a blended realisation number
+    hides which line is conceding it.
+    """
+    ts = tables.get("timesheets")
+    if ts is None or ts.empty or "service_line" not in ts.columns:
+        return None
+    grouped = ts.assign(
+        standard=ts["billable_hours"] * ts["standard_rate"]).groupby(
+        "service_line").agg(fee=("fee_revenue", "sum"),
+                            standard=("standard", "sum"))
+    grouped = grouped[grouped["standard"] > 0]
+    if grouped.empty:
+        return None
+    grouped["realisation"] = grouped["fee"] / grouped["standard"]
+    grouped = grouped.sort_values("realisation")
+    labels = [str(name).replace("_", " ") for name in grouped.index]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=grouped["realisation"].values, y=labels, orientation="h",
+        marker=dict(color=LIGHT["series_1"]),
+        hovertemplate="%{y}<br><b>%{x:.1%} realised</b><extra></extra>",
+    ))
+    _base_layout(fig, height=300)
+    fig.update_layout(
+        xaxis=dict(tickformat=".0%", showgrid=True, gridcolor=LIGHT["grid"]),
+        shapes=[dict(type="line", yref="paper", y0=0, y1=1, xref="x",
+                     x0=1.0, x1=1.0,
+                     line=dict(color=LIGHT["axis"], width=1, dash="dash"))],
+    )
+    worst = labels[0]
+    return ChartSpec(
+        id="service_line_margin",
+        title="Realisation by service line",
+        subtitle=f"Fee earned as a share of fee at standard rate — "
+                 f"{worst} concedes the most",
+        figure=fig, tab="people", width="half",
+        note="The dashed line is full standard rate. Anything short of it was "
+             "given away, and the line that gives away most is rarely the one "
+             "with the lowest headline margin.",
+        trace_tokens={0: "series_1"},
     )

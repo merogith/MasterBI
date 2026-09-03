@@ -6,6 +6,7 @@ line here — the pipeline does not change.
 """
 from . import (
                    ecommerce,  # noqa: F401  (registers "ecommerce")
+                   project,  # noqa: F401  (registers "project")
                    subscription,  # noqa: F401  (registers "saas")
 )
 from .base import GENERATORS, Anomaly, GeneratedData, available, generator  # noqa: F401

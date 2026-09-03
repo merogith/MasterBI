@@ -947,6 +947,10 @@ tbody tr:hover { background: var(--accent-soft); }
 .bench-above_median { color: var(--good); border-color: var(--border); }
 .bench-below_median { color: var(--serious); border-color: var(--border); }
 .bench-bottom_quartile { color: var(--critical); border-color: var(--critical); }
+/* A target_band metric is scored against the cohort's middle half, not against
+   a quartile. Inside it is fine; outside it is a breach in either direction. */
+.bench-in_band { color: var(--good); border-color: var(--border); }
+.bench-outside_band { color: var(--serious); border-color: var(--serious); }
 
 .provenance { margin: 26px 0; border: 1px solid var(--border);
   border-radius: var(--radius-sm); overflow: hidden; }

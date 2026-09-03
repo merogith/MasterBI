@@ -291,11 +291,16 @@ def _exhibit_slides(deck: Deck, kpi_set: KPISet, results: List[MetricResult],
             headline += f", up {growth.current:.0%} year on year"
         fallbacks["arr_trend"] = headline
     benched = [r for r in computed.values() if r.benchmark_position]
+    # `outside_band` belongs here: a target_band metric outside its cohort's
+    # middle half is behind the cohort, even though neither "below median" nor
+    # "bottom quartile" can be said of a metric with no better end.
     behind = [r for r in benched
-              if r.benchmark_position in ("below_median", "bottom_quartile")]
+              if r.benchmark_position in ("below_median", "bottom_quartile",
+                                          "outside_band")]
     if benched:
         fallbacks["benchmark_position"] = (
-            f"{len(behind)} of {len(benched)} benchmarked KPIs trail the cohort median")
+            f"{len(behind)} of {len(benched)} benchmarked KPIs sit behind the "
+            f"cohort")
 
     specs_by_id = {s.id: s for s in specs}
     for spec_id, kpi_id, kicker, owner in EXHIBIT_PLAN:

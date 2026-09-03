@@ -514,10 +514,10 @@
   timing: lagging
   direction: lower_is_better
   driver_parent: workforce_size
-  formula: leavers in the month / total full-time equivalents, annualised
+  formula: leavers over the trailing twelve months / average headcount over the same twelve
   compute:
     kind: formula
-    expression: SAFE_DIV(SUM(headcount.leavers) * 12, SUM(headcount.fte))
+    expression: SAFE_DIV(TTM(SUM(headcount.leavers)), ROLLING(SUM(headcount.fte), 12))
   unit: pct
   owner_role: CHRO
   source_systems: [hr]
@@ -528,11 +528,17 @@
     source: Illustrative all-industry composite — p75 is the GOOD end
   alert_bands: {green: 0.12, red: 0.25}
   interpretation: >
-    Annualised from the monthly leaver count so it can be read against a
-    published annual rate without waiting a year for twelve months of history.
+    Leavers over a rolling year against the average roster over the same year,
+    which is the basis every published attrition rate uses and therefore the
+    only basis this one can be read against.
   pitfalls: >
-    Annualising a single month is noisy in a small team — one leaver from
-    twenty people annualises to 60%. Read the trend, not the point.
+    This was a single month annualised, and its own pitfall note said so — one
+    leaver from twenty people annualises to 60%, and a month with none
+    annualises to zero. On a real run it read **0.0%, top quartile**, because
+    nobody happened to resign in December. A caveat on a record sheet does not
+    reach the reader of a RAG chip, so the definition had to change instead.
+    What is left is a scope question: whether the roster counts contractors and
+    whether a transfer between functions is recorded as a leaver.
   serves_objectives: [quality, cost_reduction]
 
 - id: rnd_intensity

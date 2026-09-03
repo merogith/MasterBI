@@ -235,8 +235,23 @@ class KPI(BaseModel):
         b = self.benchmark
         if value is None or b is None or b.p50 is None:
             return None
-        better_is_up = self.direction == Direction.higher_is_better
         p25, p50, p75 = b.p25, b.p50, b.p75
+
+        # A `target_band` metric has no better end, so neither "top quartile"
+        # nor "bottom quartile" is a thing it can be. This fell through to the
+        # `lower_is_better` branch below and reported R&D intensity of 2.0% as
+        # **top quartile** — the product congratulating a firm for spending
+        # almost nothing on research, on the one metric whose own definition
+        # says both extremes are bad, and then printing it as "a defensible
+        # strength to build the equity story on". Same category error `status`
+        # avoids by scoring these against the inter-quartile range.
+        if self.direction == Direction.target_band:
+            if p25 is None or p75 is None:
+                return None
+            lo, hi = min(p25, p75), max(p25, p75)
+            return "in_band" if lo <= value <= hi else "outside_band"
+
+        better_is_up = self.direction == Direction.higher_is_better
         if better_is_up:
             if p75 is not None and value >= p75:
                 return "top_quartile"
