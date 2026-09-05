@@ -20,6 +20,7 @@ named in each docstring.
 """
 from __future__ import annotations
 
+import copy
 import sys
 from pathlib import Path
 
@@ -460,3 +461,247 @@ def test_the_visualise_stage_declares_the_source_it_reads():
     from kpi_maker.pipeline.graph import STAGES
 
     assert "source" in STAGES["visualise"].needs, STAGES["visualise"].needs
+
+
+# --------------------------------------------------------------------------
+# 5.3c — small multiples over `by_segment`
+# --------------------------------------------------------------------------
+#
+# The last of Phase 3's "computed and rendered nowhere" outputs. 3.2 built
+# `MetricResult.by_segment` and closed by naming its consumers; the waterfall
+# arrived in 5.3a and this is the other one. Every test below was verified to
+# fail with its fix reverted; the mutation is named in each docstring.
+
+
+def _grid(profile, results):
+    C.set_currency(profile.identity.currency)
+    return C.segment_multiples(results)
+
+
+def test_every_sample_gets_a_grid_of_at_least_two_panels(runs):
+    """An exhibit nobody can produce is one nobody will look at. All five
+    archetypes emit `segment_financials`, so all five have a cut to draw.
+
+    Mutation: `if best is None: return None` -> build anyway.
+    """
+    for sample, (profile, results) in runs.items():
+        spec = _grid(profile, results)
+        assert spec is not None, f"{sample}: no small multiples at all"
+        panels = sum(1 for k in spec.figure.layout if k.startswith("xaxis"))
+        assert panels >= 2, f"{sample}: {panels} panel(s) is not a comparison"
+
+
+def test_a_cut_with_one_level_is_not_a_comparison(runs):
+    """A one-panel "small multiple" is a chart whose whole argument — this
+    panel against that one — is missing.
+
+    **Two earlier versions of this test were green under their own
+    mutation**, and both were the premise trap this repo keeps hitting.
+    Relaxing the minimum to 1 changes nothing on any sample, because the
+    widest cut wins and every sample has one with several levels — that
+    version was grading the samples, not the rule. Cutting each dimension
+    down to a single level does not reach the guard either, because
+    `MetricResult.dimensions` already drops a cut with one level, so the
+    builder never sees it.
+
+    The case the guard is actually for is narrower than either: a cut with
+    two levels where only one of them has enough history to draw. That is a
+    segment launched inside the reported window, and it has to be
+    constructed.
+
+    Mutation: `if len(usable) < 2: continue` -> `< 1`.
+    """
+    profile, results = runs["kestrel_retail"]
+    narrowed = []
+    for r in results:
+        clone = copy.copy(r)
+        cut = {}
+        for dim, levels in (r.by_segment or {}).items():
+            names = list(levels)[:2]
+            if len(names) < 2:
+                continue
+            # The second segment launched three months ago: present, real,
+            # and too short to put beside a three-year panel.
+            cut[dim] = {names[0]: levels[names[0]],
+                        names[1]: levels[names[1]].iloc[-3:]}
+        clone.by_segment = cut
+        narrowed.append(clone)
+    assert any(c.dimensions for c in narrowed), "the builder sees no cut"
+    assert C.segment_multiples(narrowed) is None
+
+
+def test_the_widest_cut_of_the_most_senior_kpi_wins(runs):
+    """More panels means the blended figure was hiding more, so the widest
+    cut wins; tier orders the KPIs so the exhibit is about something a board
+    reads. Measured: northwind draws NRR by segment — the sample's own stated
+    story, "churn concentrated in one segment the blended number hides".
+
+    Mutation: `key = (-len(usable), dimension)` -> `(len(usable), dimension)`,
+    and the narrowest cut wins instead.
+    """
+    profile, results = runs["kestrel_retail"]
+    spec = _grid(profile, results)
+    panels = sum(1 for k in spec.figure.layout if k.startswith("xaxis"))
+
+    # The retailer's channel cut has five levels and its category cut four,
+    # so a narrowest-first rule would draw four panels rather than five.
+    by_id = {r.kpi.id: r for r in results}
+    widest = max(
+        (len({n for n, s in (r.by_segment.get(d) or {}).items()
+              if s is not None and s.dropna().size >= 6})
+         for r in results if r.computed and r.series is not None
+         for d in r.dimensions),
+        default=0)
+    assert panels == widest, (panels, widest)
+    assert by_id  # the run really did compute something to choose among
+
+
+def test_the_company_line_appears_only_when_it_is_comparable_to_the_parts(runs):
+    """**Looking at the first version is why this rule exists.** For an
+    additive metric — net revenue by channel — the company total is by
+    definition larger than every segment, so putting it on the shared scale
+    pushed all five channels into the bottom fifth of their panels and they
+    read as five identical flat lines. The exhibit exists to make differences
+    visible and it was hiding them.
+
+    Whether the parts sum to the whole is not guessed from the unit: it is
+    `decompose.is_additive`, measured against this run's own numbers and
+    reused rather than reimplemented.
+
+    Mutations: `show_blend = True` unconditionally (the retailer flattens),
+    and `show_blend = False` unconditionally (NRR loses the reference that is
+    the most useful thing on the chart).
+    """
+    def blend_traces(spec):
+        return [t for t in spec.figure.data if t.name == "Company"]
+
+    additive = _grid(*runs["kestrel_retail"])
+    assert additive.title.startswith("Net Revenue by channel"), additive.title
+    assert not blend_traces(additive), "an additive metric drew the blend"
+    assert "left off" in additive.note
+
+    ratio = _grid(*runs["northwind_saas"])
+    assert "Retention" in ratio.title, ratio.title
+    panels = sum(1 for k in ratio.figure.layout if k.startswith("xaxis"))
+    assert len(blend_traces(ratio)) == panels, "the blend is not in every panel"
+    assert "company as a whole" in ratio.note
+
+
+def test_the_panels_share_one_y_scale(runs):
+    """Panels on independent scales look alike whatever the data does, which
+    is the failure mode of every small-multiple grid drawn without thinking.
+    Sharing the scale is what makes "this one is different" visible at all —
+    and it is what makes the additivity rule above necessary.
+
+    Mutation: `shared_yaxes=True` -> `False`.
+    """
+    for sample, (profile, results) in runs.items():
+        spec = _grid(profile, results)
+        others = [k for k in spec.figure.layout
+                  if k.startswith("yaxis") and k != "yaxis"]
+        assert others, sample
+        for key in others:
+            assert spec.figure.layout[key].matches == "y", f"{sample}: {key}"
+
+
+def test_every_panel_carries_the_same_axis_chrome(runs):
+    """`update_layout(xaxis=..., yaxis=...)` styles **axis 1 only**, so
+    `_base_layout`'s chrome stopped at the first panel: panels 2..n kept
+    Plotly's default black `zeroline`, and the consultancy's revenue grid drew
+    a heavy rule under three of its four panels and not the fourth. Found by
+    looking.
+
+    Mutation: `_base_layout` back to `update_layout(xaxis=..., yaxis=...)`.
+    """
+    for sample, (profile, results) in runs.items():
+        fig = _grid(profile, results).figure
+        for key in [k for k in fig.layout if k.startswith("yaxis")]:
+            assert fig.layout[key].zeroline is False, f"{sample}: {key}"
+        for key in [k for k in fig.layout if k.startswith("xaxis")]:
+            assert fig.layout[key].showgrid is False, f"{sample}: {key}"
+            assert fig.layout[key].showticklabels is False, f"{sample}: {key}"
+
+
+def test_the_panel_titles_have_room_above_the_plot(runs):
+    """`_base_layout`'s 8px top margin is right for a chart whose top edge is
+    its plotting area and wrong for a grid, where the panel titles live above
+    it — at 8px they were sheared off by the dashboard card and ran into the
+    exhibit's own subtitle. Invisible in the PNG, where the figure has the
+    page to itself.
+
+    Mutation: drop the `margin=dict(..., t=26, ...)` override.
+    """
+    for sample, (profile, results) in runs.items():
+        fig = _grid(profile, results).figure
+        titles = [a for a in fig.layout.annotations if a.yref == "paper"]
+        assert titles, sample
+        assert fig.layout.margin.t > 20, f"{sample}: t={fig.layout.margin.t}"
+
+
+def test_a_grid_of_panels_is_not_anomaly_marked(runs):
+    """Every shape in `mark_anomalies` is anchored to `xref="x"`, which on a
+    subplot figure is panel 1 and nothing else — so the first version put all
+    three of the retailer's events into the "email" panel and none into the
+    other four. Drawing the rule in every panel fixes the placement and
+    leaves the harder half: `return spike · apparel` is wider than a 240px
+    panel, a categorical axis autoranges to fit an annotation, and panel 1's
+    range came out roughly doubled with its series squeezed into the left
+    half of its own panel.
+
+    Both halves are asserted together, so this cannot pass by the anomalies
+    simply being absent from the run.
+
+    Mutation: remove the multi-axis guard.
+    """
+    profile, results = runs["kestrel_retail"]
+    spec = RunSpec(profile=profile)
+    generated = GENERATORS[spec.resolve_archetype()](
+        profile, spec.source.generator)
+    anomalies = generated.anomalies
+    assert anomalies
+
+    grid = _grid(profile, results)
+    assert C.mark_anomalies(grid.figure, anomalies) == 0
+    assert not (grid.figure.layout.shapes or ())
+
+    # The same events, the same run, on an ordinary single-panel time axis.
+    single = C.revenue_and_orders(dict(generated.tables))
+    assert C.mark_anomalies(single.figure, anomalies) > 0
+
+
+def test_the_subtitle_names_the_two_ends_of_the_spread(runs):
+    """A grid without a stated finding leaves the reader to do the ranking.
+    The subtitle names the highest and lowest segment at the last reported
+    month, in the run's own currency — which is also what says the exhibit
+    read the numbers rather than only drew them.
+
+    Mutation: `low = min(latest, key=latest.get)` -> `max`, so the subtitle
+    compares a segment against itself.
+    """
+    for sample, (profile, results) in runs.items():
+        spec = _grid(profile, results)
+        assert " against " in spec.subtitle, f"{sample}: {spec.subtitle}"
+        high, low = spec.subtitle.split(" against ")
+        assert high.strip() and low.strip()
+        assert high.split()[0] != low.split()[0], f"{sample}: {spec.subtitle}"
+
+
+def test_a_run_with_nothing_sliceable_draws_no_grid(runs):
+    """An exhibit is a stronger claim than a table cell. With no segmented
+    series there is nothing to compare, and a one-panel grid would be a chart
+    whose whole argument is missing.
+
+    Called directly rather than through `build_all`, which swallows the
+    `KeyError` a cross-archetype exhibit raises — a mutation that made the
+    builder *crash* would otherwise look like a chart correctly absent. The
+    same trap 5.2's "no plan, no chart" test fell into.
+
+    Mutation: `if best is None: return None` -> build anyway.
+    """
+    profile, results = runs["northwind_saas"]
+    stripped = []
+    for r in results:
+        clone = copy.copy(r)
+        clone.by_segment = {}
+        stripped.append(clone)
+    assert C.segment_multiples(stripped) is None

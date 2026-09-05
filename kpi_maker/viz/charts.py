@@ -160,13 +160,26 @@ def _base_layout(fig: go.Figure, height: int = 320) -> go.Figure:
         # showed **one character per bar**: %, R, n, y, %, y — the last letter
         # of each KPI name squeezed into an 8px left margin. Every horizontal
         # exhibit, every archetype, since the chart was written.
-        xaxis=dict(showgrid=False, zeroline=False, linecolor=LIGHT["axis"],
-                   tickcolor=LIGHT["axis"], automargin=True,
-                   tickfont=dict(color=LIGHT["muted"], size=11)),
-        yaxis=dict(gridcolor=LIGHT["grid"], zeroline=False, showline=False,
-                   automargin=True,
-                   tickfont=dict(color=LIGHT["muted"], size=11)),
     )
+    # `update_layout(xaxis=..., yaxis=...)` styles **axis 1 only**, and a
+    # subplot grid's other panels are `xaxis2`/`yaxis2`, `xaxis3`/`yaxis3`...
+    # so the chrome this function exists to impose stopped at the first panel:
+    # panels 2..n kept Plotly's default black `zeroline`, and a small-multiple
+    # grid whose y range crossed zero drew a heavy rule under every panel but
+    # the first. Found by looking at the consultancy's revenue-by-service-line
+    # panels, where three of four had it.
+    #
+    # `update_[xy]axes` reaches every axis that exists when it is called, and
+    # every caller styles its axes *after* this function, so nothing that
+    # relied on overriding a value here changes. The three overlay charts
+    # create `yaxis2` later still and are unaffected either way — which is the
+    # same seam 4.2c found `automargin` missing from.
+    fig.update_xaxes(showgrid=False, zeroline=False, linecolor=LIGHT["axis"],
+                     tickcolor=LIGHT["axis"], automargin=True,
+                     tickfont=dict(color=LIGHT["muted"], size=11))
+    fig.update_yaxes(gridcolor=LIGHT["grid"], zeroline=False, showline=False,
+                     automargin=True,
+                     tickfont=dict(color=LIGHT["muted"], size=11))
     return fig
 
 
@@ -268,6 +281,23 @@ def mark_anomalies(fig: go.Figure, anomalies: Sequence) -> int:
     """
     labels = _month_axis(fig)
     if not labels or not anomalies:
+        return 0
+    # **A grid of panels is left alone, and measuring is what decided that.**
+    # Every shape and annotation here is anchored to `xref="x"`, which on a
+    # subplot figure is panel 1 and nothing else — so the first version put
+    # all three of a retailer's events into the "email" panel and none into
+    # the other four, which is not "the first channel's anomalies" but the
+    # whole figure's, misplaced. Drawing the rule in every panel fixes the
+    # placement and leaves the harder half: the label. `return spike ·
+    # apparel` is wider than a 240px panel, and a categorical axis autoranges
+    # to fit an annotation, so panel 1's x range came out roughly doubled and
+    # its series was squeezed into the left half of its own panel. Five
+    # copies of three labels across five narrow panels would be clutter on
+    # the one exhibit whose job is an uncluttered comparison, and an
+    # unlabelled rule is a mystery mark. So a grid gets neither; the events
+    # are on every other time-axis exhibit of the same dashboard, and named
+    # in full in the methodology appendix.
+    if sum(1 for k in fig.layout if k.startswith("xaxis")) > 1:
         return 0
 
     last = len(labels) - 1
@@ -559,6 +589,143 @@ def decomposition(results: List[MetricResult]) -> Optional[ChartSpec]:
         title=f"{result.kpi.name} by {cut}",
         subtitle=subtitle, figure=fig, tab="overview", width="full",
         note=note, trace_tokens=tokens,
+    )
+
+
+@chart("segment_multiples", order=2.6, takes=("results",))
+def segment_multiples(results: List[MetricResult]) -> Optional[ChartSpec]:
+    """One panel per segment, on a shared scale, with the blend behind each.
+
+    3.2 built `MetricResult.by_segment` and its own note said nothing rendered
+    it. Measured before this item and still true: it was read by
+    `detectors.py` and `decompose.py` and by no chart at all — the last of the
+    three "computed and rendered nowhere" gaps 5.3a listed.
+
+    **Small multiples are not a stylistic preference here, they are the form
+    the palette makes necessary.** `MAX_CATEGORICAL_SERIES` is 3, and the
+    dimensions this engine produces carry four and five levels — a retailer's
+    five channels, a factory's four product families. Five lines in one frame
+    would break the colour rule and be unreadable anyway; five panels sharing
+    one scale is the standard answer and needs one colour.
+
+    Two things make it honest rather than decorative:
+
+    * **A shared y scale.** Panels on independent scales look alike whatever
+      the data does, which is the failure mode of every small-multiple grid
+      that was drawn without thinking. Sharing the scale is what makes "this
+      one is different" visible at all.
+    * **The company blend in every panel — but only when it is comparable to
+      the parts.** As width-1 reference chrome, 5.2's convention, so it
+      cannot be mistaken for a scenario. Without a common line the reader can
+      compare panels to each other but not to the company, which is usually
+      the question; with one, on an *additive* metric, the company total is
+      by definition larger than every segment and the shared scale pushes
+      every panel into its bottom fifth. Which of the two applies is measured
+      below rather than guessed from the unit.
+    """
+    from plotly.subplots import make_subplots
+
+    best = None
+    for r in sorted(results, key=lambda x: (int(x.kpi.tier), x.kpi.id)):
+        if not r.computed or r.series is None:
+            continue
+        for dimension in r.dimensions:
+            levels = r.by_segment.get(dimension) or {}
+            usable = {name: s.dropna() for name, s in levels.items()
+                      if s is not None and s.dropna().size >= 6}
+            if len(usable) < 2:
+                continue
+            # More panels means the blended figure was hiding more, so the
+            # widest cut wins; the name breaks ties so the exhibit does not
+            # depend on dict ordering.
+            key = (-len(usable), dimension)
+            if best is None or key < best[0]:
+                best = (key, r, dimension, usable)
+        if best is not None:
+            break
+    if best is None:
+        return None
+
+    _, result, dimension, levels = best
+    names = sorted(levels)
+    blended = result.series.dropna()
+    months = _months(blended.index)
+
+    # **The company line goes in only when it is comparable to the parts, and
+    # looking at the first version is why.** For an additive metric — revenue
+    # by channel — the company total is by definition larger than every
+    # segment, so putting it on a shared scale pushed all five channels into
+    # the bottom fifth of their panels and they read as five identical flat
+    # lines. The exhibit exists to make differences visible and it was hiding
+    # them.
+    #
+    # Whether the parts sum to the whole is not guessed from the unit: it is
+    # `decompose.is_additive`, already measured against this run's own
+    # numbers, and reused rather than reimplemented. A ratio — NRR by segment
+    # — is not additive, the blend sits among its segments, and there the
+    # reference is the most useful thing on the chart.
+    from ..insight.decompose import is_additive
+
+    latest = {n: float(levels[n].iloc[-1]) for n in names}
+    show_blend = not is_additive(result.current, latest)
+
+    fig = make_subplots(rows=1, cols=len(names), shared_yaxes=True,
+                        subplot_titles=[n.replace("_", " ") for n in names],
+                        horizontal_spacing=0.02)
+    for column, name in enumerate(names, start=1):
+        series = levels[name].reindex(blended.index)
+        if show_blend:
+            fig.add_trace(go.Scatter(
+                x=months, y=blended.values, mode="lines", name="Company",
+                line=dict(color=LIGHT["axis"], width=1),
+                hoverinfo="skip", showlegend=False,
+            ), row=1, col=column)
+        fig.add_trace(go.Scatter(
+            x=months, y=series.values, mode="lines", name=name,
+            line=dict(color=LIGHT["series_1"], width=2),
+            showlegend=False,
+            hovertemplate="%{x}<br><b>%{y:,.3f}</b><extra>" + name + "</extra>",
+        ), row=1, col=column)
+
+    _base_layout(fig, height=300)
+    # `_base_layout`'s 8px top margin is right for a chart whose top edge is
+    # its plotting area and wrong for a grid, where the panel titles live
+    # above it: at 8px they were sheared off by the card and ran into the
+    # exhibit's own subtitle. Found by looking at the dashboard rather than
+    # at the PNG, where the figure has the page to itself.
+    fig.update_layout(margin=dict(l=8, r=8, t=26, b=8))
+    # Tick labels are off because five panels of month labels is noise on a
+    # 240px-wide panel; the window is stated in the note instead. The rest of
+    # the axis chrome is `_base_layout`'s and is not restated here.
+    fig.update_xaxes(showticklabels=False, ticks="")
+    fig.update_annotations(font=dict(color=LIGHT["text_secondary"], size=11))
+    if result.kpi.unit == "currency":
+        money_axis(fig)
+    elif result.kpi.unit == "pct":
+        fig.update_yaxes(tickformat=".0%")
+
+    low = min(latest, key=latest.get)
+    high = max(latest, key=latest.get)
+    unit = result.kpi.unit
+    cut = dimension.replace("_", " ")
+    return ChartSpec(
+        id="segment_multiples",
+        title=f"{result.kpi.name} by {cut}, side by side",
+        subtitle=(f"{high.replace('_', ' ')} "
+                  f"{fmt_value(latest[high], unit, _CURRENCY.get(), locale=_LOCALE.get())} "
+                  f"against {low.replace('_', ' ')} "
+                  f"{fmt_value(latest[low], unit, _CURRENCY.get(), locale=_LOCALE.get())}"),
+        figure=fig, tab="overview", width="full",
+        note=(f"{months[0]} to {months[-1]}. All panels share one scale, so "
+              f"the differences are real rather than an artefact of each panel "
+              f"fitting its own."
+              + (" The faint line in every panel is the company as a whole."
+                 if show_blend else
+                 " These segments sum to the company, so the company line is "
+                 "left off — it is larger than every panel by construction "
+                 "and would flatten them all.")),
+        trace_tokens={i: ("series_1" if (not show_blend or i % 2) else "axis")
+                      for i in range(len(fig.data))},
     )
 
 
