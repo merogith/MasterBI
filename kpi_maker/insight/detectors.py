@@ -411,10 +411,16 @@ def _trend_breaks(results: List[MetricResult], window: int = 6) -> List[Finding]
         prior_change = prior_slope * (window - 1)
         recent_change = recent_slope * (window - 1)
 
-        better_is_up = r.kpi.direction.value == "higher_is_better"
-        deteriorating = (recent_slope < prior_slope) if better_is_up else (recent_slope > prior_slope)
+        # `improves_with` rather than a local `higher_is_better`, and the
+        # difference is a `target_band` metric: a slope that turned downward is
+        # a deterioration for a growth metric, an improvement for a cost one,
+        # and **neither** for one that is healthy inside a range — R&D
+        # intensity falling is good if you were overspending and bad if you
+        # were not, which the slope alone cannot say. None means this detector
+        # has nothing to claim, so it says nothing.
+        deteriorating = r.kpi.improves_with(recent_slope - prior_slope)
         turned = np.sign(recent_slope) != np.sign(prior_slope)
-        if not (deteriorating and turned):
+        if deteriorating is not False or not turned:
             continue
 
         out.append(Finding(
@@ -750,18 +756,27 @@ def _driver_decomposition(results: List[MetricResult]) -> List[Finding]:
             # when the outlier sits worse than the blend — NRR at 81% against a
             # 103% blend is a problem however the segment moved, and this read
             # `positive` until the two were separated.
-            higher_is_better = r.kpi.direction.value == "higher_is_better"
+            # Same shared rule, and it needs **three** outcomes here rather
+            # than two. `worse=False` maps to `positive` below — a claim that
+            # this is a strength — so filing a `target_band` metric there
+            # would swap a wrong problem for a wrong compliment, which is not
+            # a fix. None means the segments genuinely differ and this
+            # detector cannot say whether that is good without knowing which
+            # side of the band each sits on: worth surfacing, at `low`, with
+            # no judgement attached.
             if found.kind == "contribution":
-                worse = (lead.change < 0) if higher_is_better else (lead.change > 0)
+                better = r.kpi.improves_with(lead.change)
             elif lead.current is None or r.current is None:
-                worse = False
+                better = True
             else:
-                worse = ((lead.current < r.current) if higher_is_better
-                         else (lead.current > r.current))
+                better = r.kpi.improves_with(lead.current - r.current)
+            worse = better is False
             out.append(Finding(
                 id=f"decomp_{r.kpi.id}_{dimension}",
                 severity=("high" if worse and r.kpi.tier.value <= 1
-                          else "medium" if worse else "positive"),
+                          else "medium" if worse
+                          else "low" if better is None
+                          else "positive"),
                 title=title,
                 statement=statement,
                 evidence={k: v for k, v in evidence.items() if v is not None},

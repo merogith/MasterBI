@@ -48,6 +48,7 @@ from kpi_maker.insight.seasonality import (  # noqa: E402
     Adjustment,
     deseasonalise,
 )
+from kpi_maker.kpi.schema import Direction  # noqa: E402
 from kpi_maker.kpi.selection import select  # noqa: E402
 from kpi_maker.metrics.engine import compute  # noqa: E402
 from kpi_maker.spec.schema import GeneratorParams  # noqa: E402
@@ -149,17 +150,46 @@ def test_a_series_with_no_month_index_is_left_alone():
 
 @dataclass
 class _Kpi:
+    """A stand-in for `KPI`, and it has to keep up with the real one.
+
+    5.2b added `KPI.improves_with` — the one place the "is this move good"
+    rule lives — and `_trend_breaks` started calling it. This double failed
+    it **twice over**, and both failures are the same lesson from opposite
+    ends of 0.8's: a double that is not faithful to the thing it stands for
+    breaks honest work as readily as one that is too gentle certifies a bug.
+
+    First it had no `improves_with` at all. Then, given one, it still
+    answered `None` to everything — because `direction` was a hand-made
+    object with a `.value` attribute rather than the real `Direction`, so
+    `self.direction == Direction.higher_is_better` was quietly False and the
+    rule fell through to "cannot judge". The detector then found nothing, and
+    the guard below — the assertion that the *unadjusted* comparison still
+    fires — is the only reason that showed up as a failure rather than as a
+    test that had silently stopped testing anything.
+
+    It uses the real enum now, and `improves_with` delegates to the real
+    implementation rather than restating it.
+    """
+
     id: str = "seasonal_metric"
     name: str = "Seasonal Metric"
     unit: str = "currency"
 
-    class _Direction:
-        value = "higher_is_better"
-    direction = _Direction()
+    # The real enum, not a look-alike with a `.value` attribute. The
+    # look-alike compared unequal to `Direction.higher_is_better`, so
+    # `improves_with` fell through to "cannot judge" and the double answered
+    # None for everything — which is how a stub stops standing for the thing
+    # it stands in for.
+    direction = Direction.higher_is_better
 
     class _Tier:
         value = 1
     tier = _Tier()
+
+    def improves_with(self, change):
+        from kpi_maker.kpi.schema import KPI
+
+        return KPI.improves_with(self, change)
 
 
 @dataclass

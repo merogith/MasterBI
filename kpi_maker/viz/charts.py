@@ -317,10 +317,19 @@ def plan_vs_actual(results: List[MetricResult]) -> Optional[ChartSpec]:
     if variance is None:
         subtitle = "Actual against plan"
     else:
-        ahead = ((variance > 0) == (r.kpi.direction.value != "lower_is_better"))
-        word = "ahead of" if ahead else "behind"
-        subtitle = (f"{fmt_value(abs(variance), r.kpi.unit, _CURRENCY.get(), locale=_LOCALE.get())} "
-                    f"{word} plan in the latest month")
+        # Written the day before 5.2b as `direction != "lower_is_better"`,
+        # which files a `target_band` metric under higher-is-better and would
+        # call a platform's take rate "ahead of plan" for rising past the top
+        # of its own band. `improves_with` is the one rule; None says the
+        # variance is real and the direction word is not ours to supply.
+        ahead = r.kpi.improves_with(variance)
+        amount = fmt_value(abs(variance), r.kpi.unit, _CURRENCY.get(),
+                           locale=_LOCALE.get())
+        if ahead is None:
+            subtitle = f"{amount} away from plan in the latest month"
+        else:
+            subtitle = (f"{amount} {'ahead of' if ahead else 'behind'} plan "
+                        f"in the latest month")
     return ChartSpec(
         id="plan_vs_actual", title=f"{r.kpi.name} vs plan",
         subtitle=subtitle, figure=fig, tab="overview", width="full",
@@ -1051,6 +1060,10 @@ def backlog_and_book_to_bill(tables: Dict[str, pd.DataFrame]) -> Optional[ChartS
                      y0=1.0, y1=1.0,
                      line=dict(color=LIGHT["axis"], width=1, dash="dash"))],
     )
+    # The left axis is a stock of money and carried no marker at all — the
+    # *absent* half of the hardcoded-`$` bug, and easier to miss because
+    # nothing looks wrong: a consultancy's backlog simply read `9M`.
+    money_axis(fig)
     months_cover = (frame["closing_backlog"].iloc[-1]
                     / max(frame["revenue_recognised"].tail(12).mean(), 1e-9))
     return ChartSpec(
@@ -1330,6 +1343,9 @@ def gmv_and_take(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
                     showgrid=False, automargin=True,
                     tickfont=dict(color=LIGHT["muted"], size=11)),
     )
+    # Both bar series are money, and this is the exhibit the whole marketplace
+    # archetype exists for: it was showing €9M of GMV with no currency on it.
+    money_axis(fig)
     blended = float(grouped["take"].tail(12).sum()
                     / max(grouped["value"].tail(12).sum(), 1e-9))
     return ChartSpec(

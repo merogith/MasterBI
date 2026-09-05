@@ -153,12 +153,11 @@ def _variance_cell(result: MetricResult, currency: str,
         text = fmt_value(value / abs(planned), "pct", currency, locale=locale)
     if value > 0 and not text.startswith(("+", "-")):
         text = f"+{text}"
-    direction = result.kpi.direction.value
-    if direction == "higher_is_better":
-        good = value > 0
-    elif direction == "lower_is_better":
-        good = value < 0
-    else:
+    # One rule, on the KPI itself. This branch was correct and was still a
+    # second implementation of `improves_with`, which is how the other five
+    # call sites drifted apart in the first place.
+    good = result.kpi.improves_with(value)
+    if good is None:
         return f'<span class="variance">{html.escape(text)}</span>'
     css = "variance-good" if good else "variance-bad"
     return f'<span class="{css}">{html.escape(text)}</span>'
@@ -180,15 +179,20 @@ def _stat_tile(r: MetricResult, currency: str, locale: Optional[str] = None) -> 
     delta_html = ""
     if not is_missing(r.current) and not is_missing(r.prior_year) and r.prior_year:
         change = r.current - r.prior_year
-        better_up = k.direction.value == "higher_is_better"
-        good = (change >= 0) if better_up else (change <= 0)
+        good = k.improves_with(change)
         arrow = "▲" if change >= 0 else "▼"
         if k.unit == "pct":
             text = f"{abs(change):.1f} pts"
         else:
             pct = abs(change) / abs(r.prior_year) if r.prior_year else 0
             text = f"{pct:.0%}"
-        cls = "delta-good" if good else "delta-bad"
+        # None is a `target_band` metric, where a signed change cannot be
+        # called good or bad without knowing which side of the band you started
+        # on. The arrow stays — which way it moved is a fact — and only the
+        # colour is withheld. Before 5.2b this branch read
+        # `direction == "higher_is_better"`, so every band metric on every
+        # scorecard got a red chip for going up.
+        cls = "delta-flat" if good is None else ("delta-good" if good else "delta-bad")
         delta_html = (
             f'<span class="delta {cls}"><span aria-hidden="true">{arrow}</span> '
             f'{text} <span class="delta-period">vs LY</span></span>'
@@ -589,6 +593,10 @@ header.top h1 {{ margin: 0; font-size: 22px; letter-spacing: -0.01em; }}
 .delta {{ font-size: 12px; font-variant-numeric: tabular-nums; }}
 .delta-good {{ color: var(--delta-up); }}
 .delta-bad {{ color: var(--critical); }}
+/* A `target_band` metric's year-on-year move: shown, not judged. Which way it
+   went is a fact and stays on the tile; whether that is good depends on which
+   side of the band it started, which a signed change cannot say. */
+.delta-flat {{ color: var(--text-secondary); }}
 /* Variance to plan reuses the engine's own delta tokens rather than defining
    a second pair, so the dashboard, the deck and the PDF cannot end up
    disagreeing about what "behind plan" looks like. `tabular-nums` because a

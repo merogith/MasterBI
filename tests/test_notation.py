@@ -35,7 +35,7 @@ sys.path.insert(0, str(ROOT))
 
 from kpi_maker.cli import load_profile  # noqa: E402
 from kpi_maker.datagen import GENERATORS  # noqa: E402
-from kpi_maker.kpi.selection import select  # noqa: E402
+from kpi_maker.kpi.selection import load_library, select  # noqa: E402
 from kpi_maker.metrics.engine import compute  # noqa: E402
 from kpi_maker.spec.schema import RunSpec  # noqa: E402
 from kpi_maker.viz import charts as C  # noqa: E402
@@ -307,3 +307,144 @@ def test_every_multi_series_chart_says_which_line_is_which(exhibits):
                 unlabelled.append(
                     (sample, chart_id, [t.name for t in named]))
     assert not unlabelled, unlabelled
+
+
+# --------------------------------------------------------------------------
+# One sign convention (5.2b)
+# --------------------------------------------------------------------------
+
+def _kpi(direction: str):
+    from kpi_maker.kpi.schema import KPI
+
+    base = load_library(["general"], include_user=False)[0].model_dump()
+    return KPI.model_validate({**base, "direction": direction})
+
+
+def test_improves_with_has_three_outcomes_not_two():
+    """The rule, in the one place it now lives.
+
+    Seven call sites asked this question before 5.2b — **two with three
+    branches and five with two** — and the five all reduced to
+    `direction == "higher_is_better"`, which files `target_band` under
+    lower-is-better. Eight of the library's 109 sheets are `target_band` and
+    every sample carries one to four on its scorecard, so it fired on every
+    run this product has ever done.
+
+    Mutation: `return change <= 0` for the fall-through case.
+    """
+    assert _kpi("higher_is_better").improves_with(5) is True
+    assert _kpi("higher_is_better").improves_with(-5) is False
+    assert _kpi("lower_is_better").improves_with(-5) is True
+    assert _kpi("lower_is_better").improves_with(5) is False
+
+    # The third outcome: healthy inside a range, so a signed change on its own
+    # cannot say. None is "do not judge", not "neutral outcome".
+    assert _kpi("target_band").improves_with(5) is None
+    assert _kpi("target_band").improves_with(-5) is None
+    assert _kpi("higher_is_better").improves_with(None) is None
+
+
+def test_a_band_metrics_year_on_year_chip_is_shown_but_not_coloured():
+    """Measured across the samples before the fix: eleven tiles were coloured
+    green or red by a rule that does not apply to them — a platform's take
+    rate falling out of its own band read **green**, and a factory's stock
+    cover read **red** while the scorecard said `in_band`.
+
+    The arrow stays: which way it moved is a fact. Only the verdict goes.
+
+    Mutation: `cls = "delta-good" if good else "delta-bad"`.
+    """
+    from kpi_maker.render.dashboard import _stat_tile
+
+    profile = load_profile(ROOT / "samples" / "lumen_exchange.json")
+    spec = RunSpec(profile=profile)
+    tables = dict(GENERATORS[spec.resolve_archetype()](
+        profile, spec.source.generator).tables)
+    results = compute(select(profile), tables, profile)
+
+    banded = [r for r in results if r.kpi.direction.value == "target_band"
+              and r.current is not None and r.prior_year]
+    assert banded, "the premise: this sample carries band metrics"
+    for r in banded:
+        html_out = _stat_tile(r, profile.identity.currency)
+        assert "delta-flat" in html_out, r.kpi.id
+        assert "delta-good" not in html_out and "delta-bad" not in html_out
+        assert "▲" in html_out or "▼" in html_out, "the arrow is a fact"
+
+    directional = [r for r in results
+                   if r.kpi.direction.value != "target_band"
+                   and r.current is not None and r.prior_year]
+    assert any("delta-good" in _stat_tile(r, profile.identity.currency)
+               or "delta-bad" in _stat_tile(r, profile.identity.currency)
+               for r in directional), "everything went neutral, which is not the fix"
+
+
+def test_a_band_metrics_dispersion_finding_claims_neither_problem_nor_strength():
+    """`worse=False` maps to `positive` — a *strength* claim — so filing a
+    band metric there would swap a wrong problem for a wrong compliment.
+
+    Measured: the same situation was labelled **medium** on the factory,
+    **high** on the platform and **positive** on the retailer before this.
+    Three different verdicts for one question is the strongest evidence the
+    seven implementations had drifted.
+
+    Mutation: collapse the severity back to two outcomes.
+    """
+    from kpi_maker.insight.detectors import detect_all
+    from kpi_maker.metrics.engine import dimensions
+
+    band_ids = {k.id for k in load_library(None, include_user=False)
+                if k.direction.value == "target_band"}
+    seen = {}
+    for sample in ("orbis_works", "lumen_exchange", "kestrel_retail"):
+        profile = load_profile(ROOT / "samples" / f"{sample}.json")
+        spec = RunSpec(profile=profile)
+        tables = dict(GENERATORS[spec.resolve_archetype()](
+            profile, spec.source.generator).tables)
+        results = compute(select(profile), tables, profile,
+                          by=dimensions(tables))
+        findings = detect_all(results, tables, profile)
+        banded = [f for f in findings
+                  if f.id.startswith("decomp_")
+                  and any(k in band_ids for k in f.kpi_ids)]
+        seen[sample] = {f.severity for f in banded}
+    for sample, severities in seen.items():
+        assert severities <= {"low"}, (sample, severities)
+    assert any(severities for severities in seen.values()), \
+        "no band-metric decomposition finding was produced at all"
+
+
+def test_every_money_axis_carries_a_currency_marker(exhibits):
+    """The *absent* half of the hardcoded-`$` bug, and easier to miss because
+    nothing looks wrong: a consultancy's backlog axis simply read `9M`, and
+    the marketplace exhibit the whole archetype exists for showed €9M of GMV
+    with no currency on it.
+
+    Three charts legitimately keep a bare large-number axis and are named
+    here rather than exempted by a rule: `revenue_orders` deliberately mixes
+    revenue with rescaled orders and says so in its subtitle, `buyer_mix`
+    counts buyers, and `capacity_headroom` counts production units. None of
+    them is money.
+
+    Mutation: drop `money_axis(fig)` from `backlog_cover` or `gmv_and_take`.
+    """
+    import numpy as np
+
+    allowed_bare = {"revenue_orders", "buyer_mix", "capacity_headroom"}
+    offenders = {}
+    for _sample, (_, built) in exhibits.items():
+        for chart_id, spec in built.items():
+            axis = spec.figure.layout.yaxis
+            if any([axis.tickprefix, axis.ticksuffix, axis.tickformat]):
+                continue
+            peak = 0.0
+            for trace in spec.figure.data:
+                values = getattr(trace, "y", None)
+                if values is None:
+                    continue
+                for v in values:
+                    if isinstance(v, (int, float, np.floating)) and v == v:
+                        peak = max(peak, abs(float(v)))
+            if peak > 5000 and chart_id not in allowed_bare:
+                offenders[chart_id] = round(peak)
+    assert not offenders, offenders

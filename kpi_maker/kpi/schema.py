@@ -243,6 +243,54 @@ class KPI(BaseModel):
             return "red" if value >= r else "amber"
         return "unscored"
 
+    def improves_with(self, change: Optional[float]) -> Optional[bool]:
+        """Is a move of this sign an improvement? None when it cannot be said.
+
+        The one place this question is answered, and it was answered in seven
+        places before 5.2b — **two of them with three branches and five with
+        two.** The five all reduced to
+        `better_up = direction == "higher_is_better"`, which silently files
+        `target_band` under `lower_is_better`, so a band metric's move was
+        judged by a rule that does not apply to it: a red delta chip on a tile,
+        a "deteriorating" trend break, a "worse" decomposition, and — in the
+        chart subtitle written the day before this — the opposite mistake,
+        filing it under higher-is-better.
+
+        Not a rare shape either. Eight of the library's 109 record sheets are
+        `target_band`, and **every sample carries one to four of them on its
+        scorecard**, so this fired on every run this product has ever done.
+
+        `status` and `vs_benchmark` above already refuse to judge these on a
+        single direction — `status` scores them against the inter-quartile
+        range and `vs_benchmark` returns `in_band`/`outside_band` rather than a
+        quartile. This is the same refusal for a *change*: for a metric that is
+        healthy inside a range, whether going up is good depends on which side
+        of the range you started, which a signed change alone does not say.
+        **None means "do not colour this", not "neutral outcome"** — the caller
+        still shows the number and the arrow, because which way it moved is a
+        fact; only the judgement is withheld.
+        """
+        if change is None:
+            return None
+        # `bool(...)` because the return type is part of the contract: callers
+        # distinguish the three outcomes with `is False` / `is None`, and
+        # `np.False_ is False` is **False**, so a numpy input would silently
+        # never match.
+        #
+        # It is defensive rather than a fix for a live bug, and that
+        # distinction was measured rather than assumed. The first version of
+        # this comment claimed the coercion had rescued `_trend_breaks` from
+        # being disabled on every run; reverting it and counting says
+        # otherwise — 8 trend breaks either way — because `detectors._stable`
+        # rounds every slope through `float(f"{...:.9g}")` and hands this a
+        # genuine Python float. The real defect that hunt turned up was in a
+        # test double, not here.
+        if self.direction == Direction.higher_is_better:
+            return bool(change >= 0)
+        if self.direction == Direction.lower_is_better:
+            return bool(change <= 0)
+        return None
+
     def vs_benchmark(self, value: Optional[float]) -> Optional[str]:
         """Where the value sits in the benchmark cohort."""
         b = self.benchmark
