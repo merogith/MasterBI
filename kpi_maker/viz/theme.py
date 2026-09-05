@@ -104,6 +104,46 @@ STATUS_TOKEN = {
     "unknown": "muted",
 }
 
+# --------------------------------------------------------------------------
+# Scenario notation (IBCS "Unify")
+# --------------------------------------------------------------------------
+#
+# One visual language for actual / plan / prior, defined once and read by
+# every chart builder, so a plan line cannot mean one thing on the trend
+# exhibit and another on the bridge. Before 5.2 there was no notation at all —
+# nothing drew a plan, because nothing produced one until 5.1 — and `dash`
+# appeared ad hoc in three places for *reference* lines. Keeping those apart
+# is the point: a reference line is chrome, a scenario is data.
+#
+# **Distinguished by weight and pattern, never by colour alone**, which is the
+# same rule `STATUS_GLYPH` enforces for RAG and the reason it can survive a
+# greyscale print and a colour-vision deficiency. Actual is the only solid,
+# heaviest line: it is what happened, and it should read first.
+#
+# **Forecast is absent, and that is deliberate.** IBCS names four scenarios;
+# nothing in this engine produces a forecast, so giving it a notation would be
+# a visual vocabulary for something no chart can draw — the dead-spec-field
+# pattern in a stylesheet. It goes in with its producer.
+SCENARIO_NOTATION: Dict[str, Dict[str, object]] = {
+    # Solid, full weight, full opacity.
+    "actual": {"dash": "solid", "width": 2.4, "opacity": 1.0,
+               "label": "Actual"},
+    # Dashed and lighter: a commitment, not an outcome. IBCS draws plan as an
+    # outline; on a line chart the equivalent is an unfilled dashed stroke.
+    "plan": {"dash": "dash", "width": 1.8, "opacity": 0.95, "label": "Plan"},
+    # Dotted and recessive. Prior year is context, and it should never compete
+    # with the two lines the reader is being asked to compare.
+    "prior": {"dash": "dot", "width": 1.4, "opacity": 0.75,
+              "label": "Prior year"},
+}
+
+#: The token each scenario draws in. Plan and prior share the deemphasis role
+#: rather than taking series slots of their own: `MAX_CATEGORICAL_SERIES` is 3
+#: and a chart showing actual, plan and prior for *one* metric is showing one
+#: subject three ways, not three subjects.
+SCENARIO_TOKEN = {"actual": "series_1", "plan": "deemphasis",
+                  "prior": "deemphasis"}
+
 # Status is never colour-alone (palette.md: icon + label pairing).
 STATUS_GLYPH = {"green": "●", "amber": "▲", "red": "■", "unscored": "◇", "unknown": "○"}
 # "unscored" = we have the number but no threshold to judge it against.

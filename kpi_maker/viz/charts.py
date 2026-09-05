@@ -26,9 +26,14 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from ..fmt import fmt_value
+from ..fmt import CURRENCY_SYMBOL, fmt_value
 from ..metrics.engine import MetricResult
-from .theme import FONT_STACK, TOKENS
+from .theme import (
+    FONT_STACK,
+    SCENARIO_NOTATION,
+    SCENARIO_TOKEN,
+    TOKENS,
+)
 
 # ContextVar, not a module global: the API runs two pipelines concurrently, so
 # a plain global meant the second run's currency could reach the first run's
@@ -185,7 +190,145 @@ def _money(v: float) -> str:
     return fmt_value(v, "currency", _CURRENCY.get(), locale=_LOCALE.get())
 
 
+def add_scenario(fig: go.Figure, x, y, scenario: str, *,
+                 name: Optional[str] = None,
+                 token: Optional[str] = None) -> int:
+    """Draw one scenario line in the shared notation. Returns its trace index.
+
+    Every chart that draws a plan or a prior-year line goes through here, so
+    the vocabulary is defined once (`theme.SCENARIO_NOTATION`) rather than
+    re-decided per builder — which is how the same dash pattern ends up
+    meaning "plan" on one exhibit and "target" on the next.
+
+    The trace index is returned because `ChartSpec.trace_tokens` maps indices
+    to token roles for the dashboard's theme toggle, and a caller that forgets
+    to record one gets a line that does not restyle in dark mode.
+    """
+    style = SCENARIO_NOTATION[scenario]
+    role = token or SCENARIO_TOKEN[scenario]
+    fig.add_trace(go.Scatter(
+        x=x, y=y, mode="lines",
+        name=name or style["label"],
+        line=dict(color=LIGHT[role], width=style["width"], dash=style["dash"]),
+        opacity=style["opacity"],
+        hovertemplate="%{x}<br>%{y:,.0f}<extra>"
+                      + str(name or style["label"]) + "</extra>",
+    ))
+    return len(fig.data) - 1
+
+
+def money_axis(fig, axis: str = "y") -> None:
+    """Currency ticks in **this run's** currency, at a finance scale.
+
+    Two bugs in one line, both shipped until 5.2 measured them on a euro
+    company:
+
+    * **`tickprefix="$"` was hardcoded** in three charts while every other
+      number on the page came from `_CURRENCY`. A €45M European SaaS business
+      opened its board pack on an axis reading `$0 · $10M · $20M · $30M ·
+      $40M`. The hover text, the tiles, the PDF and the workbook were all in
+      euros; only the axis was not, which is the worst version of it — nothing
+      looks broken, the currency is simply wrong.
+    * **`tickformat="~s"` is SI**, so a billion renders as `1G`. Finance
+      writes `1B`. SI is right for hertz and wrong for money.
+
+    One function, so a fourth chart cannot reintroduce either. `exponentformat`
+    and the explicit tick suffixes do the second half; plotly has no "B" in
+    its SI set, so the scale is stated on the axis rather than guessed from a
+    suffix nobody in a boardroom reads as "giga".
+    """
+    symbol = CURRENCY_SYMBOL.get(_CURRENCY.get(), "")
+    update = fig.update_yaxes if axis == "y" else fig.update_xaxes
+    update(tickprefix=symbol, tickformat="~s")
+
+
 # --------------------------------------------------------------------------
+
+@chart("plan_vs_actual", order=0, takes=("results",))
+def plan_vs_actual(results: List[MetricResult]) -> Optional[ChartSpec]:
+    """The scenario notation, on the metric the run is most steered by.
+
+    **Returns None when the run has no plan**, which is most runs, and that is
+    the honest behaviour rather than a defect: 5.1's rule is that no plan
+    means no variance, and an exhibit is a stronger claim than a table cell.
+    A chart with a plan line drawn from a target nobody set would be the
+    fabricated-budget failure with a legend on it.
+
+    It exists at all because a notation nothing draws is a stylesheet, not a
+    language. `theme.SCENARIO_NOTATION` defines actual/plan/prior once; this
+    is the first exhibit to read it, and `add_scenario` is what every later
+    one will use so the vocabulary cannot fork.
+    """
+    planned = [r for r in results if r.plan_basis and r.computed
+               and r.series is not None]
+    if not planned:
+        return None
+
+    # The most senior planned metric, and the id as the tie-break so two KPIs
+    # at the same tier cannot make the exhibit depend on dict ordering — the
+    # same stability rule `insight/ranking.py` needed for byte-identical
+    # re-runs.
+    r = min(planned, key=lambda x: (int(x.kpi.tier), x.kpi.id))
+    actual = r.series.dropna()
+    if actual.empty:
+        return None
+
+    # Two years at most: a plan is set for a year, and a five-year x-axis
+    # squeezes the comparison the exhibit exists for into its right-hand edge.
+    actual = actual.iloc[-24:]
+    x = _months(actual.index)
+
+    fig = go.Figure()
+    tokens: Dict[int, str] = {}
+
+    prior = r.series.reindex([p - 12 for p in actual.index])
+    if prior.notna().sum() >= 6:
+        tokens[add_scenario(fig, x, prior.values, "prior")] = \
+            SCENARIO_TOKEN["prior"]
+
+    plan = r.plan.reindex(actual.index)
+    if plan.notna().any():
+        label = SCENARIO_NOTATION["plan"]["label"]
+        if r.plan_basis == "derived":
+            # Never let a derived path pass for a budget, on a chart least of
+            # all: a legend entry reading "Plan" is a stronger claim than the
+            # scorecard's badge, because nothing else on the exhibit qualifies
+            # it.
+            label = "Target path"
+        tokens[add_scenario(fig, x, plan.values, "plan", name=label)] = \
+            SCENARIO_TOKEN["plan"]
+
+    tokens[add_scenario(fig, x, actual.values, "actual")] = \
+        SCENARIO_TOKEN["actual"]
+
+    _base_layout(fig, height=340)
+    fig.update_layout(
+        hovermode="x unified",
+        showlegend=True,
+        legend=dict(orientation="h", y=1.12, x=0,
+                    font=dict(color=LIGHT["text_secondary"], size=11)),
+    )
+    if r.kpi.unit == "currency":
+        money_axis(fig)
+    elif r.kpi.unit == "pct":
+        fig.update_yaxes(tickformat=".0%")
+
+    variance = r.vs_plan
+    if variance is None:
+        subtitle = "Actual against plan"
+    else:
+        ahead = ((variance > 0) == (r.kpi.direction.value != "lower_is_better"))
+        word = "ahead of" if ahead else "behind"
+        subtitle = (f"{fmt_value(abs(variance), r.kpi.unit, _CURRENCY.get(), locale=_LOCALE.get())} "
+                    f"{word} plan in the latest month")
+    return ChartSpec(
+        id="plan_vs_actual", title=f"{r.kpi.name} vs plan",
+        subtitle=subtitle, figure=fig, tab="overview", width="full",
+        trace_tokens=tokens,
+        note=("The plan line is this KPI's own target rule, not a stated "
+              "budget." if r.plan_basis == "derived" else ""),
+    )
+
 
 @chart("arr_trend", order=1, takes=("results",))
 def arr_trend(results: List[MetricResult]) -> Optional[ChartSpec]:
@@ -214,7 +357,7 @@ def arr_trend(results: List[MetricResult]) -> Optional[ChartSpec]:
     ))
     _base_layout(fig)
     fig.update_layout(hovermode="x unified")
-    fig.update_yaxes(tickprefix="$", tickformat="~s")
+    money_axis(fig)
     return ChartSpec(
         id="arr_trend", title="Annual Recurring Revenue",
         subtitle="Monthly, trailing 36 months", figure=fig,
@@ -258,7 +401,7 @@ def arr_bridge(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
         hovertemplate="%{x}<br>%{text}<extra></extra>",
     ))
     _base_layout(fig, height=340)
-    fig.update_yaxes(tickprefix="$", tickformat="~s")
+    money_axis(fig)
     return ChartSpec(
         id="arr_bridge", title="ARR bridge, last 12 months",
         subtitle="Where the year's ARR movement came from", figure=fig,
@@ -512,7 +655,8 @@ def channel_dumbbell(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     fig.update_layout(showlegend=True,
                       legend=dict(orientation="h", y=1.15, x=0,
                                   font=dict(color=LIGHT["text_secondary"], size=11)))
-    fig.update_xaxes(tickprefix="$", showgrid=True, gridcolor=LIGHT["grid"])
+    money_axis(fig, "x")
+    fig.update_xaxes(showgrid=True, gridcolor=LIGHT["grid"])
     n = len(shared)
     return ChartSpec(
         id="channel_cost", title="Cost per qualified lead, by channel",
@@ -650,12 +794,23 @@ def revenue_and_orders(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
              if by_month["orders"].iloc[0] else 1.0)
     fig.add_trace(go.Scatter(
         x=x, y=(by_month["orders"] * scale).values, mode="lines", name="Orders",
-        line=dict(color=LIGHT["series_2"], width=2, dash="dot"),
+        line=dict(color=LIGHT["series_2"], width=2),
         hovertemplate="%{x}<br><b>%{customdata:,.0f} orders</b><extra></extra>",
         customdata=by_month["orders"].values,
     ))
     _base_layout(fig, height=360)
-    fig.update_layout(hovermode="x unified")
+    # The legend is not decoration here, and 5.2 is why. This chart used to
+    # tell its two series apart with `dash="dot"` on the second — but dot now
+    # means *prior year*, so the dash came off, and that left two solid lines
+    # distinguished by colour with `showlegend=False` inherited from
+    # `_base_layout`: unreadable, and unreadable in exactly the way 4.2b found
+    # on the OEE exhibit. That item turned the legend on for the two charts it
+    # touched and this one was not among them, so it kept its dot and its
+    # silence. Both are now fixed the same way.
+    fig.update_layout(hovermode="x unified", showlegend=True,
+                      legend=dict(orientation="h", y=1.12, x=0,
+                                  font=dict(color=LIGHT["text_secondary"],
+                                            size=11)))
     return ChartSpec(
         id="revenue_orders", title="Net revenue and order volume",
         subtitle="Orders rescaled to the revenue axis at the first month — "
@@ -698,8 +853,18 @@ def aov_and_conversion(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     _base_layout(fig)
     # The one place a second axis is justified: the two series share a story
     # and cannot share a scale. Both are direct-labelled in the legend.
+    #
+    # That sentence was here before 5.2 and **the legend was off** — a comment
+    # asserting what the code does not do, which is this repo's characteristic
+    # bug. Two series, a left axis and a right axis, and nothing on the chart
+    # saying which line belonged to which. `showlegend=False` comes from
+    # `_base_layout`, so a builder that needs one has to ask; this one said it
+    # had one and never did.
     fig.update_layout(
         hovermode="x unified",
+        showlegend=True,
+        legend=dict(orientation="h", y=1.12, x=0,
+                    font=dict(color=LIGHT["text_secondary"], size=11)),
         yaxis2=dict(overlaying="y", side="right", tickformat=".1%",
                     showgrid=False, automargin=True,
                     tickfont=dict(color=LIGHT["muted"], size=11)),
@@ -824,7 +989,7 @@ def utilisation_and_realisation(tables: Dict[str, pd.DataFrame]) -> Optional[Cha
     ))
     fig.add_trace(go.Scatter(
         x=x, y=realisation.values, mode="lines", name="Realisation",
-        line=dict(color=LIGHT["series_2"], width=2, dash="dot"),
+        line=dict(color=LIGHT["series_2"], width=2),
         hovertemplate="%{x}<br><b>%{y:.1%}</b><extra>Realisation</extra>",
     ))
     _base_layout(fig, height=360)
@@ -1037,7 +1202,7 @@ def capacity_headroom(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     ))
     fig.add_trace(go.Scatter(
         x=x, y=grouped["scheduled"].values, mode="lines", name="Scheduled",
-        line=dict(color=LIGHT["series_2"], width=2, dash="dot"),
+        line=dict(color=LIGHT["series_2"], width=2),
         hovertemplate="%{x}<br><b>%{y:,.0f} units</b><extra>Scheduled</extra>",
     ))
     fig.add_trace(go.Scatter(
