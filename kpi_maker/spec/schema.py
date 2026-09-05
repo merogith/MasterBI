@@ -173,6 +173,61 @@ class MetricsSpec(SpecModel):
 
 
 # --------------------------------------------------------------------------
+# Plan — what the business said it would do
+# --------------------------------------------------------------------------
+
+class PlanBasis(str, Enum):
+    """Where a plan line came from, carried as far as the reader.
+
+    The same distinction `MetricResult.basis` draws between a measured and a
+    modelled figure, for the same reason: a number the board approved and a
+    number this engine drew are not interchangeable, and only one of them is
+    a plan.
+    """
+    stated = "stated"     # the user gave these figures
+    derived = "derived"   # this engine built them from the KPI's target rule
+
+
+class PlanSpec(SpecModel):
+    """Monthly plan or budget figures, per KPI.
+
+    IBCS notation is built on actual / plan / prior / forecast and **none of
+    the middle two existed anywhere in this codebase** before 5.1 — verified,
+    not assumed: `MetricResult` carried a single `target` scalar, and the only
+    classes with "Plan" in the name were `StagePlan` and `UploadPlan`. So
+    there was no variance-to-plan, which is the most-asked-for thing in
+    management reporting.
+
+    **Prior is already here** (`prior_month`, `prior_year`), so this block adds
+    the one scenario that was missing. **Forecast is deliberately absent**:
+    nothing in the engine produces one, and a slot with no producer is exactly
+    the dead-spec-field pattern 0.3 was spent removing. It goes in when
+    something fills it.
+
+    Months are `"YYYY-MM"` strings so a saved spec round-trips through JSON
+    unchanged; they are matched against the metric series' own period index.
+    """
+
+    label: str = "Plan"
+    #: `{kpi_id: {"YYYY-MM": value}}`. A KPI absent from here has no plan, and
+    #: no plan means no variance — not a zero, and not a fabricated line.
+    values: Dict[str, Dict[str, float]] = Field(default_factory=dict)
+    #: Free text: who set this and when. Rendered beside the variance, because
+    #: a plan with no provenance is a number somebody typed.
+    source: Optional[str] = None
+
+    #: Build a plan for KPIs that have none, from the target the pack already
+    #: resolves. **Off by default and labelled `derived` wherever it renders.**
+    #:
+    #: The shape is last year's own months, scaled so the final month lands on
+    #: the target — not a straight line. A straight line is not how anyone
+    #: budgets, and a seasonal business budgeted flat would post a variance
+    #: every month that is purely the calendar, which is the artefact 3.4b was
+    #: spent removing from the detectors.
+    derive_from_target: bool = False
+
+
+# --------------------------------------------------------------------------
 # Analysis — the deterministic detectors
 # --------------------------------------------------------------------------
 
@@ -326,6 +381,7 @@ class RunSpec(SpecModel):
     cleaning: CleaningRecipe = Field(default_factory=CleaningRecipe)
     model: ModelSpec = Field(default_factory=ModelSpec)
     metrics: MetricsSpec = Field(default_factory=MetricsSpec)
+    plan: PlanSpec = Field(default_factory=PlanSpec)
     analysis: AnalysisSpec = Field(default_factory=AnalysisSpec)
     design: DesignSpec = Field(default_factory=DesignSpec)
     outputs: OutputSpec = Field(default_factory=OutputSpec)
@@ -452,5 +508,6 @@ class RunSpec(SpecModel):
 # not bend is that the model never produces a number. `version` is excluded for
 # the duller reason that a schema migration is not a suggestion.
 PATCHABLE_SECTIONS = frozenset({
-    "source", "cleaning", "model", "metrics", "analysis", "design", "outputs",
+    "source", "cleaning", "model", "metrics", "plan", "analysis", "design",
+    "outputs",
 })

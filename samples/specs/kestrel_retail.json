@@ -1,0 +1,286 @@
+{
+  "version": 1,
+  "profile": {
+    "identity": {
+      "name": "Kestrel & Co",
+      "country": "GB",
+      "currency": "GBP",
+      "fiscal_year_start": "01-01",
+      "language": "en"
+    },
+    "industry": {
+      "taxonomy": "NAICS",
+      "code": "454110",
+      "internal_sector": "retail.apparel_d2c",
+      "vertical_tags": [
+        "b2c",
+        "apparel",
+        "direct_to_consumer"
+      ]
+    },
+    "business_model": {
+      "type": "ecommerce",
+      "customer_type": "B2C",
+      "revenue_model": [
+        "transactional"
+      ],
+      "sales_motion": "self_serve",
+      "contract_terms": "none",
+      "annual_prepay_share": 0.0,
+      "avg_contract_months": 0.0
+    },
+    "size": {
+      "headcount_total": 96,
+      "headcount_by_function": {
+        "operations": 33,
+        "marketing": 17,
+        "merchandising": 16,
+        "technology": 13,
+        "customer_service": 11,
+        "ga": 6
+      },
+      "revenue_band": "10-50M",
+      "stage": "growth",
+      "age_years": 9,
+      "ownership": "vc_backed"
+    },
+    "market": {
+      "geographies": {
+        "GB": 0.68,
+        "IE": 0.12,
+        "DE": 0.11,
+        "FR": 0.09
+      },
+      "segments": [
+        {
+          "name": "one-off",
+          "share": 0.58,
+          "avg_acv": 142.0,
+          "logo_churn_annual": 0.78,
+          "expansion_annual": 0.0
+        },
+        {
+          "name": "returning",
+          "share": 0.33,
+          "avg_acv": 430.0,
+          "logo_churn_annual": 0.41,
+          "expansion_annual": 0.05
+        },
+        {
+          "name": "loyal",
+          "share": 0.09,
+          "avg_acv": 1180.0,
+          "logo_churn_annual": 0.16,
+          "expansion_annual": 0.1
+        }
+      ],
+      "customer_count": 65000,
+      "concentration_top10_pct": 0.01,
+      "seasonality": "high"
+    },
+    "financials": {
+      "revenue": 21500000.0,
+      "gross_margin_pct": 0.41,
+      "opex_split": {
+        "sales": 0.07,
+        "marketing": 0.19,
+        "rnd": 0.03,
+        "ga": 0.1
+      },
+      "cash": 2600000.0,
+      "net_debt": 1400000.0,
+      "growth_rate_yoy": 0.28
+    },
+    "org_culture": {
+      "data_maturity": "bi_tool",
+      "decision_cadence": "weekly",
+      "planning_horizon": "annual",
+      "risk_appetite": "balanced",
+      "kpi_experience": "medium"
+    },
+    "intent": {
+      "primary_objective": "margin_expansion",
+      "secondary": [
+        "retention",
+        "cash_liquidity"
+      ],
+      "horizon_months": 12,
+      "audience": "board"
+    },
+    "data_availability": {
+      "has": [
+        "ecommerce_platform",
+        "analytics",
+        "gl",
+        "hris",
+        "ads",
+        "wms"
+      ],
+      "missing": [
+        "survey",
+        "support_desk",
+        "crm"
+      ]
+    },
+    "provenance": {
+      "financials.gross_margin_pct": "sample",
+      "financials.revenue": "sample",
+      "market.segments": "sample",
+      "size.headcount_by_function": "sample",
+      "market.concentration_top10_pct": "benchmark_default:saas_b2b_p50"
+    },
+    "seed": 20250806,
+    "history_months": 36
+  },
+  "source": {
+    "kind": "synthetic",
+    "generator": {
+      "archetype": null,
+      "seed": null,
+      "history_months": null,
+      "history_end": "2026-08",
+      "seasonality_amplitude": 1.0,
+      "volatility": 1.0,
+      "inject_anomalies": true
+    },
+    "uploads": [],
+    "fill_gaps": []
+  },
+  "cleaning": {
+    "steps": []
+  },
+  "model": {
+    "mapping": {},
+    "calculated_columns": []
+  },
+  "metrics": {
+    "packs": null,
+    "pinned": [],
+    "excluded": [],
+    "overrides": {},
+    "custom": []
+  },
+  "plan": {
+    "label": "FY budget",
+    "values": {
+      "net_revenue": {
+        "2025-09": 14547787.7101,
+        "2025-10": 14961916.6348,
+        "2025-11": 15571123.1153,
+        "2025-12": 16261078.2917,
+        "2026-01": 16434866.4339,
+        "2026-02": 16631428.3626,
+        "2026-03": 16842995.3147,
+        "2026-04": 17066513.604,
+        "2026-05": 17317681.9671,
+        "2026-06": 17537967.7776,
+        "2026-07": 17833319.2593,
+        "2026-08": 18191448.9316
+      },
+      "contribution_margin": {
+        "2025-09": 0.2336,
+        "2025-10": 0.2105,
+        "2025-11": 0.2326,
+        "2025-12": 0.227,
+        "2026-01": 0.2317,
+        "2026-02": 0.2553,
+        "2026-03": 0.2186,
+        "2026-04": 0.2493,
+        "2026-05": 0.2323,
+        "2026-06": 0.2499,
+        "2026-07": 0.2154,
+        "2026-08": 0.2339
+      },
+      "orders_count": {
+        "2025-09": 651816.26,
+        "2025-10": 669748.28,
+        "2025-11": 696221.78,
+        "2025-12": 726433.9,
+        "2026-01": 738173.4,
+        "2026-02": 750517.1,
+        "2026-03": 764979.74,
+        "2026-04": 779379.84,
+        "2026-05": 794899.3,
+        "2026-06": 809473.24,
+        "2026-07": 823179.04,
+        "2026-08": 839306.94
+      },
+      "aov": {
+        "2025-09": 22.3436,
+        "2025-10": 22.3644,
+        "2025-11": 22.39,
+        "2025-12": 22.4097,
+        "2026-01": 22.289,
+        "2026-02": 22.1846,
+        "2026-03": 22.042,
+        "2026-04": 21.9219,
+        "2026-05": 21.8102,
+        "2026-06": 21.69,
+        "2026-07": 21.688,
+        "2026-08": 21.6985
+      },
+      "gross_margin_pct": {
+        "2025-09": 0.4298,
+        "2025-10": 0.4292,
+        "2025-11": 0.4285,
+        "2025-12": 0.4278,
+        "2026-01": 0.4271,
+        "2026-02": 0.4264,
+        "2026-03": 0.4257,
+        "2026-04": 0.4251,
+        "2026-05": 0.4244,
+        "2026-06": 0.4237,
+        "2026-07": 0.423,
+        "2026-08": 0.4223
+      },
+      "active_buyers": {
+        "2025-09": 28203.06,
+        "2025-10": 30469.32,
+        "2025-11": 37807.38,
+        "2025-12": 41887.29,
+        "2026-01": 27370.6,
+        "2026-02": 27847.82,
+        "2026-03": 30814.93,
+        "2026-04": 31409.85,
+        "2026-05": 32615.74,
+        "2026-06": 32691.71,
+        "2026-07": 31979.09,
+        "2026-08": 34985.79
+      }
+    },
+    "source": "Board-approved budget, set at the start of the reported year",
+    "derive_from_target": false
+  },
+  "analysis": {
+    "detectors": null,
+    "disabled": [],
+    "min_severity": null,
+    "max_findings": null,
+    "params": {}
+  },
+  "design": {
+    "theme": "light",
+    "brand": {
+      "primary": null,
+      "accent": null,
+      "logo_path": null,
+      "font_stack": null,
+      "footer_text": null
+    },
+    "locale": null,
+    "page_size": "A4",
+    "sections": null,
+    "exhibits": null,
+    "exhibit_widths": {}
+  },
+  "outputs": {
+    "artifacts": null
+  },
+  "ai": {
+    "enabled": false,
+    "model": "claude-opus-5",
+    "narrate_sections": null,
+    "max_paragraphs": 1,
+    "max_tokens_per_run": 150000
+  }
+}

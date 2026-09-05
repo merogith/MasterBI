@@ -209,6 +209,28 @@ jobs:
             echo "$name: 9 artifacts, $count charts"
           done
 
+      - name: Every sample run spec produces a variance to plan
+        # `samples/*.json` is a profile per file; a run spec is a different
+        # shape and lives one directory down, so this loop is separate rather
+        # than a second `continue` in the one above. 5.1's whole point is
+        # visible here: the spec sample must actually produce a variance, or
+        # the plan block is a field nothing reads.
+        run: |
+          set -e
+          for spec in samples/specs/*.json; do
+            name=$(basename "$spec" .json)
+            python -m kpi_maker run --spec "$spec" --out "out/spec-$name" --quiet
+            python - "$name" <<'PY'
+          import csv, sys
+          from pathlib import Path
+          rows = list(csv.DictReader(
+              (Path(f"out/spec-{sys.argv[1]}") / "facts.csv").open(encoding="utf-8-sig")))
+          planned = [r for r in rows if r.get("vs_plan")]
+          assert planned, f"{sys.argv[1]}: the spec carries a plan and no row reports a variance"
+          print(f"{sys.argv[1]}: {len(planned)} of {len(rows)} KPIs report a variance to plan")
+          PY
+          done
+
       - name: Every KPI pack passes its own linter
         # 4.3a's gate. Phase 4 authors ~600 record sheets, and the failures
         # that matter are invisible in a diff: a driver_parent pointing at a

@@ -192,8 +192,13 @@ def _select(ctx) -> Any:
     return select(ctx.get("resolve"), overrides=ctx.spec.metrics)
 
 
+# `plan` is in `reads` for the reason 0.2 recorded about the side channels: a
+# stage's cache key is the spec sections it declares, so a spec whose only
+# change is a new budget would otherwise be served the previous run's metrics
+# and report variance against a plan nobody set. Verified by editing the plan
+# and watching this stage rebuild.
 @stage("metrics", needs=("select", "model", "source"),
-       reads=("profile", "metrics", "source"),
+       reads=("profile", "metrics", "plan", "source"),
        label="Computing metrics")
 def _metrics(ctx) -> List[Any]:
     # Every cut the data offers, not one chosen here. The dimensions come from
@@ -210,7 +215,8 @@ def _metrics(ctx) -> List[Any]:
     tables = ctx.get("model")
     return compute(ctx.get("select"), tables, ctx.get("resolve"),
                    origins=getattr(ctx, "origins", None),
-                   by=dimensions(tables))
+                   by=dimensions(tables),
+                   plan_spec=ctx.spec.plan)
 
 
 @stage("analyse", needs=("metrics",), reads=("profile", "analysis"),

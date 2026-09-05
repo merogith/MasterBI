@@ -176,10 +176,18 @@ uvicorn kpi_maker.api.server:app --host 0.0.0.0 --port $PORT
 ## Adjusting a run
 
 `CompanyProfile` says who the company is. **`RunSpec`** says what the pipeline
-should do about it — source, cleaning, model, metrics, analysis, design,
+should do about it — source, cleaning, model, metrics, plan, analysis, design,
 outputs. Every field is optional, and every default means "derive it the way
 the pipeline always did", so an empty spec reproduces the original behaviour
 exactly.
+
+`plan` is the newest of the eight and the one worth a sentence: monthly budget
+figures per KPI, so the scorecard can show **variance to plan** beside the
+level. A KPI you do not budget has no variance — not a zero, and not its
+target repeated twelve times. `samples/specs/kestrel_retail.json` is a worked
+example (`python -m kpi_maker run --spec samples/specs/kestrel_retail.json`):
+the retailer beats its budget on revenue, orders and buyers, and misses it on
+both margin lines.
 
 ```jsonc
 {

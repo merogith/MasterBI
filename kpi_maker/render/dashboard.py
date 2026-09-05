@@ -92,6 +92,78 @@ def _basis_badge(result: MetricResult) -> str:
             f'{html.escape(label)}</span>')
 
 
+def _rounds_to_nothing(text: str) -> str:
+    """True when a formatted figure has no significant digit left in it.
+
+    Checked on the rendered string rather than by comparing the value against
+    a threshold, because the threshold differs per unit — whole pounds for
+    currency, one decimal for a percentage, two for a ratio — and `fmt.py`
+    already owns those rules. Asking it what it produced is one source of
+    truth; restating the precision here would be two.
+    """
+    return not any(ch in "123456789" for ch in text)
+
+
+def _plan_badge(result: MetricResult) -> str:
+    """Mark a plan this engine drew rather than one the business set.
+
+    Same rule as `_basis_badge`: a stated plan is quiet, because labelling
+    every one of them would make the distinction invisible through repetition.
+    A derived plan is labelled every time it appears — it is a path to the
+    KPI's own target, not a commitment anybody made, and the difference is the
+    whole reason `plan_basis` travels on the result.
+    """
+    if result.plan_basis != "derived":
+        return ""
+    tip = ("Not a stated budget: this line is the KPI's own target rule, "
+           "shaped like last year and scaled to land on the target")
+    return (f'<span class="basis-badge" title="{html.escape(tip)}">'
+            f'Derived</span>')
+
+
+def _variance_cell(result: MetricResult, currency: str,
+                   locale: Optional[str] = None) -> str:
+    """Variance to plan, coloured by whether it is good rather than by sign.
+
+    `vs_plan` is actual minus plan, so a cost metric beating its budget is
+    *negative* and a growth metric beating its budget is positive. Colouring
+    on the sign would put a red chip on the best cost month of the year, which
+    is the mistake 4.2a found in `vs_benchmark` — two branches where the
+    metric's own `direction` needed three.
+
+    `target_band` is the third: both extremes are bad, so neither direction is
+    "better" and the number is shown without a judgement rather than with a
+    guessed one.
+    """
+    value = result.vs_plan
+    if value is None:
+        return "—"
+    unit = result.kpi.unit
+    text = fmt_value(value, unit, currency, locale=locale)
+
+    # **A variance is a small number by construction, and the level's own
+    # precision can round it to nothing.** Found by looking at the retailer's
+    # board pack: average order value missed its budget by 41p on a £22 line
+    # and the cell read "+£0" — a real miss presented as exactly on plan,
+    # which is the same defect as 4.2a's band breach quoting "the green
+    # threshold of —". When the absolute figure rounds away, the relative one
+    # is the only honest reading left at that scale, so show that instead.
+    planned = result.plan_current
+    if value != 0 and _rounds_to_nothing(text) and planned:
+        text = fmt_value(value / abs(planned), "pct", currency, locale=locale)
+    if value > 0 and not text.startswith(("+", "-")):
+        text = f"+{text}"
+    direction = result.kpi.direction.value
+    if direction == "higher_is_better":
+        good = value > 0
+    elif direction == "lower_is_better":
+        good = value < 0
+    else:
+        return f'<span class="variance">{html.escape(text)}</span>'
+    css = "variance-good" if good else "variance-bad"
+    return f'<span class="{css}">{html.escape(text)}</span>'
+
+
 def _status_chip(status: str) -> str:
     glyph = STATUS_GLYPH.get(status, "○")
     label = STATUS_LABEL.get(status, "No data")
@@ -208,13 +280,21 @@ def _findings_section(findings: List[Finding],
 def _scorecard_table(results: List[MetricResult], kpi_set: KPISet,
                      currency: str, locale: Optional[str] = None) -> str:
     """The table view. Mandatory relief for the sub-3:1 palette slots."""
+    # Plan and variance appear only when this run has a plan. A run without one
+    # renders exactly the table it rendered before 5.1 — two empty columns of
+    # em-dashes would be worse than the feature's absence, and the alternative
+    # (filling them from the target) is the fabricated-budget failure
+    # `metrics/plan.py` exists to refuse.
+    planned = [r for r in results if r.plan_basis]
+    show_plan = bool(planned)
+    span = 9 if show_plan else 7
     rows = []
     for perspective in Perspective:
         group = [r for r in results if r.kpi.perspective == perspective]
         if not group:
             continue
         rows.append(
-            f'<tr class="group-row"><th colspan="7">'
+            f'<tr class="group-row"><th colspan="{span}">'
             f'{html.escape(perspective.value.replace("_", " ").title())}</th></tr>'
         )
         for r in sorted(group, key=lambda x: int(x.kpi.tier)):
@@ -222,12 +302,20 @@ def _scorecard_table(results: List[MetricResult], kpi_set: KPISet,
             bench = (fmt_value(k.benchmark.p50, k.unit, currency, locale=locale)
                      if k.benchmark else "—")
             pos = (r.benchmark_position or "—").replace("_", " ")
+            plan_cells = ""
+            if show_plan:
+                plan_cells = (
+                    f'<td class="num">'
+                    f'{html.escape(fmt_value(r.plan_current, k.unit, currency, locale=locale))}'
+                    f'{_plan_badge(r)}</td>'
+                    f'<td class="num">{_variance_cell(r, currency, locale)}</td>'
+                )
             rows.append(f"""
             <tr>
               <td class="kpi-name">{html.escape(k.name)}{_basis_badge(r)}
                 <span class="kpi-timing">{html.escape(k.timing.value)}</span></td>
               <td class="num">{html.escape(fmt_value(r.current, k.unit, currency, locale=locale))}</td>
-              <td class="num">{html.escape(fmt_value(r.prior_year, k.unit, currency, locale=locale))}</td>
+              <td class="num">{html.escape(fmt_value(r.prior_year, k.unit, currency, locale=locale))}</td>{plan_cells}
               <td class="num">{html.escape(fmt_value(r.target, k.unit, currency, locale=locale))}</td>
               <td class="num">{html.escape(bench)}</td>
               <td>{_status_chip(r.status)}</td>
@@ -247,6 +335,7 @@ def _scorecard_table(results: List[MetricResult], kpi_set: KPISet,
           <table>
             <thead><tr>
               <th>KPI</th><th class="num">Current</th><th class="num">12mo ago</th>
+              {'<th class="num">Plan</th><th class="num">vs plan</th>' if show_plan else ''}
               <th class="num">Target</th><th class="num">Cohort median</th>
               <th>Status</th><th>vs cohort</th>
             </tr></thead>
@@ -500,6 +589,14 @@ header.top h1 {{ margin: 0; font-size: 22px; letter-spacing: -0.01em; }}
 .delta {{ font-size: 12px; font-variant-numeric: tabular-nums; }}
 .delta-good {{ color: var(--delta-up); }}
 .delta-bad {{ color: var(--critical); }}
+/* Variance to plan reuses the engine's own delta tokens rather than defining
+   a second pair, so the dashboard, the deck and the PDF cannot end up
+   disagreeing about what "behind plan" looks like. `tabular-nums` because a
+   variance column is read down, and proportional digits make +1,240 and
+   -940 sit at different widths. */
+.variance {{ font-variant-numeric: tabular-nums; }}
+.variance-good {{ color: var(--delta-up); font-variant-numeric: tabular-nums; }}
+.variance-bad {{ color: var(--critical); font-variant-numeric: tabular-nums; }}
 .delta-period {{ color: var(--muted); }}
 
 .chip {{ display: inline-flex; align-items: center; gap: 4px; font-size: 11px;

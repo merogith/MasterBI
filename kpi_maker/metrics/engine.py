@@ -17,6 +17,7 @@ import pandas as pd
 
 from ..kpi.schema import KPI, KPISet
 from ..profile.schema import CompanyProfile
+from .plan import resolve as _resolve_plan
 from .targets import resolve_target
 
 # LTV horizon cap. Without this, low churn sends LTV to infinity and the
@@ -161,6 +162,49 @@ class MetricResult:
     # Empty is the common and honest case: most metrics need a cost line, and
     # costs are not split by segment because nothing measures them that way.
     by_segment: Dict[str, Dict[str, pd.Series]] = field(default_factory=dict)
+
+    # The plan scenario, month by month, when this run has one. IBCS notation
+    # is actual / plan / prior / forecast; `prior_year` and `prior_month` above
+    # are the third, this is the second, and the fourth is deliberately absent
+    # until something in the engine produces a forecast — see `spec.PlanSpec`.
+    #
+    # None is the common and honest case. A KPI with no plan has no variance,
+    # rather than a variance against a line this engine drew for it.
+    plan: Optional[pd.Series] = None
+    #: "stated" (the user's figures), "derived" (built from the target rule),
+    #: or "" when there is no plan. Travels with the result for the same reason
+    #: `basis` does: a plan the engine drew and one the board approved are not
+    #: interchangeable, and whoever renders it must be able to say which.
+    plan_basis: str = ""
+
+    @property
+    def plan_current(self) -> Optional[float]:
+        """The plan for the month `current` is measured in.
+
+        Deliberately not "the last plan value there is": a plan that runs to
+        year end would otherwise be compared against an actual eight months
+        behind it, and the variance would be a reading of the calendar.
+        """
+        if self.plan is None or self.series is None:
+            return None
+        latest = _last_valid_index(self.series)
+        if latest is None or latest not in self.plan.index:
+            return None
+        value = self.plan.loc[latest]
+        return float(value) if pd.notna(value) else None
+
+    @property
+    def vs_plan(self) -> Optional[float]:
+        """Actual minus plan, in the metric's own unit.
+
+        Signed the same way as `vs_target` — positive is above plan, which is
+        good or bad depending on `direction` and is the renderer's business,
+        not this property's.
+        """
+        planned = self.plan_current
+        if self.current is None or planned is None:
+            return None
+        return self.current - planned
 
     def current_by_segment(self, dimension: str) -> Dict[str, Optional[float]]:
         return {level: _last_valid(series)
@@ -593,6 +637,18 @@ def _last_valid(series: pd.Series, offset: int = 0) -> Optional[float]:
     return None if pd.isna(value) else float(value)
 
 
+def _last_valid_index(series: pd.Series):
+    """The period `_last_valid` reads its number from.
+
+    Separate from `_last_valid` because the plan has to be compared at the
+    *same month* as the actual, not at whichever month each line happens to
+    end. `_year_ago` below is the same lesson applied to the prior year — a
+    positional read was wrong there for exactly this reason.
+    """
+    s = series.dropna()
+    return None if s.empty else s.index[-1]
+
+
 def _year_ago(series: pd.Series) -> Optional[float]:
     """The value twelve months before the latest one, by date not by position.
 
@@ -803,7 +859,8 @@ def slice_tables(tables: Dict[str, pd.DataFrame], dimension: str,
 def compute(kpi_set: KPISet, tables: Dict[str, pd.DataFrame],
             profile: CompanyProfile,
             origins: Optional[Dict[str, str]] = None,
-            by: Union[None, str, Sequence[str]] = None) -> List[MetricResult]:
+            by: Union[None, str, Sequence[str]] = None,
+            plan_spec=None) -> List[MetricResult]:
     """Every selected KPI, blended — and per segment when `by` names a dimension.
 
     The blended series is always the company's. `by` adds a second view beside
@@ -851,18 +908,26 @@ def compute(kpi_set: KPISet, tables: Dict[str, pd.DataFrame],
         prior_year = _year_ago(series)
 
         used = evaluator.tables_used(kpi.id)
+        target = _resolve_target(kpi, current, prior_year, prior_month)
+        # Resolved here rather than in a later stage: the plan is a property of
+        # this metric's own month index, and a renderer handed a bare dict
+        # would have to re-derive the alignment that `plan.resolve` already
+        # does — which is the two-implementations drift this repo tests for.
+        plan_series, plan_basis = _resolve_plan(kpi.id, series, target, plan_spec)
         results.append(MetricResult(
             kpi=kpi,
             series=series,
             current=current,
             prior_year=prior_year,
             prior_month=prior_month,
-            target=_resolve_target(kpi, current, prior_year, prior_month),
+            target=target,
             status=kpi.status(current),
             benchmark_position=kpi.vs_benchmark(current),
             computed=True,
             basis=ctx.basis_for(used),
             tables_used=used,
+            plan=plan_series,
+            plan_basis=plan_basis,
         ))
 
     wanted = [by] if isinstance(by, str) else list(by or ())
@@ -934,6 +999,9 @@ def facts_table(results: List[MetricResult]) -> pd.DataFrame:
             "yoy_change": r.yoy_change,
             "target": r.target,
             "vs_target": r.vs_target,
+            "plan": r.plan_current,
+            "vs_plan": r.vs_plan,
+            "plan_basis": r.plan_basis,
             "status": r.status,
             "benchmark_p50": r.kpi.benchmark.p50 if r.kpi.benchmark else None,
             "benchmark_position": r.benchmark_position,
