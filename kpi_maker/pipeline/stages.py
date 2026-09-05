@@ -365,7 +365,11 @@ def _palettes(ctx) -> Dict[str, Dict[str, str]]:
     return cached
 
 
-@stage("visualise", needs=("metrics",), reads=("profile", "design"),
+# `source` is in `needs` because 5.3b draws the planted anomalies, and they
+# live on the source stage's output. Without it a warm re-run that reused
+# `visualise` while `source` rebuilt would show last run's bands — the same
+# cache-key discipline 5.1 applied to the plan section.
+@stage("visualise", needs=("metrics", "source"), reads=("profile", "design"),
        label="Building chart specs")
 def _visualise(ctx) -> Dict[str, List[Any]]:
     """Both themes, built once.
@@ -377,13 +381,16 @@ def _visualise(ctx) -> Dict[str, List[Any]]:
     currency = ctx.spec.resolve_currency()
     palette, design = _palettes(ctx), ctx.spec.design
     locale = ctx.spec.resolve_locale()
+    anomalies = getattr(ctx.get("source"), "anomalies", ()) or ()
     return {
         "light": build_all(results, tables, mode="light", currency=currency,
                            tokens=palette["light"], exhibits=design.exhibits,
-                           widths=design.exhibit_widths, locale=locale),
+                           widths=design.exhibit_widths, locale=locale,
+                           anomalies=anomalies),
         "dark": build_all(results, tables, mode="dark", currency=currency,
                           tokens=palette["dark"], exhibits=design.exhibits,
-                          widths=design.exhibit_widths, locale=locale),
+                          widths=design.exhibit_widths, locale=locale,
+                          anomalies=anomalies),
     }
 
 

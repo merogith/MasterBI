@@ -320,3 +320,143 @@ def test_both_waterfalls_label_their_closing_total(runs):
     built = _built(profile, results)
     if built.figure.data[0].type == "waterfall":
         assert built.figure.data[0].text[-1].strip()
+
+
+# --------------------------------------------------------------------------
+# Anomalies on the time axis (5.3b)
+# --------------------------------------------------------------------------
+
+def _anomaly(kind="thing", start=2, end=5, segment=""):
+    from kpi_maker.datagen.base import Anomaly
+
+    return Anomaly(kind=kind, start_month=start, end_month=end,
+                   magnitude=0.2, description="planted", segment=segment)
+
+
+def _month_figure(months=12):
+    import plotly.graph_objects as go
+
+    labels = [f"2025-{m:02d}" for m in range(1, 13)][:months]
+    fig = go.Figure(go.Scatter(x=labels, y=list(range(len(labels))),
+                               mode="lines", name="thing"))
+    return fig, labels
+
+
+def test_only_a_figure_whose_x_axis_is_months_gets_marked():
+    """Derived from the figure rather than declared on `ChartSpec`.
+
+    A `time_axis` flag would be one more thing twenty-odd builders have to
+    remember and one more thing that can be wrong; whether the x values are
+    `YYYY-MM` is a fact the figure already carries.
+
+    Mutation: mark unconditionally, and every bar chart grows vertical rules
+    through its categories.
+    """
+    import plotly.graph_objects as go
+
+    fig, _ = _month_figure()
+    assert C.mark_anomalies(fig, [_anomaly()]) == 1
+
+    categorical = go.Figure(go.Bar(x=["apparel", "home", "toys"], y=[1, 2, 3]))
+    assert C.mark_anomalies(categorical, [_anomaly()]) == 0
+    assert not (categorical.layout.shapes or ())
+
+
+def test_an_anomaly_running_past_the_window_is_marked_ongoing():
+    """Measured on the samples before writing anything: **`end_month`
+    routinely runs past the last reported month** — 36 on a 36-month window,
+    26 on a 25-month one — because an anomaly still running when history ends
+    is planted with an open end.
+
+    Indexing it naively raises `IndexError`. Clamping it silently would say
+    the problem is over. It is clamped *and* labelled.
+
+    Mutation: drop the `ongoing` flag, or index without clamping.
+    """
+    fig, labels = _month_figure(months=12)
+    assert C.mark_anomalies(fig, [_anomaly(kind="decay", start=6, end=99)]) == 1
+    texts = [str(a.text) for a in fig.layout.annotations]
+    assert any("ongoing" in t for t in texts), texts
+
+    bounded = _month_figure()[0]
+    C.mark_anomalies(bounded, [_anomaly(kind="spike", start=2, end=5)])
+    assert not any("ongoing" in str(a.text) for a in bounded.layout.annotations)
+
+
+def test_an_anomaly_wholly_outside_the_window_is_not_marked():
+    """`to_reported` drops the ones that ended before the window; one that
+    starts after it ends is the mirror case and must not draw a rule at the
+    right-hand edge.
+
+    The behaviour is asserted, not a particular guard — and that distinction
+    mattered: the first version named "drop the `start > last` check" as its
+    mutation and stayed green under it, because clamping such an event leaves
+    `end < start` and the next line catches it anyway. Two guards where one
+    decides, so the redundant one is gone.
+
+    Mutation: `if end < start` -> `if False`.
+    """
+    fig, _ = _month_figure(months=12)
+    assert C.mark_anomalies(fig, [_anomaly(start=40, end=50)]) == 0
+    assert not (fig.layout.shapes or ())
+    # And the mirror: an event that ended before the window opened.
+    before = _month_figure(months=12)[0]
+    assert C.mark_anomalies(before, [_anomaly(start=-9, end=-3)]) == 0
+
+
+def test_the_marker_does_not_restyle_the_data_it_points_at():
+    """**The first version shaded each anomaly's span**, and looking at it is
+    the whole reason this is a rule and not a band: three events tinted about
+    seventy per cent of a three-year ARR chart amber, and the tints
+    *compounded* where events overlapped — so the darkest region was wherever
+    the most bands coincided rather than wherever anything mattered.
+
+    An annotation that restyles the data it points at, and whose emphasis is
+    an artefact of overlap, is worse than no annotation.
+
+    Mutation: `add_vrect(...)` instead of the line shape.
+    """
+    fig, _ = _month_figure()
+    C.mark_anomalies(fig, [_anomaly(start=1, end=9), _anomaly(start=3, end=8)])
+    shapes = fig.layout.shapes or ()
+    assert shapes, "nothing was marked"
+    assert all(s.type == "line" for s in shapes), [s.type for s in shapes]
+    assert all(s.fillcolor in (None, "") for s in shapes)
+
+
+def test_the_planted_events_reach_a_real_run(runs):
+    """The gap this closes: the generator plants each anomaly with a written
+    description, the appendix prints the prose, and until 5.3b nothing marked
+    the months it referred to.
+
+    Mutation: drop `anomalies=` from the `visualise` stage.
+    """
+    from kpi_maker.viz.charts import build_all
+
+    for sample, (profile, results) in runs.items():
+        spec = RunSpec(profile=profile)
+        generated = GENERATORS[spec.resolve_archetype()](
+            profile, spec.source.generator)
+        assert generated.anomalies, sample
+        tables = dict(generated.tables)
+
+        plain = build_all(results, tables, currency=profile.identity.currency)
+        marked = build_all(results, tables, currency=profile.identity.currency,
+                           anomalies=generated.anomalies)
+        added = sum(len(b.figure.layout.shapes or ()) - len(a.figure.layout.shapes or ())
+                    for a, b in zip(plain, marked))
+        assert added > 0, f"{sample}: no exhibit was marked at all"
+
+
+def test_the_visualise_stage_declares_the_source_it_reads():
+    """The anomalies live on the `source` stage's output, so `visualise` has
+    to depend on it — otherwise a warm re-run that reused `visualise` while
+    `source` rebuilt would show the previous run's events. The same cache-key
+    discipline 5.1 applied to the plan section.
+
+    Mutation: remove `"source"` from the stage's `needs`.
+    """
+    import kpi_maker.pipeline.stages  # noqa: F401  - registers the stages
+    from kpi_maker.pipeline.graph import STAGES
+
+    assert "source" in STAGES["visualise"].needs, STAGES["visualise"].needs

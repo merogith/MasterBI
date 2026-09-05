@@ -18,6 +18,7 @@ theme toggle can restyle without re-rendering.
 """
 from __future__ import annotations
 
+import re
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -215,6 +216,107 @@ def add_scenario(fig: go.Figure, x, y, scenario: str, *,
                       + str(name or style["label"]) + "</extra>",
     ))
     return len(fig.data) - 1
+
+
+_MONTH_LABEL = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+def _month_axis(fig: go.Figure) -> Optional[List[str]]:
+    """The figure's x-axis months, or None if it does not plot time.
+
+    Derived from the data rather than declared on `ChartSpec`. A `time_axis`
+    flag would be one more thing every builder has to remember and one more
+    thing that can be wrong; whether the x values are `YYYY-MM` is a fact the
+    figure already carries.
+    """
+    for trace in fig.data:
+        values = getattr(trace, "x", None)
+        if values is None or len(values) == 0:
+            continue
+        labels = [str(v) for v in values]
+        if all(_MONTH_LABEL.match(v) for v in labels):
+            return labels
+    return None
+
+
+def mark_anomalies(fig: go.Figure, anomalies: Sequence) -> int:
+    """Shade the months a planted event covers. Returns how many were marked.
+
+    The generator plants each anomaly with a written description, the report
+    appendix prints that prose, and **nothing has ever marked the months it
+    refers to** — so a reader is told "a returns spike ran through the first
+    half of 2025" and left to find it on the chart themselves.
+
+    `to_reported` has already re-indexed the months onto the reported window,
+    so index 0 is the first reported month. What it does *not* do is bound
+    them, and measuring said that matters: **`end_month` routinely runs past
+    the last reported month** — 36 on a 36-month window, 26 on a 25-month one
+    — because an anomaly still running when history ends is planted with an
+    open end. Indexing naively would raise, so it is clamped, and the label
+    says *ongoing* rather than implying the problem is over.
+
+    **A start marker, not a shaded span, and looking at the first version is
+    why.** Shading each anomaly's months tinted roughly seventy per cent of a
+    three-year ARR chart amber, and — worse — the tints *compounded* where
+    events overlapped, so the darkest region of the chart was wherever the
+    most bands happened to coincide rather than wherever anything mattered.
+    An annotation that restyles the data it points at, and whose emphasis is
+    an artefact of overlap, is worse than no annotation. A thin dotted rule at
+    the month the event began says the same thing, cannot stack, and leaves
+    the series untouched; the full span and prose are in the report appendix,
+    which is where a sentence belongs.
+    """
+    labels = _month_axis(fig)
+    if not labels or not anomalies:
+        return 0
+
+    last = len(labels) - 1
+    marked = 0
+    for anomaly in anomalies:
+        start = int(getattr(anomaly, "start_month", 0))
+        end = int(getattr(anomaly, "end_month", start))
+        ongoing = end > last
+        # Clamp, then let the one check do all the work. An earlier version
+        # had an `end < 0 or start > last` guard in front of this; mutating it
+        # away changed nothing, because clamping an event that starts after
+        # the window ends leaves `end < start` anyway. Two guards where one
+        # decides is the same dead defensive code 5.3a removed from the
+        # waterfall, found the same way.
+        start, end = max(start, 0), min(end, last)
+        if end < start:
+            continue
+        # `add_vline` cannot carry an annotation on a categorical axis — it
+        # averages the x coordinates to place the label and the months are
+        # strings — so the rule and its label are added separately.
+        fig.add_shape(type="line", xref="x", yref="paper",
+                      x0=labels[start], x1=labels[start], y0=0, y1=1,
+                      line=dict(color=LIGHT["axis"], width=1, dash="dot"),
+                      layer="below")
+        fig.add_annotation(
+            x=labels[start], y=1.0, xref="x", yref="paper",
+            text=_anomaly_label(anomaly, ongoing),
+            showarrow=False,
+            xanchor="left" if marked % 2 else "right",
+            yanchor="bottom",
+            yshift=2 + 12 * (marked % 2),
+            font=dict(color=LIGHT["muted"], size=10),
+        )
+        marked += 1
+    return marked
+
+
+def _anomaly_label(anomaly, ongoing: bool) -> str:
+    """A few words, not the whole sentence.
+
+    The full description is already in the report's methodology appendix; on
+    a chart it would cover the data it is pointing at. The kind, the segment
+    it hit, and whether it is over.
+    """
+    words = str(getattr(anomaly, "kind", "")).replace("_", " ")
+    segment = str(getattr(anomaly, "segment", "") or "")
+    if segment:
+        words = f"{words} · {segment}"
+    return f"{words} (ongoing)" if ongoing else words
 
 
 def money_axis(fig, axis: str = "y") -> None:
@@ -869,7 +971,8 @@ def build_all(results: List[MetricResult],
               tokens: Optional[Dict[str, str]] = None,
               exhibits: Optional[Sequence[str]] = None,
               widths: Optional[Dict[str, str]] = None,
-              locale: Optional[str] = None) -> List[ChartSpec]:
+              locale: Optional[str] = None,
+              anomalies: Optional[Sequence] = None) -> List[ChartSpec]:
     set_mode(mode, tokens)
     set_currency(currency, locale)
     widths = widths or {}
@@ -891,6 +994,14 @@ def build_all(results: List[MetricResult],
             continue
         if eid in widths:
             spec.width = widths[eid]
+        # Applied here rather than inside each builder, and derived from the
+        # figure rather than declared on it: a `time_axis` flag would be one
+        # more thing twenty-odd builders have to remember and one more thing
+        # that can be wrong, while whether the x values are `YYYY-MM` is a
+        # fact the figure already carries. A builder that does not plot time
+        # is simply left alone.
+        if anomalies:
+            mark_anomalies(spec.figure, anomalies)
         specs.append(spec)
     return specs
 
