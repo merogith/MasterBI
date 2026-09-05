@@ -44,7 +44,7 @@
 - id: orders_count
   name: Orders
   perspective: customer
-  tier: 1
+  tier: 2
   timing: lagging
   direction: higher_is_better
   driver_parent: net_revenue
@@ -62,7 +62,6 @@
     An order is not a customer. A repeat buyer inflates this without widening
     the base — check it against active buyers before reading it as reach.
   serves_objectives: [growth]
-  core: true
 
 - id: aov
   name: Average Order Value
@@ -153,7 +152,7 @@
 - id: return_rate
   name: Return Rate
   perspective: internal_process
-  tier: 1
+  tier: 2
   timing: lagging
   direction: lower_is_better
   driver_parent: net_revenue
@@ -178,7 +177,6 @@
     Category mix drives most of the variance. A blended rate that rises may
     only mean apparel grew, which is why the return-by-category exhibit exists.
   serves_objectives: [margin_expansion, quality]
-  core: true
 
 - id: discount_rate
   name: Discount Rate
@@ -303,7 +301,7 @@
 - id: active_buyers
   name: Active Buyers
   perspective: customer
-  tier: 1
+  tier: 2
   timing: lagging
   direction: higher_is_better
   driver_parent: orders_count
@@ -321,7 +319,6 @@
     Not the same as the customer list, which only ever grows, nor the same as
     the trailing-year base. The gap between them is the lapsed file.
   serves_objectives: [growth, retention]
-  core: true
 
 - id: inventory_turns
   name: Inventory Turns
@@ -480,7 +477,6 @@
     Excludes the working capital that retail actually consumes. A business can
     hold EBITDA margin flat while running out of cash — read free cash flow too.
   serves_objectives: [margin_expansion]
-  core: true
 
 - id: free_cash_flow_margin
   name: Free Cash Flow Margin
@@ -509,7 +505,6 @@
     Lumpy month to month as buying cycles land. Read the trailing twelve
     months, not a single month.
   serves_objectives: [cash_liquidity, margin_expansion]
-  core: true
 
 - id: revenue_per_fte
   name: Revenue per FTE
@@ -664,4 +659,4 @@
     An average across categories hides both. A business can hold ninety days of
     slow lines and six of its bestsellers and show a comfortable blended figure
     while losing sales every week.
-  serves_objectives: [margin_expansion, efficiency]
+  serves_objectives: [margin_expansion, cash_liquidity]

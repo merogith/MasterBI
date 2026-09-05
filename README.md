@@ -31,7 +31,7 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 | HTTP API | `kpi_maker/api/` | done |
 | Web UI | `web/` | done — M8 (Vite + TypeScript + Preact, URL routing) |
 | Cross-sector fallback pack | `kpi_maker/kpi/library/general.yaml` | done — 19 KPIs, every sector runs |
-| More sectors (M2) | `kpi_maker/datagen/`, `kpi_maker/kpi/library/` | partial — 7 of 20 have their own generator archetype and 2 of 20 have their own KPI pack; the rest run on the nearest archetype and the cross-sector pack, and say so |
+| More sectors (M2) | `kpi_maker/datagen/`, `kpi_maker/kpi/library/` | partial — 7 of 20 have their own generator archetype and 7 of 20 have their own KPI pack; the rest run on the nearest archetype and the cross-sector pack, and say so |
 | AI Builder (M7) | `kpi_maker/ai/` | partial — planner, narrator and the number check ship; the conversational front door does not |
 
 ## Run it
@@ -445,8 +445,11 @@ cannot pass the gate on an empty set.
 - `nps`, `employee_enps` and support metrics need survey/helpdesk feeds the
   generator does not fabricate, so they drop out at selection with a recorded
   reason instead of showing invented scores.
-- **Two sectors have their own KPI pack** — SaaS and e-commerce. The other
-  eighteen run on the cross-sector `general` pack and the nearest generator
-  archetype, and every run says so in its own output rather than presenting a
-  borrowed scorecard as a native one. Adding a sector is a YAML file plus a
-  generator archetype (ROADMAP M2).
+- **Seven sectors have their own KPI pack** — SaaS, e-commerce, professional
+  services, agencies, engineering, manufacturing and marketplaces, over five
+  generator archetypes and five packs. The other thirteen run on the
+  cross-sector `general` pack, some of them alongside a sector pack whose
+  metrics fit even though the archetype only approximates them (food
+  production and real estate), and every run says so in its own output rather
+  than presenting a borrowed scorecard as a native one. Adding a sector is a
+  YAML file plus a generator archetype (ROADMAP M2).

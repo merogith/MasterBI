@@ -1,0 +1,314 @@
+# Marketplaces — the metrics a platform that never owns what it sells runs on.
+#
+# **Supplementary, not standalone.** `resolve_packs` returns `[marketplace,
+# general]`, so the P&L, workforce and marketing metrics come from the
+# cross-sector pack and this file adds only what `datagen/marketplace.py`'s own
+# tables make possible. No gross margin here, for the reason `project.yaml` and
+# `production.yaml` give: the general pack has one and 4.4 bands it per
+# archetype.
+#
+# **What was unreadable before this pack existed.** 4.2c gave the archetype
+# `gmv` and `liquidity`, and measuring afterwards found **no KPI read either** —
+# a platform's scorecard was nine P&L ratios computed on the take, with the
+# €98M of trade underneath it and the market that produced it both invisible.
+#
+# **The distinction this whole file turns on.** A marketplace has two revenue
+# numbers an order of magnitude apart, and the P&L reports the smaller one —
+# the take, which is the agent treatment ASC 606 requires of anyone who never
+# owns the goods. GMV is the larger one and lives in its own table. So
+# `gmv_ttm` here and `revenue_ttm` in the general pack are **not** the same
+# metric with two names: on the sample they are €98M and €11.5M. Reading the
+# take as the business's size understates it eightfold; reading GMV as revenue
+# overstates it by as much and puts the margin at 4%. There is a Tier 1
+# identity in `contract/identities.py` whose only job is to fire if the two
+# columns are ever swapped, and the two sheets below say in their own text
+# which is which.
+#
+# **The other thing only this archetype has: two books.** Every other pack
+# describes one side of a transaction. A marketplace fails from the supply side
+# far more often than from the demand side and the revenue line cannot tell you
+# which, so `supply_demand_ratio` and `listing_sell_through` are here to
+# separate them. 4.2c found a category clearing 11% of its requests in every
+# month of a run and nothing in the P&L moved.
+#
+# Benchmark bands are internal priors and say so, per 4.4: the published
+# platform distributions are unreachable from this environment.
+
+# --- The trade the platform intermediates -------------------------------------
+
+- id: gmv_ttm
+  name: Gross Merchandise Value
+  short_name: GMV
+  perspective: financial
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  # Revenue is a commission on this, so GMV is what explains a move in the
+  # top line rather than the reverse — the drill-down from revenue on a
+  # platform should land here, and on take rate next.
+  driver_parent: revenue_ttm
+  formula: total value transacted across the platform over the trailing year
+  compute:
+    kind: formula
+    expression: TTM(SUM(gmv.gross_merchandise_value))
+  unit: currency
+  owner_role: CEO
+  source_systems: [platform, payments]
+  interpretation: >
+    Everything bought and sold across the platform, at the price the buyer
+    paid. It is the size of the market the business has built, and it is not
+    the business's revenue: the platform keeps the take, which is a fraction
+    of this and is the number in the P&L.
+  pitfalls: >
+    GMV is gross of cancellations and returns and is the easiest number on
+    this page to inflate — a subsidised category or a low-value high-volume
+    line lifts it without adding a cent of take. Never read it without the
+    take rate beside it.
+  serves_objectives: [growth, fundraise, market_entry]
+  core: true
+
+- id: take_rate
+  name: Take Rate
+  short_name: Take
+  perspective: financial
+  tier: 1
+  timing: lagging
+  direction: target_band
+  driver_parent: gmv_ttm
+  formula: net revenue the platform kept / gross merchandise value
+  compute:
+    kind: formula
+    expression: >-
+      SAFE_DIV(SUM(gmv.net_revenue), SUM(gmv.gross_merchandise_value))
+  unit: pct
+  owner_role: CFO
+  source_systems: [platform, gl]
+  benchmark:
+    p25: 0.06
+    p50: 0.12
+    p75: 0.20
+    source: >-
+      MasterBI marketplace prior — a coarse internal band, not a published
+      distribution
+  interpretation: >
+    The share of each transaction the platform keeps, and the bridge between
+    the two numbers above. A band rather than a direction, deliberately: too
+    low and the platform cannot fund the market it is making, too high and
+    both sides start transacting around it.
+  pitfalls: >
+    Blended across categories whose commissions differ, so this moves on mix
+    with no pricing decision behind it — 4.2c measured a supply shortage in
+    the *lowest*-commission category lifting the blend. Read it by category
+    before changing a rate card.
+  serves_objectives: [margin_expansion, growth, fundraise]
+
+- id: gmv_growth_yoy
+  name: GMV Growth
+  short_name: GMV growth
+  perspective: financial
+  tier: 2
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: gmv_ttm
+  formula: year-on-year change in trailing-twelve-month GMV
+  compute:
+    kind: formula
+    expression: YOY(TTM(SUM(gmv.gross_merchandise_value)))
+  unit: pct
+  owner_role: CEO
+  source_systems: [platform]
+  interpretation: >
+    Whether the market is getting bigger. Read against the general pack's
+    revenue growth it separates a platform growing its trade from one growing
+    its cut, and only the first is durable.
+  pitfalls: >
+    Trailing-year basis, so it turns slowly and a step change takes two
+    quarters to show its full size here.
+  serves_objectives: [growth, fundraise, exit_prep]
+
+- id: average_transaction_value
+  name: Average Transaction Value
+  short_name: ATV
+  perspective: financial
+  tier: 3
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: gmv_ttm
+  formula: gross merchandise value / orders
+  compute:
+    kind: formula
+    expression: SAFE_DIV(SUM(gmv.gross_merchandise_value), SUM(gmv.orders))
+  unit: currency
+  owner_role: Head of Marketplace
+  source_systems: [platform]
+  interpretation: >
+    What a single transaction was worth. It decides whether GMV growth came
+    from more trades or bigger ones, and the two have completely different
+    costs to serve.
+  pitfalls: >
+    Blended across categories whose values differ several-fold, so this is a
+    mix reading first. A shift into a high-value category moves it without
+    any transaction changing.
+  serves_objectives: [growth, margin_expansion]
+
+# --- The market itself: two books, and which one is short ---------------------
+
+- id: match_rate
+  name: Match Rate
+  short_name: Match rate
+  perspective: internal_process
+  tier: 1
+  timing: leading
+  direction: higher_is_better
+  # A request that finds no counterparty is a transaction that does not
+  # happen, so liquidity is the first driver under the trade itself.
+  driver_parent: gmv_ttm
+  formula: requests that found a counterparty / requests made
+  compute:
+    kind: formula
+    expression: SAFE_DIV(SUM(liquidity.matches), SUM(liquidity.demand_requests))
+  unit: pct
+  owner_role: Head of Marketplace
+  source_systems: [platform]
+  benchmark:
+    p25: 0.38
+    p50: 0.52
+    p75: 0.68
+    source: >-
+      MasterBI marketplace prior — a coarse internal band, not a published
+      distribution
+  alert_bands: {green: 0.52, red: 0.38}
+  interpretation: >
+    The share of buyers who came and found what they wanted. This is
+    liquidity stated as the buyer experiences it, and it is the leading
+    indicator the P&L cannot carry: a buyer who does not find a seller
+    generates no transaction, so a failing market and a quiet month look
+    identical in the revenue line.
+  pitfalls: >
+    A blended rate hides a starved category completely. 4.2c found one
+    clearing 11% of its requests every month of a run with the blend inside
+    its normal range — read it by category or it will tell you nothing is
+    wrong.
+  serves_objectives: [growth, retention, quality]
+  core: true
+
+- id: supply_demand_ratio
+  name: Supply/Demand Balance
+  short_name: Balance
+  perspective: internal_process
+  tier: 2
+  timing: leading
+  direction: target_band
+  driver_parent: match_rate
+  formula: listings offered / requests made
+  compute:
+    kind: formula
+    expression: >-
+      SAFE_DIV(SUM(liquidity.supply_listings), SUM(liquidity.demand_requests))
+  unit: ratio
+  owner_role: Head of Marketplace
+  source_systems: [platform]
+  benchmark:
+    p25: 0.45
+    p50: 0.80
+    p75: 1.15
+    source: >-
+      MasterBI marketplace prior — a coarse internal band, not a published
+      distribution
+  interpretation: >
+    Which side of the market is short, which is the question a marketplace
+    exists to answer about itself and the only one that says where the next
+    pound of acquisition spend should go. A band, not a direction: sellers
+    without buyers leave as fast as buyers without sellers.
+  pitfalls: >
+    A listing is not a unit of supply everywhere — one seller's listing may
+    absorb five requests and another's one. Read it with sell-through, which
+    measures the same thing in transactions rather than in counts.
+  serves_objectives: [growth, retention, market_entry]
+
+- id: listing_sell_through
+  name: Listing Sell-Through
+  short_name: Sell-through
+  perspective: internal_process
+  tier: 2
+  timing: leading
+  direction: higher_is_better
+  driver_parent: match_rate
+  formula: matches / listings offered
+  compute:
+    kind: formula
+    expression: SAFE_DIV(SUM(liquidity.matches), SUM(liquidity.supply_listings))
+  unit: ratio
+  owner_role: Head of Supply
+  source_systems: [platform]
+  benchmark:
+    p25: 0.42
+    p50: 0.62
+    p75: 0.85
+    source: >-
+      MasterBI marketplace prior — a coarse internal band, not a published
+      distribution
+  alert_bands: {green: 0.62, red: 0.42}
+  interpretation: >
+    The market as a *seller* experiences it: of everything they listed, how
+    much sold. It is the single best predictor of supply-side churn, because
+    a seller who does not sell is precisely the seller who leaves — and by
+    the time that shows in GMV they are already gone.
+  pitfalls: >
+    Rises when supply is scarce, which is not the same as the platform
+    working well. A number climbing while the match rate falls is a market
+    running out of sellers, not one getting better at selling.
+  serves_objectives: [retention, growth, quality]
+
+# --- Both sides, growing or not ------------------------------------------------
+
+- id: demand_growth_yoy
+  name: Demand Growth
+  short_name: Demand
+  perspective: customer
+  tier: 2
+  timing: leading
+  direction: higher_is_better
+  driver_parent: match_rate
+  formula: year-on-year change in trailing-twelve-month buyer requests
+  compute:
+    kind: formula
+    expression: YOY(TTM(SUM(liquidity.demand_requests)))
+  unit: pct
+  owner_role: CMO
+  source_systems: [platform]
+  interpretation: >
+    Buyers arriving with an intention, counted before any of them transacts.
+    It leads GMV by however long the market takes to fill a request, which
+    makes it the earliest number on this page.
+  pitfalls: >
+    A request is an intention, not a purchase. Demand growing while the match
+    rate falls means the platform is buying traffic it cannot serve, which
+    costs money twice.
+  serves_objectives: [growth, market_entry, fundraise]
+
+- id: supply_growth_yoy
+  name: Supply Growth
+  short_name: Supply
+  perspective: customer
+  tier: 2
+  timing: leading
+  direction: higher_is_better
+  driver_parent: supply_demand_ratio
+  formula: year-on-year change in trailing-twelve-month listings offered
+  compute:
+    kind: formula
+    expression: YOY(TTM(SUM(liquidity.supply_listings)))
+  unit: pct
+  owner_role: Head of Supply
+  source_systems: [platform]
+  interpretation: >
+    The other book, growing or not. A marketplace fails from this side far
+    more often than from the buyer side, and it is the half a revenue line
+    never shows: sellers leave quietly, one at a time, and the GMV they took
+    with them is indistinguishable from a soft quarter.
+  pitfalls: >
+    Counts listings rather than sellers, so a handful of large sellers
+    expanding their catalogue reads the same as a broadening supply base. The
+    two carry very different concentration risk.
+  serves_objectives: [growth, retention, market_entry]

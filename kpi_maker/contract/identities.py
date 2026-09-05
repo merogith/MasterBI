@@ -520,6 +520,15 @@ def _fee_arithmetic(t, p):
                       f"rewritten without it")
 
 
+@check("standard value = billable hours x standard rate", Tier.structural, TIME,
+       archetypes=PROJECT)
+def _standard_value(t, p):
+    ts = t["timesheets"]
+    expected = ts["billable_hours"] * ts["standard_rate"]
+    return _ok(np.allclose(ts["standard_value"], expected, rtol=1e-6, atol=1e-6),
+               "the standard-value column and the two it is made of disagree")
+
+
 @check("billable hours never exceed available hours", Tier.structural, TIME,
        archetypes=PROJECT)
 def _utilisation_ceiling(t, p):

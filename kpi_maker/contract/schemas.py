@@ -342,6 +342,12 @@ PROJECT_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
             # so it is bounded generously rather than at one.
             "realisation": pa.Column(float, coerce=True,
                                      checks=pa.Check.in_range(0.0, 3.0)),
+            # Hours at the standard rate: what the firm would have earned had it
+            # billed every hour at list. Carried as a column because a KPI pack
+            # cannot compute it — `SUM()` reads a bare `table.column` and cannot
+            # multiply two of them — and because every practice-management
+            # system exports it under this name.
+            "standard_value": _money(ge=NON_NEGATIVE),
             "fee_revenue": _money(),
         },
         strict=False, name="timesheets",

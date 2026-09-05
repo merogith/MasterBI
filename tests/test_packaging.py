@@ -418,6 +418,15 @@ def test_the_launchers_gate_on_the_python_floor_they_need() -> None:
             f"README says Python {stated}; requires-python says {major}.{minor}"
 
 
+#: Spelled-out numbers, wide enough for every sector count the taxonomy can
+#: reach. Two of these checks used to hold their own short dict and both went
+#: quiet the moment a count moved past the last key they happened to list.
+NUMBER_WORDS = dict(enumerate(
+    ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+     "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+     "sixteen", "seventeen", "eighteen", "nineteen", "twenty")))
+
+
 def test_the_readme_counts_the_sector_packs_correctly() -> None:
     """The gap list must agree with the status table two screens above it.
 
@@ -429,7 +438,7 @@ def test_the_readme_counts_the_sector_packs_correctly() -> None:
     from kpi_maker.profile.sectors import declared_sectors, supported_sectors
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    words = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}
+    words = {n: w.capitalize() for n, w in NUMBER_WORDS.items()}
     n, total = len(supported_sectors()), len(declared_sectors())
 
     assert f"**{words[n]} sectors have their own KPI pack**" in readme, (
@@ -461,7 +470,9 @@ def test_the_readme_counts_the_sector_packs_correctly() -> None:
     # pattern was once pinned to the literal `of 10`, so it matched nothing and
     # went quietly vacuous while the README said "2 of 10".
 
-    remaining = {2: "eighteen", 8: "eight", 18: "eighteen"}.get(total - n)
+    # A dict that has to be extended every time a pack lands is how this
+    # check kept going stale; the words go up to the sector count instead.
+    remaining = NUMBER_WORDS.get(total - n)
     assert remaining, (
         f"{total - n} sectors run on the fallback and this check has no word "
         f"for that number, so it is about to pass by saying nothing")

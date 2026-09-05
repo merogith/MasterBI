@@ -481,8 +481,18 @@ header.top h1 {{ margin: 0; font-size: 22px; letter-spacing: -0.01em; }}
   gap: 12px; margin-bottom: 24px; }}
 .tile {{ background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; padding: 14px 16px; }}
-.tile-head {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }}
-.tile-head h3 {{ margin: 0; font-size: 12px; font-weight: 500; color: var(--text-secondary); }}
+/* A label that wraps must not push its own value down out of line with the
+   rest of the row. Found by looking at the consultancy board pack: the
+   `project` pack's longer names ("Utilisation", "Realisation") squeezed the
+   tiles either side, "Gross Margin" broke over two lines, and its number and
+   target then sat about fifteen pixels below every other tile's — a row of
+   headline figures that no longer reads as a row. Reserving the second line
+   for every tile costs one line of blank space on the short labels and keeps
+   the numbers on one baseline, which is what the row is for. */
+.tile-head {{ display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 8px; min-height: 32px; }}
+.tile-head h3 {{ margin: 0; font-size: 12px; font-weight: 500; color: var(--text-secondary);
+  line-height: 1.3; }}
 .tile-value {{ font-size: 26px; font-weight: 600; letter-spacing: -0.01em; margin: 8px 0 4px; }}
 .tile-foot {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; }}
 .tile-target {{ font-size: 11px; color: var(--muted); margin-top: 6px; }}

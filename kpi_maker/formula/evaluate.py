@@ -411,6 +411,19 @@ def validate(expression: str, scope: Scope = SERIES,
         if scope not in fn.scopes:
             raise scope_error(fn, scope)
         fn.check_arity(len(node.args))
+
+        # An aggregate's first argument is read *syntactically* by
+        # `_evaluate_aggregate` — it has to be a bare `table.column`, because
+        # resolving it as a value would fail and the aggregate is the thing that
+        # makes it monthly. `validate` never checked that, so
+        # `SUM(timesheets.billable_hours * timesheets.standard_rate)` passed
+        # here and raised at evaluation, which matters because
+        # `authoring/lint.py` grades every record sheet through this function:
+        # a pack could be approved carrying a formula the engine refuses, and it
+        # would surface as a KPI that quietly does not compute.
+        if fn.takes_column_ref and node.args:
+            dotted_name(node.args[0])
+
         used_functions.append(fn.name)
 
     from .introspect import aggregate_columns, references

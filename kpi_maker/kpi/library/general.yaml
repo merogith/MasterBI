@@ -79,6 +79,13 @@
   pitfalls: >
     Growth bought with margin is not growth. Read it beside gross margin and
     operating margin before drawing a conclusion.
+
+    It is also **one month against the same month a year ago**, while the
+    Revenue tile beside it moves on a trailing twelve. The two can differ by
+    fifteen points on the same dashboard and both be right — the platform
+    sample shows 42% here against 27% there — because one is a single month
+    and the other is a year. Take the trailing figure as the trend and this
+    one as the latest reading.
   serves_objectives: [growth, fundraise, market_entry]
   core: true
 
@@ -455,7 +462,15 @@
     Outsourcing raises this without changing productivity, because contractors
     are not full-time equivalents. Contract-heavy businesses will overstate.
   serves_objectives: [cost_reduction, margin_expansion, turnaround]
-  core: true
+  # Not core, and 4.3b is why. `core` seeds a sheet past the tier caps, so the
+  # exec tier holds however many cores exist rather than the six it advertises.
+  # This pack was authored as the whole library and marked five tier-1 sheets
+  # core; a sector pack adding one of its own then filled a cap of six before
+  # the greedy loop ran a single round, and every non-core tier-1 in the group
+  # became unreachable — realisation on a consultancy, take rate on a platform.
+  # Of the five this is the one an exec scorecard can do without: it is a
+  # productivity ratio in the learning perspective, not one of the six numbers
+  # a board opens with, and it still competes for a slot on its score.
 
 - id: workforce_size
   name: Headcount
@@ -566,4 +581,4 @@
   pitfalls: >
     Capitalisation policy moves this by several points without changing a
     single thing anyone does. State whether development cost is expensed.
-  serves_objectives: [growth, quality, digital_transformation]
+  serves_objectives: [growth, quality]

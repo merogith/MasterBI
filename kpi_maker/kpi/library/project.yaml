@@ -1,0 +1,330 @@
+# Professional services — the metrics a firm that sells its people's time runs on.
+#
+# **Supplementary, not standalone.** `resolve_packs` returns `[project, general]`
+# for these sectors, so the P&L, workforce and marketing metrics come from the
+# cross-sector pack and this file adds only what `datagen/project.py`'s own
+# tables make possible. That is why there is no gross margin here: the general
+# pack has one, its band is already resolved per archetype by 4.4, and a second
+# record sheet for the same arithmetic is the drift this repo tests for.
+#
+# Ids are distinct from every other pack's, which the scoped-duplicate guard in
+# `_load_packs` requires of a group that loads two files together.
+#
+# **This group carries the linter's `core-cap` warning, read and accepted.**
+# Three cores here plus three in the general pack come to the exec cap of six,
+# so `book_to_bill`, `cash_runway` and `revenue_per_head` cannot be selected at
+# tier 1 whatever they score. Those six *are* the right six for a firm that
+# sells its people's time — revenue, its growth, gross and operating margin,
+# utilisation and realisation — and the alternative was moving book-to-bill
+# down a tier to quiet the rule. That was checked and rejected: "a driver sits
+# below its parent's tier" is not a convention in this library (it is violated
+# 7 to 15 times per pack, some of them deliberately — `operating_margin` is a
+# child of `gross_margin` and both belong at tier 1), so the move would have
+# been gaming the linter rather than correcting the sheet.
+#
+# **What was unreadable before this pack existed.** 4.2 gave the archetype
+# `timesheets`, `backlog` and `projects`, and measured afterwards **no KPI read
+# any of them** — a consultancy's scorecard was nine P&L ratios and nothing it
+# manages itself by. Utilisation, realisation and book-to-bill are the three
+# numbers a partner opens with, and none was expressible.
+#
+# Benchmark bands here are internal priors and say so, for the reason 4.4
+# records at length: the published services distributions are unreachable from
+# this environment. They are per-line judgements a practice leader would
+# recognise rather than arithmetic over a cost structure, so unlike the general
+# pack's they cannot be derived — which is exactly why they carry the caveat.
+
+# --- Capacity: was the hour sold, and was it paid for? ------------------------
+
+- id: utilisation_rate
+  name: Utilisation
+  short_name: Utilisation
+  perspective: internal_process
+  tier: 1
+  timing: leading
+  direction: higher_is_better
+  # Billable hours sold are what a services firm's revenue is made of, so
+  # utilisation is the first driver under the top line.
+  driver_parent: revenue_ttm
+  formula: billable hours / hours the roster could have offered
+  compute:
+    kind: formula
+    expression: SAFE_DIV(SUM(timesheets.billable_hours), SUM(timesheets.available_hours))
+  unit: pct
+  owner_role: COO
+  source_systems: [psa, timesheets]
+  benchmark:
+    p25: 0.62
+    p50: 0.72
+    p75: 0.82
+    source: >-
+      MasterBI professional-services prior — a coarse internal band, not a
+      published distribution
+  alert_bands: {green: 0.72, red: 0.62}
+  interpretation: >
+    The share of available hours that were sold. It is the closest thing a
+    services firm has to a capacity utilisation number, and it moves before
+    revenue does: a month of bench time is a month of revenue that will not
+    arrive.
+  pitfalls: >
+    Utilisation counts hours billed, not hours paid for. A firm can run at 90%
+    and still lose money if it is writing those hours off — read it beside
+    realisation, never alone.
+  serves_objectives: [margin_expansion, cost_reduction]
+  core: true
+
+- id: realisation_rate
+  name: Realisation
+  short_name: Realisation
+  perspective: financial
+  tier: 1
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: utilisation_rate
+  formula: fee actually recognised / the same hours at standard rate
+  compute:
+    kind: formula
+    expression: SAFE_DIV(SUM(timesheets.fee_revenue), SUM(timesheets.standard_value))
+  unit: pct
+  owner_role: CFO
+  source_systems: [psa, gl]
+  benchmark:
+    p25: 0.84
+    p50: 0.91
+    p75: 0.97
+    source: >-
+      MasterBI professional-services prior — a coarse internal band, not a
+      published distribution
+  alert_bands: {green: 0.91, red: 0.84}
+  interpretation: >
+    What the firm earned against what it would have earned billing every hour at
+    list. The gap is discount, scope creep, or the wrong people on the job, and
+    it is where a services business loses margin without anyone deciding to.
+  pitfalls: >
+    On a fixed fee this falls when the job overruns, which is a delivery problem
+    wearing a pricing label. Read it by service line before concluding anything
+    about the rate card.
+  serves_objectives: [margin_expansion, quality, cost_reduction]
+  # Core for the same reason utilisation is, and the utilisation sheet above
+  # makes the argument itself: "read it beside realisation, never alone". A
+  # firm at 90% utilisation writing the hours off is losing money, and the two
+  # numbers together say so where either alone does not. Measured before this
+  # line existed: realisation scored highest of every tier-1 candidate on the
+  # consultancy sample and was still dropped, because the exec tier was full
+  # of cores and coverage before a single competitive round ran.
+  core: true
+
+- id: average_bill_rate
+  name: Average Bill Rate
+  short_name: Bill rate
+  perspective: financial
+  tier: 2
+  timing: lagging
+  direction: higher_is_better
+  driver_parent: realisation_rate
+  formula: fee revenue / billable hours
+  compute:
+    kind: formula
+    expression: SAFE_DIV(SUM(timesheets.fee_revenue), SUM(timesheets.billable_hours))
+  unit: currency
+  owner_role: CFO
+  source_systems: [psa, gl]
+  interpretation: >
+    What an hour of this firm's time actually fetched, blended across every role
+    and service line. It moves on mix as much as on price, which is the point:
+    a falling bill rate with flat pricing means junior people are doing more of
+    the work.
+  pitfalls: >
+    Blended across roles, so a partner-heavy month and a rate rise look the same
+    here. The mix question needs the rate by role.
+  serves_objectives: [margin_expansion, growth]
+
+- id: bench_ratio
+  name: Bench Time
+  short_name: Bench
+  perspective: internal_process
+  tier: 3
+  timing: leading
+  direction: lower_is_better
+  driver_parent: utilisation_rate
+  formula: available hours that were not billed / available hours
+  compute:
+    kind: formula
+    expression: 1 - SAFE_DIV(SUM(timesheets.billable_hours), SUM(timesheets.available_hours))
+  unit: pct
+  owner_role: COO
+  source_systems: [psa, timesheets]
+  benchmark:
+    p25: 0.38
+    p50: 0.28
+    p75: 0.18
+    source: >-
+      MasterBI professional-services prior — a coarse internal band, not a
+      published distribution
+  alert_bands: {green: 0.28, red: 0.38}
+  interpretation: >
+    The complement of utilisation, stated separately because it is the number a
+    resourcing conversation is actually about: how many people have nothing to
+    do next week.
+  pitfalls: >
+    Some bench is deliberate — training, sales support, and the slack a firm
+    needs to say yes to work. Zero bench is a firm that cannot take a new client.
+  serves_objectives: [cost_reduction, margin_expansion]
+
+# --- The stock of sold work ---------------------------------------------------
+
+- id: backlog_cover_months
+  name: Backlog Cover
+  short_name: Backlog
+  perspective: financial
+  tier: 1
+  timing: leading
+  direction: higher_is_better
+  # The stock of sold work is next quarter's revenue, so the backlog hangs
+  # under the same top line utilisation does — one is capacity, the other
+  # is demand already won.
+  driver_parent: revenue_ttm
+  formula: closing backlog / average monthly revenue recognised over the year
+  compute:
+    kind: formula
+    expression: SAFE_DIV(SUM(backlog.closing_backlog), ROLLING(SUM(backlog.revenue_recognised), 12))
+  unit: months
+  owner_role: CEO
+  source_systems: [psa, crm]
+  benchmark:
+    p25: 2.5
+    p50: 4.5
+    p75: 7.0
+    source: >-
+      MasterBI professional-services prior — a coarse internal band, not a
+      published distribution
+  alert_bands: {green: 4.5, red: 2.5}
+  interpretation: >
+    How many months the firm could keep delivering if it never won another
+    engagement. This is the leading half of a services P&L: revenue is what was
+    delivered, and the backlog is what there is left to deliver.
+  pitfalls: >
+    A long backlog can be a queue rather than a cushion — work sold at a price
+    agreed a year ago, delivered at today's salaries. Read it with realisation.
+  serves_objectives: [growth, cash_liquidity, fundraise]
+  core: true
+
+- id: book_to_bill
+  name: Book-to-Bill
+  short_name: Book/bill
+  perspective: customer
+  tier: 1
+  timing: leading
+  direction: higher_is_better
+  driver_parent: backlog_cover_months
+  formula: bookings over the trailing year / revenue recognised over the same year
+  compute:
+    kind: formula
+    expression: SAFE_DIV(TTM(SUM(backlog.bookings)), TTM(SUM(backlog.revenue_recognised)))
+  unit: ratio
+  owner_role: CEO
+  source_systems: [crm, psa]
+  benchmark:
+    p25: 0.92
+    p50: 1.05
+    p75: 1.20
+    source: >-
+      MasterBI professional-services prior — a coarse internal band, not a
+      published distribution
+  alert_bands: {green: 1.0, red: 0.9}
+  interpretation: >
+    Above one the firm is selling faster than it delivers and the backlog grows;
+    below one it is eating into work it already had. The revenue line will follow
+    about two quarters later, which is what makes this worth watching now.
+  pitfalls: >
+    One large win can push a quarter above 1.0 on its own. The trailing-year
+    basis here dampens that, at the cost of turning more slowly.
+  serves_objectives: [growth, market_entry]
+
+- id: bookings_growth_yoy
+  name: Bookings Growth
+  short_name: Bookings
+  perspective: customer
+  tier: 2
+  timing: leading
+  direction: higher_is_better
+  driver_parent: book_to_bill
+  formula: year-on-year change in trailing-twelve-month bookings
+  compute:
+    kind: formula
+    expression: YOY(TTM(SUM(backlog.bookings)))
+  unit: pct
+  owner_role: CEO
+  source_systems: [crm]
+  interpretation: >
+    What the firm sold, growing or shrinking, before any of it has been
+    delivered. It turns before revenue growth and it is the number a services
+    business can still act on.
+  pitfalls: >
+    Bookings are recognised on signature, so a change in what counts as signed —
+    a framework agreement, a letter of intent — moves this without anything
+    changing commercially.
+  serves_objectives: [growth, fundraise]
+
+# --- Delivery ------------------------------------------------------------------
+
+- id: senior_hours_share
+  name: Senior Hours Share
+  short_name: Seniority
+  perspective: internal_process
+  tier: 2
+  timing: leading
+  direction: lower_is_better
+  driver_parent: utilisation_rate
+  formula: partner and manager hours / all billable hours
+  compute:
+    kind: formula
+    expression: >-
+      SAFE_DIV(SUM(timesheets.billable_hours, timesheets.role == "partner")
+               + SUM(timesheets.billable_hours, timesheets.role == "manager"),
+               SUM(timesheets.billable_hours))
+  unit: pct
+  owner_role: COO
+  source_systems: [psa, timesheets]
+  benchmark:
+    p25: 0.34
+    p50: 0.26
+    p75: 0.19
+    source: >-
+      MasterBI professional-services prior — a coarse internal band, not a
+      published distribution
+  alert_bands: {green: 0.26, red: 0.34}
+  interpretation: >
+    The shape of the pyramid, measured in hours rather than in headcount. Senior
+    people delivering the work is how a firm reassures a client and how it
+    destroys its own margin, and which of the two it is shows up here before it
+    shows up in realisation.
+  pitfalls: >
+    A genuinely premium advisory practice sits high here by design. Read it by
+    service line, or a shift in mix reads as a leverage problem.
+  serves_objectives: [margin_expansion, cost_reduction]
+
+- id: backlog_growth_yoy
+  name: Backlog Growth
+  short_name: Backlog growth
+  perspective: customer
+  tier: 2
+  timing: leading
+  direction: higher_is_better
+  driver_parent: backlog_cover_months
+  formula: year-on-year change in closing backlog
+  compute:
+    kind: formula
+    expression: YOY(SUM(backlog.closing_backlog))
+  unit: pct
+  owner_role: CEO
+  source_systems: [psa, crm]
+  interpretation: >
+    Whether the stock of sold work is bigger than it was a year ago. Revenue
+    growth says what the firm delivered; this says what it has left to deliver,
+    and the two can point in opposite directions for two or three quarters.
+  pitfalls: >
+    Backlog grows when work is won and when work is *not delivered*, so a
+    delivery bottleneck reads here as commercial success. Read it with
+    utilisation.
+  serves_objectives: [growth, fundraise]

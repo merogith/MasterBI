@@ -13,9 +13,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set
 
-from ..kpi.schema import KPI, Perspective, Timing
-from ..kpi.selection import load_library
-from .validate import LEVELS, Finding, compiles, validate_sheet
+from ..kpi.schema import KPI, Perspective, Tier, Timing
+from ..kpi.selection import TIER_CAPS, load_library
+from .validate import (
+    LEVELS,
+    Finding,
+    aggregates_a_time_series,
+    compiles,
+    validate_sheet,
+)
 
 LIBRARY = Path(__file__).resolve().parents[1] / "kpi" / "library"
 
@@ -108,6 +114,11 @@ def lint_group(packs: Sequence[str], *, group: Optional[str] = None,
         if why:
             report.findings.append(Finding(
                 "error", "formula", why, pack=report.group, kpi_id=kpi.id))
+        grain = aggregates_a_time_series(kpi)
+        if grain:
+            report.findings.append(Finding(
+                "error", "entity-grain", grain, pack=report.group,
+                kpi_id=kpi.id))
 
     # --- Balanced Scorecard coverage --------------------------------------
     # A minimum only. The maximum is a property of the *selected* scorecard and
@@ -136,6 +147,34 @@ def lint_group(packs: Sequence[str], *, group: Optional[str] = None,
         "info", "leading-share",
         f"{share:.0%} of the pack is leading ({leading} of {len(kpis)})",
         pack=report.group))
+
+    # --- Core seeds against the exec cap ----------------------------------
+    # `core: true` seeds a sheet **past** the tier caps, so the exec tier holds
+    # however many cores the group happens to contain rather than the six it
+    # advertises, and every non-core tier-1 sheet becomes unreachable the
+    # moment the cores reach that number.
+    #
+    # Invisible in a diff and invisible at run time: the drop is reported as
+    # "tier 1 already at cap", which reads like a scoring outcome and is not
+    # one — the loop never ran a round. Measured in 4.3b, when `general` (five
+    # tier-1 cores, authored as the whole library) first met a supplementary
+    # pack: realisation scored highest of every tier-1 candidate on the
+    # consultancy sample and was dropped, and take rate went the same way on
+    # the platform. So it is reported at the *group*, which is the only place
+    # the arithmetic exists — neither file is wrong on its own.
+    cap = TIER_CAPS.get(Tier.exec_l1, 6)
+    cores = [k for k in kpis if k.core and k.tier == Tier.exec_l1]
+    if len(cores) >= cap:
+        blocked = sorted(k.id for k in kpis
+                         if k.tier == Tier.exec_l1 and not k.core)
+        report.findings.append(Finding(
+            "warn", "core-cap",
+            f"{len(cores)} tier-1 sheets are `core` against an exec cap of "
+            f"{cap}, so the greedy loop has no slot left to fill and "
+            f"{len(blocked)} tier-1 sheet(s) can never be selected for this "
+            f"group however they score"
+            + (f": {', '.join(blocked)}" if blocked else ""),
+            pack=report.group))
 
     # --- Redundancy -------------------------------------------------------
     for perspective in Perspective:

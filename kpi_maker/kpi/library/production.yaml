@@ -1,0 +1,381 @@
+# Manufacturing — the metrics a plant that makes what it sells runs on.
+#
+# **Supplementary, not standalone.** `resolve_packs` returns `[production,
+# general]`, so the P&L, workforce and marketing metrics come from the
+# cross-sector pack and this file adds only what `datagen/production.py`'s own
+# tables make possible. Gross margin is deliberately absent for the same reason
+# it is absent from `project.yaml`: the general pack has one, 4.4 resolves its
+# band per archetype, and a second record sheet for the same arithmetic is the
+# drift this repo tests for.
+#
+# **What was unreadable before this pack existed.** 4.2b gave the archetype
+# `production`, `inventory` and `shipments`, and measuring afterwards found **no
+# KPI read any of them** — a factory's scorecard was nine P&L ratios and nothing
+# about the plant. OEE, scrap and schedule utilisation are the three numbers a
+# works director opens with, and none was expressible.
+#
+# **The aggregation is exact, not an approximation, and that took checking.**
+# `AVG(production.oee)` would average line-months of very different sizes and
+# produce a number that is nobody's OEE. Because OEE is availability x
+# performance x quality and those three telescope —
+#
+#   runtime      units made        good units          good units
+#   -------  x  ------------  x  -------------  =  -----------------
+#   planned     rate x runtime    units made       rate x planned
+#
+# — and `capacity_units` **is** rate x planned hours, the blend is simply good
+# units over scheduled capacity. Verified against the generator: the aggregate
+# form and the gate's own capacity-weighted blend agree to 3.3e-16, and
+# availability x performance x quality reproduces it to 2.2e-16. Every ratio
+# below is weighted the same way, by the quantity in its own denominator.
+#
+# Benchmark bands here are internal priors and say so, for the reason 4.4
+# records at length: the published manufacturing distributions are unreachable
+# from this environment. OEE is the exception in kind rather than in status —
+# 85% "world class" and ~60% for discrete manufacturing are quoted everywhere
+# the term is used and originate with Nakajima's own TPM work, but this file
+# still declines to cite a source it did not fetch.
+
+# --- The plant: what the lines actually delivered -----------------------------
+
+- id: oee
+  name: Overall Equipment Effectiveness
+  short_name: OEE
+  perspective: internal_process
+  tier: 1
+  timing: leading
+  direction: higher_is_better
+  # Every point of OEE is fixed cost spread over more good units, so the
+  # plant's losses reach the P&L through the margin line.
+  driver_parent: gross_margin
+  formula: good units made / units the scheduled hours could have made
+  compute:
+    kind: formula
+    expression: SAFE_DIV(SUM(production.units_produced), SUM(production.capacity_units))
+  unit: pct
+  owner_role: COO
+  source_systems: [mes, scada]
+  benchmark:
+    p25: 0.55
+    p50: 0.68
+    p75: 0.82
+    source: >-
+      MasterBI manufacturing prior — a coarse internal band, not a published
+      distribution. The 85% "world class" and ~60% discrete-manufacturing
+      figures the term is usually quoted with are consistent with it.
+  alert_bands: {green: 0.68, red: 0.55}
+  interpretation: >
+    Of everything the plant was scheduled to make, the share it actually made
+    and could sell. It is the one number that carries all three ways a line
+    loses output — stopped, slow, or scrapping — and it is why a factory can
+    be busy and short at the same time.
+  pitfalls: >
+    OEE is measured against the hours that were *scheduled*, not against the
+    hours in the month, so a plant with no orders can post a high OEE on a
+    short week. Read it beside schedule utilisation or it will flatter a
+    downturn.
+  serves_objectives: [margin_expansion, cost_reduction, quality]
+  core: true
+
+- id: equipment_availability
+  name: Availability
+  short_name: Availability
+  perspective: internal_process
+  tier: 2
+  timing: leading
+  direction: higher_is_better
+  driver_parent: oee
+  formula: hours the lines actually ran / hours they were scheduled to run
+  compute:
+    kind: formula
+    expression: SAFE_DIV(SUM(production.runtime_hours), SUM(production.planned_hours))
+  unit: pct
+  owner_role: Maintenance Manager
+  source_systems: [mes, cmms]
+  benchmark:
+    p25: 0.80
+    p50: 0.88
+    p75: 0.94
+    source: >-
+      MasterBI manufacturing prior — a coarse internal band, not a published
+      distribution
+  alert_bands: {green: 0.88, red: 0.80}
+  interpretation: >
+    The first of OEE's three losses, and the one with an owner: the line was
+    scheduled and did not run. Breakdowns, changeovers and waiting for
+    material all land here, which is why it is the term maintenance is
+    measured on.
+  pitfalls: >
+    Planned maintenance is scheduled downtime, so a plant can lift this by
+    deferring it — and pay for it in the same number three months later.
+  serves_objectives: [cost_reduction, quality]
+
+- id: line_performance
+  name: Line Performance
+  short_name: Performance
+  perspective: internal_process
+  tier: 3
+  timing: leading
+  direction: higher_is_better
+  driver_parent: oee
+  formula: units made while running / units the line could have made at rate
+  compute:
+    kind: formula
+    expression: >-
+      SAFE_DIV(SUM(production.units_produced) + SUM(production.units_scrapped), SUM(production.capacity_units))
+      * SAFE_DIV(SUM(production.planned_hours), SUM(production.runtime_hours))
+  unit: pct
+  owner_role: Production Manager
+  source_systems: [mes, scada]
+  benchmark:
+    p25: 0.84
+    p50: 0.91
+    p75: 0.96
+    source: >-
+      MasterBI manufacturing prior — a coarse internal band, not a published
+      distribution
+  alert_bands: {green: 0.91, red: 0.84}
+  interpretation: >
+    OEE's second loss: the line was running and running slowly. Minor stops
+    too short to book as downtime, reduced speed on a difficult grade, and an
+    operator nursing a machine all show up here and nowhere else.
+  pitfalls: >
+    Measured against the nameplate rate, so a product mix that is genuinely
+    slower to run reads as a performance loss. Compare like grades, or read it
+    by product family.
+  serves_objectives: [cost_reduction, margin_expansion]
+
+- id: scrap_rate
+  name: Scrap Rate
+  short_name: Scrap
+  perspective: internal_process
+  tier: 2
+  timing: lagging
+  direction: lower_is_better
+  driver_parent: oee
+  formula: units scrapped / everything the lines made
+  compute:
+    kind: formula
+    expression: >-
+      SAFE_DIV(SUM(production.units_scrapped),
+               SUM(production.units_produced) + SUM(production.units_scrapped))
+  unit: pct
+  owner_role: Quality Manager
+  source_systems: [mes, qms]
+  benchmark:
+    p25: 0.055
+    p50: 0.030
+    p75: 0.015
+    source: >-
+      MasterBI manufacturing prior — a coarse internal band, not a published
+      distribution
+  alert_bands: {green: 0.030, red: 0.055}
+  interpretation: >
+    OEE's third loss, and the only one that is paid for twice: the material
+    was bought and the hours were run, and there is nothing to ship. It is
+    the term that connects the plant to the margin line directly.
+  pitfalls: >
+    Counted in units across product families whose value differs several-fold,
+    so a scrap rate that is flat in units can be rising sharply in money. Read
+    it by family before concluding anything about cost.
+  serves_objectives: [quality, cost_reduction, margin_expansion]
+
+- id: schedule_utilisation
+  name: Schedule Utilisation
+  short_name: Scheduled
+  perspective: internal_process
+  tier: 2
+  timing: leading
+  direction: higher_is_better
+  # What the order book was able to fill is the revenue the plant could
+  # book, so this sits under the top line rather than under OEE: it is a
+  # demand constraint, not a loss.
+  driver_parent: revenue_ttm
+  formula: capacity that was scheduled / capacity the lines physically have
+  compute:
+    kind: formula
+    expression: SAFE_DIV(SUM(production.capacity_units), SUM(production.nameplate_units))
+  unit: pct
+  owner_role: COO
+  source_systems: [erp, mes]
+  benchmark:
+    p25: 0.62
+    p50: 0.76
+    p75: 0.88
+    source: >-
+      MasterBI manufacturing prior — a coarse internal band, not a published
+      distribution
+  alert_bands: {green: 0.76, red: 0.62}
+  interpretation: >
+    How much of the plant the order book was able to fill. This is the
+    demand question asked in the plant's own units, and it is the one that
+    says whether the next conversation is with sales or with engineering.
+  pitfalls: >
+    A number near one is a ceiling, not an achievement: a plant with no
+    headroom cannot take an urgent order, and every breakdown becomes a
+    missed delivery.
+  # Margin, not only growth: a plant scheduled at three-quarters of nameplate
+  # is carrying the fixed cost of the other quarter, so absorption is the
+  # first thing this number decides. Without it the sheet scored 6.27 against
+  # the general pack's 8.57 for sales intensity and lost the process cap on a
+  # factory — the one archetype where a capacity ceiling is the whole point.
+  serves_objectives: [margin_expansion, growth, cost_reduction]
+
+# --- Stock and what left the building -----------------------------------------
+
+- id: finished_stock_cover
+  name: Finished Stock Cover
+  short_name: Stock cover
+  perspective: financial
+  tier: 2
+  timing: lagging
+  direction: target_band
+  # Stock on the floor is cash that has been spent and not yet recovered,
+  # which is where a cover number actually lands.
+  driver_parent: free_cash_flow_ratio
+  formula: closing finished units / average monthly units shipped over the year
+  compute:
+    kind: formula
+    expression: >-
+      SAFE_DIV(SUM(inventory.closing_units),
+               ROLLING(SUM(inventory.units_shipped), 12))
+  unit: months
+  owner_role: Supply Chain Director
+  source_systems: [erp, wms]
+  benchmark:
+    p25: 0.6
+    p50: 1.3
+    p75: 2.2
+    source: >-
+      MasterBI manufacturing prior — a coarse internal band, not a published
+      distribution
+  interpretation: >
+    How long the finished goods on the floor would keep customers supplied if
+    the lines stopped. Both ends of this are expensive, which is why it is
+    scored as a band rather than a direction: too little is a missed order,
+    too much is cash sitting in a warehouse going out of date.
+  pitfalls: >
+    Blended across product families, so a healthy total can hide a stockout in
+    the line that matters and a year of cover in the one that does not.
+  serves_objectives: [cash_liquidity, cost_reduction, quality]
+
+- id: average_selling_price
+  name: Average Selling Price
+  short_name: ASP
+  perspective: financial
+  tier: 3
+  timing: lagging
+  direction: higher_is_better
+  # Price times volume is revenue; this is the price half.
+  driver_parent: revenue_ttm
+  formula: gross shipped revenue / units shipped
+  compute:
+    kind: formula
+    expression: SAFE_DIV(SUM(shipments.gross_revenue), SUM(shipments.units_shipped))
+  unit: currency
+  owner_role: Commercial Director
+  source_systems: [erp]
+  interpretation: >
+    What a unit fetched, blended across every family and channel. It moves on
+    mix at least as much as on price, which is the point: a falling ASP with
+    an unchanged price list means the volume line is selling more of the cheap
+    grades.
+  pitfalls: >
+    A unit is not one thing here. Blending families whose prices differ
+    several-fold makes this a mix indicator first and a pricing indicator
+    second.
+  serves_objectives: [margin_expansion, growth]
+
+- id: discount_rate
+  name: Discount Rate
+  short_name: Discount
+  perspective: financial
+  tier: 3
+  timing: lagging
+  direction: lower_is_better
+  driver_parent: average_selling_price
+  formula: discounts given / gross shipped revenue
+  compute:
+    kind: formula
+    expression: SAFE_DIV(SUM(shipments.discounts), SUM(shipments.gross_revenue))
+  unit: pct
+  owner_role: Commercial Director
+  source_systems: [erp, crm]
+  benchmark:
+    p25: 0.075
+    p50: 0.045
+    p75: 0.022
+    source: >-
+      MasterBI manufacturing prior — a coarse internal band, not a published
+      distribution
+  alert_bands: {green: 0.045, red: 0.075}
+  interpretation: >
+    The gap between the price list and what was invoiced. It is the fastest
+    lever a sales force has and the one nobody decides centrally, so it drifts
+    upward in a soft quarter and is rarely pulled back.
+  pitfalls: >
+    Volume rebates settled at year end land in the month they are booked, so
+    a single month can look alarming for a reason that was agreed twelve
+    months earlier.
+  serves_objectives: [margin_expansion, cost_reduction]
+
+# --- What the customer saw ----------------------------------------------------
+
+- id: return_rate
+  name: Return Rate
+  short_name: Returns
+  perspective: customer
+  tier: 2
+  timing: lagging
+  direction: lower_is_better
+  driver_parent: scrap_rate
+  formula: credits for returned goods / gross shipped revenue
+  compute:
+    kind: formula
+    expression: SAFE_DIV(SUM(shipments.returns), SUM(shipments.gross_revenue))
+  unit: pct
+  owner_role: Quality Manager
+  source_systems: [erp, qms]
+  benchmark:
+    p25: 0.030
+    p50: 0.015
+    p75: 0.006
+    source: >-
+      MasterBI manufacturing prior — a coarse internal band, not a published
+      distribution
+  alert_bands: {green: 0.015, red: 0.030}
+  interpretation: >
+    Quality as the customer experienced it rather than as the plant measured
+    it. Scrap is caught inside the building; this is what got out, and it
+    costs the freight, the credit and the relationship as well as the unit.
+  pitfalls: >
+    Returns arrive weeks or months after the shipment that caused them, so
+    this lags the production problem behind it. A rise here dates a scrap
+    problem to the previous quarter, not this one.
+  serves_objectives: [quality, retention, margin_expansion]
+
+- id: shipped_volume_growth_yoy
+  name: Shipped Volume Growth
+  short_name: Volume
+  perspective: customer
+  tier: 2
+  timing: lagging
+  direction: higher_is_better
+  # And this is the volume half, against the growth line the two decompose.
+  driver_parent: revenue_growth_yoy
+  formula: year-on-year change in trailing-twelve-month units shipped
+  compute:
+    kind: formula
+    expression: YOY(TTM(SUM(shipments.units_shipped)))
+  unit: pct
+  owner_role: Commercial Director
+  source_systems: [erp]
+  interpretation: >
+    Growth with the price out of it. Read beside revenue growth it separates
+    a business selling more from one charging more, and the two call for
+    entirely different plans.
+  pitfalls: >
+    Units are summed across families, so a shift into a cheaper high-volume
+    grade shows here as growth and in the revenue line as decline. Neither is
+    wrong.
+  serves_objectives: [growth, market_entry]

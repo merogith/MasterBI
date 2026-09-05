@@ -435,6 +435,7 @@ def _build_timesheets(months, hours, recognised, rng, anomalies,
                     "available_hours": billable / utilisation,
                     "standard_rate": float(rate[ri]),
                     "realisation": float(fee[ri] / (billable * rate[ri])),
+                    "standard_value": float(billable * rate[ri]),
                     "fee_revenue": float(fee[ri]),
                 })
     return pd.DataFrame(rows)

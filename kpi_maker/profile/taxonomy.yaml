@@ -191,7 +191,7 @@ sectors:
       code: "31-33"
       title: "Manufacturing"
     archetype: production
-    packs: [general]
+    packs: [production, general]
 
   - id: food_production
     label: Food and beverage production
@@ -209,7 +209,7 @@ sectors:
       yield and line efficiency are modelled by the production archetype;
       shelf life, short-dated stock and seasonal agricultural input costs
       are not
-    packs: [general]
+    packs: [production, general]
 
   - id: logistics
     label: Logistics and transport
@@ -308,7 +308,7 @@ sectors:
       an agency earns a fee on a transaction it never owns, which is the
       marketplace archetype's shape; a landlord's or developer's economics —
       yield, occupancy and asset values — are not simulated
-    packs: [general]
+    packs: [marketplace, general]
 
   - id: marketplace
     label: Marketplace or platform
@@ -322,7 +322,7 @@ sectors:
       code: "4541"
       title: "Electronic Shopping and Mail-Order Houses"
     archetype: marketplace
-    packs: [general]
+    packs: [marketplace, general]
 
   # ---- project-shaped ---------------------------------------------------
   - id: services
@@ -337,7 +337,7 @@ sectors:
       code: "5416"
       title: "Management, Scientific, and Technical Consulting Services"
     archetype: project
-    packs: [general]
+    packs: [project, general]
 
   - id: agency
     label: Marketing and creative agencies
@@ -351,7 +351,7 @@ sectors:
       code: "5418"
       title: "Advertising, Public Relations, and Related Services"
     archetype: project
-    packs: [general]
+    packs: [project, general]
 
   - id: engineering
     label: Architecture and engineering
@@ -365,7 +365,7 @@ sectors:
       code: "5413"
       title: "Architectural, Engineering, and Related Services"
     archetype: project
-    packs: [general]
+    packs: [project, general]
 
   - id: construction
     label: Construction and contracting
@@ -383,4 +383,4 @@ sectors:
       contracts are delivered over time against staged completion, which the
       project archetype models; retentions, variations and materials-heavy
       cost structures are not simulated
-    packs: [general]
+    packs: [project, general]

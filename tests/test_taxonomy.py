@@ -115,11 +115,59 @@ def test_an_approximated_sector_says_why(sector):
     assert note and sector.id in note and sector.why.split()[0] in note
 
 
-def test_only_the_two_finished_sectors_claim_to_be_exact():
-    """Twenty sectors is breadth, not twenty finished sectors. Anything else
-    claiming exactness would be the "quietly borrowed another's content" bug
-    the sector suite was written to catch."""
-    assert sectors.supported_sectors() == ["ecommerce", "saas"]
+def test_a_sector_claims_exactness_only_when_it_has_both_halves_on_disk():
+    """Twenty sectors is breadth, not twenty finished sectors. A sector
+    claiming exactness it does not have is the "quietly borrowed another's
+    content" bug the sector suite was written to catch.
+
+    **This was `== ["ecommerce", "saas"]` and is the fourth hardcoded shape in
+    this program to be rewritten as the property it stood in for**, after
+    `len(universal) == 4`, `len(declared) == 10` and `tests/sector.py`'s
+    exact-in-both-halves split. A literal list is a fact about today; it goes
+    red on correct work and says nothing about whether the claim is true. What
+    is actually being asserted is that the two things `sectors.py` answers
+    separately are each backed by something real — a generator that exists and
+    a pack file that exists — so the check now goes and looks.
+    """
+    from kpi_maker.datagen import GENERATORS
+    from kpi_maker.kpi.selection import LIBRARY_DIR
+
+    exact = sectors.supported_sectors()
+    assert exact, "no sector is exact, which cannot be right"
+
+    for sector in exact:
+        archetype = sectors.resolve_archetype(sector)
+        packs = sectors.resolve_packs(sector)
+        assert archetype.exact and archetype.note is None, sector
+        assert packs.exact and packs.note is None, sector
+        assert archetype.value in GENERATORS, (sector, archetype.value)
+        # Its own pack, not a neighbour's and not the fallback alone: the
+        # first entry is the sector's, per `resolve_packs`'s specific-first
+        # order, and there has to be a file behind it.
+        own = packs.value[0]
+        assert own != "general", f"{sector} claims exactness on the fallback"
+        assert (LIBRARY_DIR / f"{own}.yaml").exists(), (sector, own)
+        # **The pack must be named for the archetype**, and this is the
+        # assertion with teeth rather than the file check above. Sharing a
+        # pack is legitimate — services, agencies and engineering all run on
+        # `project`, because it is the same business shape. Reaching for a
+        # pack built on a *different* archetype is not: its formulas name
+        # fact tables this sector's generator never emits, so every sheet in
+        # it resolves to nothing and the scorecard silently shrinks to the
+        # cross-sector remainder. Sector -> pack is many-to-one; pack ->
+        # archetype is one-to-one, and that is what keeps the formulas
+        # computable.
+        assert own == archetype.value, (
+            f"{sector} runs the {own!r} pack on the {archetype.value!r} "
+            f"archetype; those sheets read tables it does not emit")
+
+    # And the converse, which is the half that catches a silent borrow: a
+    # sector left off the list must be missing one of those two things.
+    for sector in sectors.declared_sectors():
+        if sector in exact:
+            continue
+        assert not (sectors.resolve_archetype(sector).exact
+                    and sectors.resolve_packs(sector).exact), sector
 
 
 # --------------------------------------------------------------------------

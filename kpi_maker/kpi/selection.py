@@ -34,6 +34,32 @@ W_AUDIENCE = 2.0
 W_TIER = 2.0
 W_REDUNDANCY = -4.0
 
+# A sheet from the sector's own pack outranks the cross-sector one it is
+# loaded beside. `resolve_packs` has always returned its list specific-first —
+# `[project, general]`, not the other way round — and nothing read that order
+# until 4.3b, so a metric the archetype exists to make expressible competed
+# with a generic cost ratio on identical terms.
+#
+# **What this weight does and does not do, measured rather than assumed.**
+# It was added while chasing three drops — realisation on a consultancy, take
+# rate on a platform, schedule utilisation on a factory — and it fixed none of
+# them: setting it to 0.0 and re-running all six samples leaves all three on
+# their scorecards. Those had two other causes, both fixed where they were
+# (`core` seeding past the tier caps, and a leading sheet that claimed no
+# objective its own archetype's owner would state).
+#
+# Its real effect is four swaps across six samples, and they are the right
+# four — a plant gets availability and stock cover instead of overhead
+# intensity and a cash ratio, a consultancy its bill rate instead of opex
+# ratio. Small, in the intended direction, and worth keeping for exactly that.
+# Claiming the other three would have been taking credit for someone else's
+# fix, which is how a weight nobody can justify ends up load-bearing.
+#
+# Deliberately smaller than a leading-indicator bonus and a quarter of an
+# intent match: it breaks a near-tie, and every sample keeps revenue, revenue
+# growth, gross margin and operating margin (asserted).
+W_PACK_SPECIFICITY = 1.2
+
 # Balanced Scorecard coverage constraints (Kaplan & Norton).
 MIN_PER_PERSPECTIVE = 2
 MAX_PER_PERSPECTIVE = 7
@@ -74,12 +100,30 @@ REDUNDANT_PAIRS = [
 
 # Only ids that a shipped pack actually defines belong here. `gmv`, `oee` and
 # `utilization_rate` used to be listed for marketplace, manufacturing and
-# services; none of the three exists, so all three silently fell through to the
-# tier-0 fallback below and the map read as coverage the library did not have.
-# Re-add each one with its pack in ROADMAP M2 / Phase 4.
+# services; none of the three existed, so all three silently fell through to
+# the tier-0 fallback below and the map read as coverage the library did not
+# have. 0.1 removed them and said to re-add each one with its pack.
+#
+# 4.3b authored all three packs and re-adds **one** of them, which is the
+# honest count rather than the tidy one. A marketplace's headline number is
+# GMV: the P&L reports the take because the platform never owns the goods, so
+# revenue understates the business it has built roughly eightfold — €11.5M
+# against €98M on the sample — and a board pack headed by the smaller number
+# is describing a different company. That argument is specific to the agent
+# treatment and does not transfer.
+#
+# `manufacturing` and `services` stay on the tier-0 fallback deliberately.
+# OEE and utilisation are the right north stars for a *plant* and a *practice*
+# and neither is the right headline for the whole firm: both are operational
+# ratios that say nothing about the size or direction of the business, and the
+# default audience here is `board`. Both are `core: true` in their packs
+# instead, so they are on every scorecard for those sectors without claiming
+# to be the one number the company is steered by.
 NORTH_STAR_BY_MODEL = {
     "saas": "arr",
     "ecommerce": "contribution_margin",
+    "marketplace": "gmv_ttm",
+    "real_estate": "gmv_ttm",
 }
 
 
@@ -103,6 +147,27 @@ def pack_files(packs: Optional[List[str]] = None) -> List[Path]:
             raise FileNotFoundError(f"KPI pack not found: {pack}")
         files.extend(matches)
     return files
+
+
+def pack_of(packs: Optional[List[str]] = None) -> Dict[str, int]:
+    """kpi id -> how specific the pack it came from is (0 = most specific).
+
+    `resolve_packs` returns its list specific-first — `[project, general]`, not
+    the other way round — and that order was carrying no weight at all until
+    4.3b measured what happens when a supplementary pack meets a cross-sector
+    one that was authored to stand alone. See `W_PACK_SPECIFICITY`.
+
+    With no pack list there is no sector context to be specific *about*, so
+    everything ranks 0 and the bonus is uniform, which is the same as absent.
+    """
+    if not packs:
+        return {}
+    rank: Dict[str, int] = {}
+    for index, pack in enumerate(packs):
+        for path in pack_files([pack]):
+            for entry in yaml.safe_load(path.read_text(encoding="utf-8")) or []:
+                rank.setdefault(str(entry.get("id")), index)
+    return rank
 
 
 def _load_packs(packs: Optional[List[str]] = None) -> List[KPI]:
@@ -274,8 +339,15 @@ def _apply_overrides(library: List[KPI], overrides) -> List[KPI]:
     return out
 
 
-def _score(kpi: KPI, profile: CompanyProfile, perspective_counts: Dict[Perspective, int]) -> float:
+def _score(kpi: KPI, profile: CompanyProfile, perspective_counts: Dict[Perspective, int],
+           specificity: Optional[Dict[str, int]] = None) -> float:
     score = 0.0
+
+    # 0 is the sector's own pack, 1 the cross-sector fallback beside it. An id
+    # the map does not carry is a user or custom KPI, which the user asked for
+    # by name and is at least as specific as anything shipped.
+    if specificity:
+        score += W_PACK_SPECIFICITY if specificity.get(kpi.id, 0) == 0 else 0.0
 
     primary = profile.intent.primary_objective.value
     if primary in kpi.serves_objectives:
@@ -346,6 +418,7 @@ def select(profile: CompanyProfile, extra_packs: Optional[List[str]] = None,
              else _packs_for(profile))
     packs = packs + list(extra_packs or [])
     library, load_notes = _load_with_overrides(packs)
+    specificity = pack_of(packs)
 
     # Re-band for this company before anything reads a benchmark. Scoring gives
     # a benchmarked KPI half a point, `metrics/targets.py` resolves against the
@@ -482,7 +555,7 @@ def select(profile: CompanyProfile, extra_packs: Optional[List[str]] = None,
     while pool:
         scored = []
         for kpi in pool:
-            base = _score(kpi, profile, perspective_counts)
+            base = _score(kpi, profile, perspective_counts, specificity)
             selected_ids = {k.id for k in selected}
             for a, b in REDUNDANT_PAIRS:
                 if (kpi.id == a and b in selected_ids) or (kpi.id == b and a in selected_ids):

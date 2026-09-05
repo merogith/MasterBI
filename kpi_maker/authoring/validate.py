@@ -15,7 +15,7 @@ or renders as an empty row.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set
 
 from ..formula.errors import FormulaError
 from ..kpi.expr import ExpressionError
@@ -125,6 +125,33 @@ def _evaluates(expression: str, profile) -> Optional[str]:
     return None
 
 
+def _objective_values() -> List[str]:
+    from ..profile.schema import Objective
+
+    return [o.value for o in Objective]
+
+
+def _unknown_objectives(kpi: KPI) -> List[str]:
+    """Objectives this sheet claims to serve that no profile can ever state.
+
+    `serves_objectives` is `List[str]` rather than `List[Objective]`, and that
+    is not an oversight to correct in the model: a stored user KPI posted to
+    `/api/catalog/kpis` would then 422 on a value that costs it nothing but
+    half a rank, and a spec saved before an objective was renamed would stop
+    loading. The looseness is right and the silence is not.
+
+    `selection._score` matches this field by string against `Objective`, at the
+    heaviest weight in the function (5.0 primary, 2.0 secondary), and
+    `_explain` reads it again for the rationale the user sees. So a value that
+    is not an enum member is worth exactly nothing, twice, and looks like
+    intent both times. Measured when this check was written: `efficiency` on
+    e-commerce's inventory cover and `digital_transformation` on the general
+    pack's R&D intensity had been shipping since those packs were authored.
+    """
+    valid = set(_objective_values())
+    return sorted({o for o in kpi.serves_objectives if o not in valid})
+
+
 def validate_sheet(kpi: KPI, *, pack: str = "", known_ids: Optional[Set[str]] = None,
                    registry: Optional[Set[str]] = None,
                    profile=None) -> List[Finding]:
@@ -181,6 +208,15 @@ def validate_sheet(kpi: KPI, *, pack: str = "", known_ids: Optional[Set[str]] = 
     if kpi.is_formula and not (kpi.compute.expression or "").strip():
         add("error", "formula", "declares `kind: formula` with no expression")
 
+    unknown_objectives = _unknown_objectives(kpi)
+    if unknown_objectives:
+        add("error", "objective",
+            f"serves {', '.join(unknown_objectives)}, which is not an "
+            f"`Objective` — selection matches this field by string against the "
+            f"enum, and intent is its heaviest weight, so the sheet loses "
+            f"5 points it was authored to earn and `_explain` omits the "
+            f"reason. Valid: {', '.join(_objective_values())}")
+
     if kpi.benchmark is not None and not (kpi.benchmark.source or "").strip():
         add("error", "benchmark", "has a benchmark with no citation")
 
@@ -209,6 +245,55 @@ def _is_a_prior(benchmark) -> bool:
     return ("llustrative" in source
             or "not a published distribution" in source
             or "internal prior" in (benchmark.vintage or ""))
+
+
+def _entity_grain_tables() -> Set[str]:
+    """Fact tables with no `month` column, read from the schemas that declare it.
+
+    `customers`, `projects` and `suppliers` are one row per entity, so a monthly
+    aggregate over them cannot be computed at all — `SUM(projects.actual_hours)`
+    raises *"projects has no month column, so it cannot be aggregated by
+    month"*. Derived rather than listed, so an archetype adding an entity-grain
+    table is covered without anyone remembering this function exists.
+    """
+    from ..contract.schemas import SCHEMAS_BY_ARCHETYPE
+
+    monthly: Dict[str, bool] = {}
+    for schemas in SCHEMAS_BY_ARCHETYPE.values():
+        for name, schema in schemas.items():
+            monthly[name] = monthly.get(name, False) or "month" in schema.columns
+    return {name for name, has in monthly.items() if not has}
+
+
+def aggregates_a_time_series(kpi: KPI) -> Optional[str]:
+    """None if every aggregate in this sheet reads a table that has months.
+
+    **The gap 4.3b found by running a pack the linter had passed.** Two project
+    record sheets validated cleanly — the syntax parses, the references resolve,
+    the functions exist — and then computed nothing on every run, because
+    `SUM()` groups by month and `projects` is one row per engagement. The
+    general pack's own header has warned about this for `customers` since 0.1;
+    what was missing was anything that checked.
+
+    It is exactly the failure `validate.py` exists to catch: invisible in a
+    diff, silent at run time, and surfacing as a KPI that is simply absent.
+    """
+    if not kpi.is_formula:
+        return None
+    from ..formula.introspect import aggregate_columns
+
+    try:
+        columns = aggregate_columns(kpi.compute.expression or "")
+    except Exception:                                     # noqa: BLE001
+        return None            # a broken expression is `compiles`'s to report
+    entity = _entity_grain_tables()
+    bad = sorted({ref.split(".")[0] for ref in columns
+                  if ref.split(".")[0] in entity})
+    if not bad:
+        return None
+    return (f"aggregates {', '.join(bad)}, which is one row per entity and has "
+            f"no month column — the metric cannot be computed at all, and will "
+            f"be absent from every run rather than wrong on one")
 
 
 def compiles(kpi: KPI, universe: Iterable[str]) -> Optional[str]:
