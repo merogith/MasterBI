@@ -159,14 +159,29 @@ and the resulting `profile.json` passes validation.
 ## M4 · Benchmark priors & defaults engine
 **4–5 days · gates Mode 2 credibility**
 
-- [ ] `profile/benchmarks.py` — priors keyed on (sector, size band, region),
-      returning a distribution not a point estimate.
+- [x] `profile/benchmarks.py` — priors keyed on (sector, archetype, size band,
+      region), returning a `Distribution` rather than a point estimate, resolved
+      in `select()` so all ten readers of `kpi.benchmark` get it unchanged.
 - [ ] Public sources only: Eurostat, TÜİK, OECD, SEC filings, **Damodaran's
       industry datasets** (margins, ROIC, cost of capital — free and citable).
-- [ ] Every prior carries a `source` string that renders into the appendix.
+      **Blocked on the network, not on the code**: `pages.stern.nyu.edu` and
+      `ec.europa.eu` both answer 403 CONNECT at this environment's egress proxy,
+      and no PyPI package vendors either — every finance package there is a
+      client for a host that is also blocked. `register()` puts a published
+      provider ahead of the built-in two and nothing else moves, and a test
+      refuses any band naming a published source without the vintage and URL
+      that make the claim checkable.
+- [x] Every prior carries a `source` string that renders into the appendix —
+      and says that it *is* a prior, since none of them is a measurement yet.
 - [ ] **"Surprise me"** — sample a complete, self-consistent profile from the
       priors. This is nearly free once priors exist and is the best demo you have.
-- [ ] Replace the illustrative SaaS placeholder benchmarks.
+- [x] Replace the illustrative SaaS placeholder benchmarks **for the ratios a
+      cost structure implies** — gross margin, operating margin, opex, sales,
+      marketing and overhead intensity, R&D intensity and personnel cost, each
+      derived per archetype from `survey/defaults.py` rather than restated.
+      Growth, cash conversion, revenue per head, capital intensity and attrition
+      keep their cross-sector bands: no cost prior implies them, so they wait
+      for the published data above.
 
 > **Commercial blocker, flagged again:** licensed benchmark reports cannot be
 > scraped or embedded. Either stay on public sources with citations, buy a

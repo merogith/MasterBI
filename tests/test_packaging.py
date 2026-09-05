@@ -436,22 +436,39 @@ def test_the_readme_counts_the_sector_packs_correctly() -> None:
         f"{n} sectors have their own pack; the Known gaps section says "
         "something else")
 
-    # The denominator too, and this is why: 4.1 took it from ten to twenty and
-    # the pattern was pinned to the literal `of 10`, so it matched nothing and
-    # the check went quietly vacuous while the README said "2 of 10".
-    stated = re.findall(r"(\d+) of (\d+) have their own archetype and pack",
-                        readme)
+    # **Two counts, not one, and they stopped being the same number.** The row
+    # read "2 of 20 have their own archetype and pack" and this check only
+    # verified the pack half, so it stayed green through 4.2 while seven sectors
+    # gained their own generator. One sentence covering two facts is a sentence
+    # that can only be half wrong, which is the hardest kind to notice.
+    from kpi_maker.profile import taxonomy
+
+    with_archetype = sum(1 for x in taxonomy.load().sectors if x.exact_archetype)
+
+    stated = re.findall(
+        r"(\d+) of (\d+) have their own generator archetype and "
+        r"(\d+) of (\d+) have their own KPI pack", readme)
     assert stated, "the status table no longer states the sector counts at all"
-    for have, out_of in stated:
-        assert (int(have), int(out_of)) == (n, total), (
-            f"the status table says {have} of {out_of}; it is {n} of {total}")
+    for archetypes, arch_total, packs, pack_total in stated:
+        assert (int(archetypes), int(arch_total)) == (with_archetype, total), (
+            f"the status table says {archetypes} of {arch_total} have their own "
+            f"archetype; it is {with_archetype} of {total}")
+        assert (int(packs), int(pack_total)) == (n, total), (
+            f"the status table says {packs} of {pack_total} have their own "
+            f"pack; it is {n} of {total}")
+
+    # The denominator is checked above for the same reason 4.1c added it: the
+    # pattern was once pinned to the literal `of 10`, so it matched nothing and
+    # went quietly vacuous while the README said "2 of 10".
 
     remaining = {2: "eighteen", 8: "eight", 18: "eighteen"}.get(total - n)
-    if remaining:
-        assert f"The other\n  {remaining} run on" in readme or \
-            f"The other {remaining} run on" in readme, (
-                f"{total - n} sectors run on the fallback; Known gaps says "
-                "something else")
+    assert remaining, (
+        f"{total - n} sectors run on the fallback and this check has no word "
+        f"for that number, so it is about to pass by saying nothing")
+    assert f"The other\n  {remaining} run on" in readme or \
+        f"The other {remaining} run on" in readme, (
+            f"{total - n} sectors run on the fallback; Known gaps says "
+            "something else")
 
 
 def test_there_is_one_front_end() -> None:

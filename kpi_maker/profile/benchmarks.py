@@ -54,8 +54,8 @@ every finance package there is a *client* for a host that is also blocked.
 
 Writing Damodaran's name against a number nobody fetched would be worse than
 the placeholder it replaced, so the numbers say what they are and the seam is
-built so that a published set is a **data** change: add a provider ahead of
-these two in `_PROVIDERS` and nothing else moves.
+built so that a published set is a **data** change: hand it to `register()`,
+which puts it ahead of these two, and nothing else moves.
 """
 from __future__ import annotations
 

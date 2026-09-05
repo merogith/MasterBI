@@ -26,12 +26,12 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 | Charts (validated palette) | `kpi_maker/viz/` | done — 9 forms, light + dark, every series ≥ 3:1 |
 | Dashboard / workbook / CSV | `kpi_maker/render/` | done |
 | PDF report / PPTX deck / DOCX | `kpi_maker/render/` | done — M1 |
-| Survey + benchmark priors | `kpi_maker/survey/` | done — M3/M4 (SaaS) |
+| Survey + benchmark priors | `kpi_maker/survey/` | done — M3/M4, priors per archetype; the published distributions are still outstanding |
 | Sample gallery (Mode 1) | `samples/` | done — M5, 7 companies |
 | HTTP API | `kpi_maker/api/` | done |
 | Web UI | `web/` | done — M8 (Vite + TypeScript + Preact, URL routing) |
 | Cross-sector fallback pack | `kpi_maker/kpi/library/general.yaml` | done — 19 KPIs, every sector runs |
-| More sectors (M2) | `kpi_maker/datagen/`, `kpi_maker/kpi/library/` | partial — 2 of 20 have their own archetype and pack; the other 18 run on the nearest archetype and the cross-sector pack, and say so |
+| More sectors (M2) | `kpi_maker/datagen/`, `kpi_maker/kpi/library/` | partial — 7 of 20 have their own generator archetype and 2 of 20 have their own KPI pack; the rest run on the nearest archetype and the cross-sector pack, and say so |
 | AI Builder (M7) | `kpi_maker/ai/` | partial — planner, narrator and the number check ship; the conversational front door does not |
 
 ## Run it
