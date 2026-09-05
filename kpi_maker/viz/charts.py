@@ -339,6 +339,127 @@ def plan_vs_actual(results: List[MetricResult]) -> Optional[ChartSpec]:
     )
 
 
+@chart("decomposition", order=2.5, takes=("results",))
+def decomposition(results: List[MetricResult]) -> Optional[ChartSpec]:
+    """Which segment moved the number — as a waterfall, but only when it is one.
+
+    3.4 deferred this exhibit here and left the hard part already solved:
+    `insight/decompose.py` computes every bar, and it computes something else
+    too — **whether the bars are entitled to be a waterfall at all.**
+
+    A waterfall asserts that the parts sum to the whole. That is arithmetic
+    when they do and fiction when they do not, and `decompose` measures which
+    against this run's own numbers rather than inferring it from the unit (a
+    "currency" metric may be a total or an average). So:
+
+    * `kind == "contribution"` — the parts add up, and the waterfall is the
+      right form: opening, each segment's push or pull, closing.
+    * `kind == "dispersion"` — they do not, and drawing a waterfall would be
+      the lie 3.4 spent an item refusing to tell in prose. The honest form for
+      "these segments differ" is each segment against the blend, which is what
+      this draws instead.
+
+    Returns None when neither applies, which is most runs of most metrics.
+    """
+    from ..insight.decompose import decompose as _decompose
+    from ..insight.decompose import worth_reporting
+
+    found = None
+    for r in sorted(results, key=lambda x: (int(x.kpi.tier), x.kpi.id)):
+        if not r.computed:
+            continue
+        for dimension in r.dimensions:
+            candidate = _decompose(r, dimension)
+            if candidate is not None and worth_reporting(candidate):
+                found, result = candidate, r
+                break
+        if found is not None:
+            break
+    if found is None:
+        return None
+
+    unit = result.kpi.unit
+    parts = found.parts
+    fig = go.Figure()
+    tokens: Dict[int, str] = {}
+
+    if found.kind == "contribution":
+        opening = (result.current or 0.0) - found.total_change
+        labels = ["Opening"] + [p.segment for p in parts] + ["Closing"]
+        values = [opening] + [p.change for p in parts] + [0.0]
+        measures = (["absolute"] + ["relative"] * len(parts) + ["total"])
+        # **No "all other" bar, and that is a fact about `decompose`, not an
+        # omission.** The first version of this drew one defensively, on the
+        # assumption that `parts` might not cover every segment. It always
+        # does when the kind is `contribution`: `is_additive` is required to
+        # hold at *both* ends of the window, and it returns False the moment
+        # any segment is missing a reading — which is the same condition that
+        # makes `decompose` skip a part. So a contribution's bars cover the
+        # whole move by construction, and a remainder bar could never fire.
+        # Verified by constructing a segment that launched mid-window: it
+        # comes back as a dispersion, not a short waterfall.
+        fig.add_trace(go.Waterfall(
+            orientation="v", measure=measures, x=labels, y=values,
+            text=[fmt_value(abs(v) if m != "total" else sum(values), unit,
+                            _CURRENCY.get(), locale=_LOCALE.get())
+                  for v, m in zip(values, measures)],
+            textposition="outside",
+            textfont=dict(color=LIGHT["text_primary"], size=11),
+            connector=dict(line=dict(color=LIGHT["axis"], width=1)),
+            increasing=dict(marker=dict(color=LIGHT["diverge_pos"])),
+            decreasing=dict(marker=dict(color=LIGHT["diverge_neg"])),
+            totals=dict(marker=dict(color=LIGHT["deemphasis"])),
+            hovertemplate="%{x}<br>%{text}<extra></extra>",
+        ))
+        leader = found.leader
+        subtitle = (f"{leader.segment} accounts for {leader.share_of_move:.0%} "
+                    f"of the year's move") if leader else "By segment"
+        note = ("The bars sum to the move because this run's own segment "
+                "values sum to its blended value — measured, not assumed.")
+    else:
+        # Dispersion: levels against the blend, ordered, with the company line
+        # drawn rather than left to be read off an axis.
+        ordered = sorted((p for p in parts if p.current is not None),
+                         key=lambda p: p.current)
+        if not ordered:
+            return None
+        blended = result.current
+        fig.add_trace(go.Bar(
+            x=[p.current for p in ordered], y=[p.segment for p in ordered],
+            orientation="h",
+            marker=dict(color=LIGHT["series_1"]),
+            text=[fmt_value(p.current, unit, _CURRENCY.get(), locale=_LOCALE.get())
+                  for p in ordered],
+            textposition="outside",
+            textfont=dict(color=LIGHT["text_primary"], size=11),
+            hovertemplate="%{y}<br><b>%{text}</b><extra></extra>",
+        ))
+        tokens[0] = "series_1"
+        if blended is not None:
+            fig.add_shape(type="line", yref="paper", y0=0, y1=1, xref="x",
+                          x0=blended, x1=blended,
+                          line=dict(color=LIGHT["axis"], width=1, dash="dash"))
+        subtitle = (f"Blended {fmt_value(blended, unit, _CURRENCY.get(), locale=_LOCALE.get())}, "
+                    f"and the spread around it")
+        note = ("These segments do not sum to the blended figure, so this is "
+                "not a waterfall: a bar chart of levels is what the numbers "
+                "support. The dashed line is the company blend.")
+
+    _base_layout(fig, height=340)
+    if unit == "currency":
+        money_axis(fig, "y" if found.kind == "contribution" else "x")
+    elif unit == "pct":
+        (fig.update_yaxes if found.kind == "contribution"
+         else fig.update_xaxes)(tickformat=".1%")
+    cut = found.dimension.replace("_", " ")
+    return ChartSpec(
+        id="decomposition",
+        title=f"{result.kpi.name} by {cut}",
+        subtitle=subtitle, figure=fig, tab="overview", width="full",
+        note=note, trace_tokens=tokens,
+    )
+
+
 @chart("arr_trend", order=1, takes=("results",))
 def arr_trend(results: List[MetricResult]) -> Optional[ChartSpec]:
     r = next((x for x in results if x.kpi.id == "arr" and x.computed), None)
@@ -397,10 +518,17 @@ def arr_bridge(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
         0,
     ]
     measures = ["absolute", "relative", "relative", "relative", "relative", "total"]
+    closing = sum(values)
 
     fig = go.Figure(go.Waterfall(
         orientation="v", measure=measures, x=labels, y=values,
-        text=[_money(abs(v)) if m != "total" else "" for v, m in zip(values, measures)],
+        # The closing total is labelled like every other bar. It was blank —
+        # the convention `decomposition` copied from here before noticing —
+        # which left the opening bar carrying a figure and the closing one,
+        # the number the whole exhibit builds to, asking the reader to squint
+        # at an axis.
+        text=[_money(abs(v)) if m != "total" else _money(closing)
+              for v, m in zip(values, measures)],
         textposition="outside",
         textfont=dict(color=LIGHT["text_primary"], size=11),
         connector=dict(line=dict(color=LIGHT["axis"], width=1)),
