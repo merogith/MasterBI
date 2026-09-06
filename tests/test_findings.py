@@ -44,11 +44,13 @@ from kpi_maker.insight.decompose import (  # noqa: E402
 from kpi_maker.insight.detectors import (  # noqa: E402
     DETECTOR_NAMES,
     Finding,
+    _concentration,
     detect_all,
 )
 from kpi_maker.insight.ranking import magnitude, rank_all, recency, score  # noqa: E402
 from kpi_maker.kpi.selection import select  # noqa: E402
 from kpi_maker.metrics.engine import compute, dimensions  # noqa: E402
+from kpi_maker.spec.schema import RunSpec  # noqa: E402
 
 ARCHETYPES = {
     "saas": ROOT / "samples" / "northwind_saas.json",
@@ -279,14 +281,57 @@ def test_a_dispersion_is_judged_against_the_blend_not_its_own_move(run):
 # --------------------------------------------------------------------------
 
 def test_concentration_is_computed_rather_than_authored(run):
+    """`atlas_enterprise`'s whole story is concentration and it used to be
+    authored into the sample's profile.
+
+    **This no longer asserts that every archetype fires it**, and that change
+    is the item: the detector used to be unable to say no, so "it fired" was
+    not evidence of anything. It is silent on the retailer now, correctly —
+    a near-even four-way category split is not a concentration risk.
+
+    Mutation: gate on the raw HHI again, and the retailer fires too.
+    """
     _archetype, profile, tables, results = run
     findings = [f for f in detect_all(results, tables, profile)
                 if f.id.startswith("concentration_")]
-    assert findings, "no concentration finding on data that is concentrated"
     for finding in findings:
-        hhi = finding.evidence["current"]
-        assert 0.0 < hhi <= 1.0
+        uneven = finding.evidence["current"]
+        assert 0.0 <= uneven <= 1.0
+        # The raw index is still quoted, because it is the standard measure;
+        # what changed is which of the two decides.
+        assert 0.0 < finding.evidence["hhi"] <= 1.0
+        assert finding.evidence["hhi"] > uneven, (
+            "the corrected index must sit below the raw one")
         assert "Herfindahl" in finding.statement
+        # The even share is what makes the claim checkable by eye.
+        assert finding.evidence["top_share"] > finding.evidence["even_share"]
+
+
+def test_the_concentrated_sample_fires_and_the_diversified_one_does_not():
+    """The discrimination the raw index could not do.
+
+    Measured across the seven samples: the finding fired on **11 of 11**
+    dimensions, because HHI's floor is `1/n` and every dimension this engine
+    emits carries three to five segments. `atlas_enterprise` has 86% of
+    revenue in one segment and `kestrel_retail` has a near-even four-way
+    category split, and both were told the same thing at the same severity.
+
+    Mutation: revert to gating on the raw HHI.
+    """
+    def dimensions_fired(sample: str):
+        profile = load_profile(ROOT / "samples" / f"{sample}.json")
+        spec = RunSpec(profile=profile)
+        tables = dict(GENERATORS[spec.resolve_archetype()](profile).tables)
+        return _concentration(tables)
+
+    concentrated = dimensions_fired("atlas_enterprise")
+    assert concentrated, "the sample whose whole story is concentration is silent"
+    assert any(f.severity == "high" for f in concentrated)
+
+    diversified = dimensions_fired("kestrel_retail")
+    assert not diversified, (
+        f"a near-even retail mix is still reported as concentrated: "
+        f"{[f.statement for f in diversified]}")
 
 
 def _segment_frame(shares: Dict[str, float]) -> pd.DataFrame:
@@ -309,31 +354,164 @@ def _hhi_finding(shares: Dict[str, float]):
     return found[0] if found else None
 
 
-def test_a_spread_book_is_not_reported_as_concentrated():
-    """The threshold is the competition-authority one, not a number chosen to
-    make the finding fire. Eight even segments score 0.125, below the 0.15
-    floor, and must produce nothing."""
-    assert _hhi_finding({f"c{i}": 0.125 for i in range(8)}) is None
+def test_an_even_split_is_never_reported_as_concentrated():
+    """**The invariant the old thresholds could not satisfy, at every n.**
+
+    This test replaces two that asserted the opposite. One claimed a
+    perfectly even *four*-way split is "highly concentrated" (4 x 0.25**2 =
+    0.25, exactly the old high bar) and the other could only demonstrate
+    silence by using *eight* even segments — a count no archetype here emits.
+    Both were arithmetically correct about the raw index and neither asked
+    whether "an even split is highly concentrated" is a sentence anyone would
+    defend. That is what a borrowed threshold does when nobody re-derives it
+    for the data it lands on.
+
+    Mutation: gate on the raw HHI, and every n from 2 to 6 goes red.
+    """
+    for n in range(2, 9):
+        even = _hhi_finding({f"c{i}": 1 / n for i in range(n)})
+        assert even is None, (
+            f"{n} equal segments reported as concentrated: {even.statement}")
 
 
-def test_the_two_thresholds_are_the_published_ones():
-    """0.15 moderately concentrated, 0.25 highly. Both boundaries, because a
-    detector that fires one band too eagerly is worse than one that is silent."""
-    # Five even segments: 5 x 0.04 = 0.20 — over the floor, under the high bar.
-    moderate = _hhi_finding({f"c{i}": 0.2 for i in range(5)})
-    assert moderate is not None and moderate.severity == "medium"
-    assert "moderately concentrated" in moderate.statement
+def test_the_plural_of_category_is_not_categorys():
+    """The statement counts the segments, so it has to name them in the plural.
 
-    # Four even segments: 4 x 0.0625 = 0.25 — exactly the high bar.
-    high = _hhi_finding({f"c{i}": 0.25 for i in range(4)})
-    assert high is not None and high.severity == "high"
-    assert "highly concentrated" in high.statement
+    Two of the seven dimensions this engine emits — `category` and
+    `product_family` — do not take a bare "s", and "3 categorys" on a board
+    pack is the kind of small wrongness that makes a reader distrust the
+    arithmetic beside it. Asserted over the dimension names the generators
+    actually produce, rather than over a wordlist that could drift from them.
 
-    # And the shape that actually worries a board: one segment owning most of it.
+    **This test exists because a mutation harness said it already did.**
+    Deleting the irregular branch reported RED against a test that had never
+    been written: pytest exits 5 for "no tests selected" and the harness read
+    any non-zero exit as a failing test. A mutation checked against nothing
+    certifies nothing — the same shape as 0.8's over-gentle double and 5.3d's
+    `return "" or (...)`.
+
+    Mutation: drop the `-y -> -ies` branch.
+    """
+    from kpi_maker.insight.detectors import _plural
+
+    assert _plural("category") == "categories"
+    assert _plural("product family") == "product families"
+    # The regular ones must not be broken by the irregular rule.
+    assert _plural("segment") == "segments"
+    assert _plural("channel") == "channels"
+    assert _plural("service line") == "service lines"
+    # -ay/-ey/-oy/-uy keep the y.
+    assert _plural("survey") == "surveys"
+
+    # And every dimension the generators really emit pluralises to something
+    # that is not the bare word plus "s" being wrong.
+    for sample in ("kestrel_retail", "orbis_works", "lumen_exchange"):
+        profile = load_profile(ROOT / "samples" / f"{sample}.json")
+        spec = RunSpec(profile=profile)
+        tables = dict(GENERATORS[spec.resolve_archetype()](profile).tables)
+        seg = tables["segment_financials"]
+        for dimension in seg["dimension"].unique():
+            word = str(dimension).replace("_", " ")
+            assert not _plural(word).endswith("ys"), word
+
+
+def test_a_segment_name_reaches_prose_as_prose():
+    """`segment_financials` carries `managed_service` and `product_family`.
+
+    Printed raw, they read like a leaked database field beside the segments
+    that happen to be single words — a consultancy's finding said "A shock to
+    managed_service lands on the whole company" in the same sentence as a
+    humanised dimension name.
+
+    Both the concentration and the decomposition detectors had it, so it is
+    fixed at the source. Same rule as 5.3c's `_base_layout`.
+
+    **The constructed case is the load-bearing half, and the first version of
+    this test did not have it.** Sweeping the real samples left the
+    concentration mutation green: under `conftest`'s pinned
+    `MASTERBI_HISTORY_END`, the only concentration finding that fires on a
+    dimension with underscored segment names drops out, so every surviving
+    one happens to name `enterprise` or `Enterprise`. The sweep was grading
+    the samples' calendar rather than the rule — the same premise failure as
+    5.3c's usable-segment guard and 5.2's hand-written sample list.
+
+    Mutations: print `shares.index[0]` or `lead.segment` raw again; or make
+    `_label` a no-op.
+    """
+    import re
+
+    # Constructed, so it does not depend on which segments a sample happens
+    # to have at the pinned month.
+    named = _hhi_finding({"managed_service": 0.70, "advisory": 0.20,
+                          "design": 0.10})
+    assert named is not None
+    assert "managed_service" not in named.statement, named.statement
+    assert "managed service" in named.statement
+
+    for sample in ("halberd_consulting", "orbis_works", "lumen_exchange",
+                   "atlas_enterprise"):
+        profile = load_profile(ROOT / "samples" / f"{sample}.json")
+        spec = RunSpec(profile=profile)
+        tables = dict(GENERATORS[spec.resolve_archetype()](profile).tables)
+        results = compute(select(profile), tables, profile,
+                          by=dimensions(tables))
+        for finding in detect_all(results, tables, profile):
+            for field_name in ("title", "statement", "recommendation"):
+                text = getattr(finding, field_name) or ""
+                # A KPI id may legitimately appear in prose; a *segment* name
+                # may not, and the two are told apart by the underscore being
+                # inside a word the sentence is treating as a noun phrase.
+                offenders = [w for w in re.findall(r"[a-z]+_[a-z_]+", text)
+                             if w not in {r.kpi.id for r in results}]
+                assert not offenders, (
+                    f"{sample} {finding.id} {field_name}: {offenders}")
+
+
+def test_the_severity_bands_land_where_the_mix_is_actually_uneven():
+    """A detector that fires one band too eagerly is worse than a silent one.
+
+    The bands are stated on the *normalised* index, so they mean the same
+    thing whether a company reports three segments or six — which is exactly
+    what the raw index could not do.
+
+    Mutation: swap `UNEVEN_HIGH` and `UNEVEN_MEDIUM`, or drop the
+    normalisation so `n` decides the band.
+    """
+    from kpi_maker.insight.detectors import UNEVEN_HIGH, UNEVEN_MEDIUM
+
+    assert 0 < UNEVEN_MEDIUM < UNEVEN_HIGH < 1
+
+    # One segment owning most of it: the shape that actually worries a board.
     dominant = _hhi_finding({"enterprise": 0.7, "mid": 0.2, "smb": 0.1})
     assert dominant is not None and dominant.severity == "high"
     assert dominant.evidence["top_share"] == pytest.approx(0.7)
     assert "enterprise" in dominant.statement
+    assert "highly uneven" in dominant.statement
+
+    # Lopsided, but not a single point of failure. (H* = 0.168.)
+    tilted = _hhi_finding({"a": 0.60, "b": 0.25, "c": 0.15})
+    assert tilted is not None and tilted.severity == "medium"
+    assert "moderately uneven" in tilted.statement
+
+    # Mildly tilted is silent. (H* = 0.032 — and note the *raw* index for
+    # this split is 0.355, which the old rule graded "highly concentrated".)
+    mild = _hhi_finding({"a": 0.45, "b": 0.30, "c": 0.25})
+    assert mild is None, mild.statement if mild else ""
+
+    # **The same verdict at a different segment count**, which is the whole
+    # point of normalising and the clearest statement of the bug. These two
+    # splits are equally uneven -- H* = 0.168 and 0.167 -- but their raw
+    # Herfindahl scores are 0.445 and 0.306, so the old rule called the first
+    # "highly concentrated" and the second "moderately" for no reason except
+    # that one has three segments and the other six.
+    three = _hhi_finding({"a": 0.60, "b": 0.25, "c": 0.15})
+    six = _hhi_finding({"a": 0.50, "b": 0.15, "c": 0.12,
+                        "d": 0.10, "e": 0.08, "f": 0.05})
+    assert three is not None and six is not None
+    assert three.severity == six.severity == "medium", (
+        three.severity, six.severity)
+    assert three.evidence["hhi"] > six.evidence["hhi"], (
+        "premise: the raw index really does disagree with the corrected one")
 
 
 # --------------------------------------------------------------------------
@@ -354,8 +532,17 @@ def test_a_transactional_run_gets_more_than_three_detectors(run):
     }
     fired = {name for f in findings for prefix, name in prefixes.items()
              if f.id.startswith(prefix)}
-    assert len(fired) >= 6, f"{archetype} fired only {sorted(fired)}"
-    assert {"driver_decomposition", "concentration", "operating_leverage"} <= fired
+    # **`concentration` came out of this set, and the reason is the point.**
+    # It used to be here because it fired for every archetype -- which it did
+    # because it *could not not* fire: HHI's floor is 1/n and every dimension
+    # here has three to five segments. Counting a detector that cannot say no
+    # as coverage inflates the number it is supposed to measure, so the
+    # retailer's honest count is 5 rather than the 6 recorded in 3.4b.
+    #
+    # Mutation: put "concentration" back in the required set, and the
+    # ecommerce parametrisation goes red -- which is the old bug, asserted.
+    assert len(fired) >= 5, f"{archetype} fired only {sorted(fired)}"
+    assert {"driver_decomposition", "operating_leverage"} <= fired
 
 
 def test_a_detector_that_cannot_apply_says_so_rather_than_failing(run):

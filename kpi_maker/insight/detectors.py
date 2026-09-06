@@ -726,23 +726,23 @@ def _driver_decomposition(results: List[MetricResult]) -> List[Finding]:
                 continue
 
             unit = r.kpi.unit
-            cut = dimension.replace("_", " ")
+            cut = _label(dimension)
             if found.kind == "contribution":
                 statement = (
                     f"{r.kpi.name} moved {_fmt(found.total_change, unit)} over "
-                    f"the last twelve months, and {lead.segment} accounts for "
+                    f"the last twelve months, and {_label(lead.segment)} accounts for "
                     f"{_pct(abs(lead.share_of_move), 0)} of that "
                     f"({_fmt(lead.change, unit)}). The other "
-                    f"{len(found.parts) - 1} {cut}s together account for the rest."
+                    f"{len(found.parts) - 1} {_plural(cut)} together account for the rest."
                 )
-                title = f"{lead.segment} drove most of the move in {r.kpi.name}"
+                title = f"{_label(lead.segment)} drove most of the move in {r.kpi.name}"
                 evidence = {"current": lead.current, "prior": lead.prior,
                             "total_change": found.total_change,
                             "share_of_move": lead.share_of_move}
             else:
                 statement = (
                     f"{r.kpi.name} reads {_fmt(r.current, unit)} blended, but "
-                    f"{lead.segment} is at {_fmt(lead.current, unit)}. A blended "
+                    f"{_label(lead.segment)} is at {_fmt(lead.current, unit)}. A blended "
                     f"figure averages that away, which is exactly what it is for "
                     f"and exactly why it should not be read alone."
                 )
@@ -782,7 +782,7 @@ def _driver_decomposition(results: List[MetricResult]) -> List[Finding]:
                 evidence={k: v for k, v in evidence.items() if v is not None},
                 kpi_ids=[r.kpi.id],
                 recommendation=(
-                    f"Look at {lead.segment} on its own before drawing a "
+                    f"Look at {_label(lead.segment)} on its own before drawing a "
                     f"company-wide conclusion from {r.kpi.name}."),
                 impact="high",
                 effort="low",
@@ -790,13 +790,91 @@ def _driver_decomposition(results: List[MetricResult]) -> List[Finding]:
     return out
 
 
+#: How uneven a mix has to be before it is worth reporting, on the
+#: **normalised** index below. Stated as this project's judgement, because
+#: there is no published authority for the normalised scale and 4.4's rule is
+#: that a number nobody can cite must say so rather than borrow a name.
+#:
+#: What makes them defensible is not the values but the invariant they were
+#: chosen to satisfy, which the previous thresholds could not: **a perfectly
+#: even split is silent at every segment count.**
+UNEVEN_MEDIUM = 0.15
+UNEVEN_HIGH = 0.30
+
+
+def _plural(word: str) -> str:
+    """Enough English for the dimension names this engine actually emits.
+
+    Not a general pluraliser — `segment`, `channel`, `service line` and
+    `buyer segment` all take a bare "s", but `category` and `product family`
+    do not, and "3 categorys" on a board pack is the kind of small wrongness
+    that makes a reader distrust the arithmetic beside it.
+    """
+    if word.endswith("y") and not word.endswith(("ay", "ey", "oy", "uy")):
+        return word[:-1] + "ies"
+    if word.endswith(("s", "x", "z", "ch", "sh")):
+        return word + "es"
+    return word + "s"
+
+
+def _label(name: object) -> str:
+    """A segment or dimension name as prose rather than as a column value.
+
+    `segment_financials` carries `managed_service` and `product_family`, and
+    a finding that prints them raw reads like a leaked database field beside
+    the ones that happen to be single words. Applied wherever a data label
+    reaches a sentence, rather than in the one detector that noticed.
+    """
+    return str(name).replace("_", " ")
+
+
+def _normalised_hhi(hhi: float, n: int) -> float:
+    """Where this mix sits between perfectly even (0) and one segment
+    taking everything (1).
+
+    `(H - 1/n) / (1 - 1/n)`, the textbook correction, and the fix for a
+    finding that had been unconditionally true since it was written.
+    """
+    if n < 2:
+        return 0.0
+    even = 1.0 / n
+    return (hhi - even) / (1.0 - even)
+
+
 def _concentration(tables: Dict[str, pd.DataFrame]) -> List[Finding]:
     """How much of the revenue rides on one segment, channel or category.
 
-    Herfindahl-Hirschman: the sum of squared shares, which is the standard
-    measure and needs no threshold invented for it — competition authorities
-    treat 0.25 as highly concentrated and 0.15 as moderately so, and those are
-    the numbers used here rather than ones chosen to make the finding fire.
+    Herfindahl-Hirschman: the sum of squared shares, quoted because it is the
+    standard measure — but **gated on the normalised index**, and that
+    correction is the whole of this function's history.
+
+    **The raw thresholds were unconditionally true here, and measuring is what
+    showed it.** The finding fired on 11 of 11 dimensions across all seven
+    samples, which is the signature of a rule that cannot say no. HHI is
+    minimised by an even split, so its floor is `1/n`:
+
+        n = 3  ->  floor 0.333      n = 5  ->  floor 0.200
+        n = 4  ->  floor 0.250      n = 6  ->  floor 0.167
+
+    Every dimension this engine emits carries three to five segments, so the
+    0.15 "moderate" bar was breached by construction at every one of them, and
+    the 0.25 "high" bar at every n <= 4. The competition authorities set those
+    numbers for markets of *many* firms, where 1/n is negligible; against a
+    company's four internal channels the correction is the entire quantity.
+
+    The cost was not academic. `atlas_enterprise` has **86% of revenue in one
+    segment** and `kestrel_retail` has a near-even four-way category split, and
+    the product told both of them the same thing at the same severity.
+
+    **3.4 met this exact arithmetic and drew the smaller conclusion.** Its own
+    note records that "five even segments score 0.20, which is genuinely above
+    the 0.15 floor", correctly rewrote a test that had assumed otherwise — and
+    never asked whether the detector had the same problem. The test it wrote
+    then asserted that a perfectly even four-way split is "highly
+    concentrated", which is a sentence nobody would defend in prose and looked
+    like rigour as arithmetic. A borrowed threshold that was never re-derived
+    for the data it is applied to, which is 4.4's cross-sector benchmark bands
+    in a different module.
 
     Computed from `segment_financials`, so it works for every archetype that
     emits one rather than for subscriptions alone. `atlas_enterprise`'s whole
@@ -814,21 +892,31 @@ def _concentration(tables: Dict[str, pd.DataFrame]) -> List[Finding]:
         if len(shares) < 2:
             continue
         hhi = float((shares ** 2).sum())
-        if hhi < 0.15:
+        uneven = _normalised_hhi(hhi, len(shares))
+        if uneven < UNEVEN_MEDIUM:
             continue
-        top = shares.index[0]
-        cut = str(dimension).replace("_", " ")
+        top = _label(shares.index[0])
+        cut = _label(dimension)
+        # The even share is quoted because it is what makes the claim
+        # checkable by eye: "38% of four" is not concentration, and a reader
+        # who cannot see the 25% it is being compared against has to take the
+        # index on trust.
+        even = 1.0 / len(shares)
         out.append(Finding(
             id=f"concentration_{dimension}",
-            severity="high" if hhi >= 0.25 else "medium",
+            severity="high" if uneven >= UNEVEN_HIGH else "medium",
             title=f"Revenue is concentrated by {cut}",
             statement=(
-                f"{top} accounts for {_pct(float(shares.iloc[0]), 0)} of revenue, "
-                f"and the {cut} mix scores {hhi:.2f} on the Herfindahl index "
-                f"({'highly' if hhi >= 0.25 else 'moderately'} concentrated). "
+                f"{top} accounts for {_pct(float(shares.iloc[0]), 0)} of revenue "
+                f"against {_pct(even, 0)} for an even split of "
+                f"{len(shares)} {_plural(cut)}. The mix scores {hhi:.2f} on "
+                f"the Herfindahl index, {uneven:.2f} once corrected for how "
+                f"few {_plural(cut)} there are "
+                f"({'highly' if uneven >= UNEVEN_HIGH else 'moderately'} uneven). "
                 f"A shock to {top} lands on the whole company."
             ),
-            evidence={"current": hhi, "threshold": 0.25,
+            evidence={"current": uneven, "threshold": UNEVEN_HIGH,
+                      "hhi": hhi, "even_share": even,
                       "top_share": float(shares.iloc[0])},
             kpi_ids=["revenue_concentration_top10"],
             recommendation=(
