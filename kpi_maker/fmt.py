@@ -124,3 +124,37 @@ def fmt_delta(value: Optional[float], unit: str, currency: str = "USD",
         return "—"
     sign = "+" if value >= 0 else "−"
     return f"{sign}{fmt_value(abs(value), unit, currency, locale=locale)}"
+
+
+def fmt_move(current: Optional[float], prior: Optional[float], unit: str,
+             locale: Optional[str] = None) -> Optional[str]:
+    """How far a metric moved against a prior reading, unsigned.
+
+    **A percentage metric moves in points, not per cent**, and conflating the
+    two is how "gross margin rose 8%" comes to mean two different things on
+    one page. The rule lived inline in `render/dashboard._stat_tile` and was
+    about to be spelled a third way by 5.3g's driver drill-down, so it is here
+    now and `web/src/lib/format.ts` mirrors it under a drift test — the same
+    arrangement as `STATUS_LABEL` and the design tokens.
+
+    Unsigned on purpose: the direction is an arrow, and whether the move is
+    *good* is `KPI.improves_with`, which is the one place that decides.
+    """
+    if is_missing(current) or is_missing(prior) or not prior:
+        return None
+    change = float(current) - float(prior)
+    if unit == "pct":
+        # **Times one hundred, and that factor is a bug this function was
+        # written to inherit.** `pct` values are stored as fractions, so the
+        # inline version in `_stat_tile` formatted 0.079 as "0.1 pts" — every
+        # percentage metric's year-on-year move on every tile, understated a
+        # hundredfold since the tiles were written. It read as a plausible
+        # "barely moved": one real dashboard showed gross margin going 28.5%
+        # to 32.9% as "0.0 pts", and EBITDA 5.4% to 10.8% as "0.1 pts".
+        #
+        # Invisible until the rule was pulled out of the renderer and run
+        # against inputs whose answer was known. Extracting shared code is
+        # not usually a way to find defects; here it was the only thing that
+        # asked what the function returns.
+        return _localise(f"{abs(change) * 100:.1f} pts", locale)
+    return fmt_percent(abs(change) / abs(float(prior)), 0, locale)

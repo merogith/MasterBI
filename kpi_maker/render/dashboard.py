@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Sequence
 
 import pandas as pd
 
-from ..fmt import fmt_value, is_missing
+from ..fmt import fmt_move, fmt_value, is_missing
 from ..insight.detectors import Finding
 from ..kpi.schema import KPISet, Perspective, Tier
 from ..metrics.engine import MetricResult
@@ -242,11 +242,9 @@ def _stat_tile(r: MetricResult, currency: str, locale: Optional[str] = None) -> 
         change = r.current - r.prior_year
         good = k.improves_with(change)
         arrow = "▲" if change >= 0 else "▼"
-        if k.unit == "pct":
-            text = f"{abs(change):.1f} pts"
-        else:
-            pct = abs(change) / abs(r.prior_year) if r.prior_year else 0
-            text = f"{pct:.0%}"
+        # `fmt.fmt_move`, not restated here: 5.3g's drill-down needed the same
+        # rule in the browser and would have made it a third spelling.
+        text = fmt_move(r.current, r.prior_year, k.unit, locale) or ""
         # None is a `target_band` metric, where a signed change cannot be
         # called good or bad without knowing which side of the band you started
         # on. The arrow stays — which way it moved is a fact — and only the

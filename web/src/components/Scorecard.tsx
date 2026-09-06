@@ -2,7 +2,7 @@ import type { ComponentChild } from 'preact';
 import { useMemo, useState } from 'preact/hooks';
 import { BasisChip, BenchmarkChip } from './Basis';
 import type { Kpi, RecordSheet, Summary } from '../lib/api';
-import { fmtValue, STATUS_GLYPH, STATUS_LABEL } from '../lib/format';
+import { fmtMove, fmtValue, STATUS_GLYPH, STATUS_LABEL } from '../lib/format';
 
 /* The scorecard as the semantic layer it already is.
  *
@@ -89,11 +89,16 @@ function csvCell(value: unknown): string {
  *  Rendered beside the number rather than in an appendix, which is the entire
  *  point — "what does this actually measure, and what will it mislead me
  *  about" is a question asked while looking at the figure. */
-function Sheet({ sheet, kpi, currency, rationale, onClose }: {
+function Sheet({ sheet, kpi, currency, rationale, nodes, kpis, sheets, onOpen,
+                onClose }: {
   sheet: RecordSheet;
   kpi: Kpi | undefined;
   currency: string;
   rationale: string | undefined;
+  nodes: DriverNodes;
+  kpis: Kpi[];
+  sheets: Record<string, RecordSheet>;
+  onOpen: (id: string) => void;
   onClose: () => void;
 }) {
   const band = (value: number | null | undefined) =>
@@ -160,6 +165,13 @@ function Sheet({ sheet, kpi, currency, rationale, onClose }: {
           </p>
         )}
 
+        {/* Above the fields, not below the prose. It is the navigational
+            answer to "what moved this", and the first version buried it under
+            ten rows and three paragraphs — found by opening the panel and
+            having to scroll for it. */}
+        <Drivers kpiId={sheet.id} nodes={nodes} kpis={kpis} sheets={sheets}
+                 currency={currency} onOpen={onOpen} />
+
         <dl class="sheet-fields">
           {rows.map(([label, value]) => (
             <div class="sheet-row" key={label}>
@@ -183,12 +195,81 @@ function Sheet({ sheet, kpi, currency, rationale, onClose }: {
             <h4>Why it is on this scorecard</h4><p>{rationale}</p>
           </section>
         )}
+
       </aside>
     </div>
   );
 }
 
-type DriverNodes = Record<string, { name: string; parent: string | null }>;
+type DriverNodes = Record<string,
+  { name: string; parent: string | null; children?: string[] }>;
+
+/** The drivers of this metric, one level down, walkable.
+ *
+ *  `ARCHITECTURE.md` promised drill-down along the value-driver tree and
+ *  `driver_parent` was authored on 56 record sheets with no consumer at all
+ *  until 3.3 built the graph. 3.3 then shipped one: `DriverPath`, which walks
+ *  *up* — "ARR -> NRR -> GRR", what this metric rolls up into.
+ *
+ *  **This walks down, and it is the other question.** A reader looking at a
+ *  number that is off does not ask what it contributes to; they ask what
+ *  moved it. Measured on real runs the tree has the depth to answer: nine to
+ *  eleven KPIs per scorecard have children, and the roots carry five to ten
+ *  — `oee` -> availability / line performance / scrap, `net_revenue` -> aov /
+ *  orders / return rate. All of it computed, none of it reachable.
+ *
+ *  Each driver carries its own value and year-on-year move, because a list of
+ *  names is a diagram and a list of numbers is an answer; and each opens its
+ *  own record sheet, so the panel becomes a walk down the tree rather than a
+ *  dead end. Drivers this run could not compute are shown with their reason
+ *  rather than hidden — "why isn't X here" must always have an answer, which
+ *  is 3.1's rule. */
+function Drivers({ kpiId, nodes, kpis, sheets, currency, onOpen }: {
+  kpiId: string;
+  nodes: DriverNodes;
+  kpis: Kpi[];
+  sheets: Record<string, RecordSheet>;
+  currency: string;
+  onOpen: (id: string) => void;
+}) {
+  const children = (nodes[kpiId]?.children ?? []).filter((id) => sheets[id]);
+  if (children.length === 0) return null;
+  const byId = new Map(kpis.map((k) => [k.kpi_id, k]));
+
+  return (
+    <section class="sheet-prose sheet-drivers">
+      <h4>What drives it</h4>
+      <ul class="driver-list">
+        {children.map((id) => {
+          const child = byId.get(id);
+          const move = fmtMove(child?.current, child?.prior_year, child?.unit ?? null);
+          const up = (child?.current ?? 0) >= (child?.prior_year ?? 0);
+          return (
+            <li key={id}>
+              <button type="button" class="driver-open" data-driver={id}
+                      onClick={() => onOpen(id)}>
+                {nodes[id]?.name ?? sheets[id]?.name ?? id}
+              </button>
+              <span class="driver-value">
+                {child?.computed
+                  ? fmtValue(child.current, child.unit, currency)
+                  : <em>{child?.reason ?? 'not computed'}</em>}
+              </span>
+              {child?.computed && move && (
+                /* The arrow says which way, and nothing here says whether
+                 * that is good. Judging it needs `improves_with` — the single
+                 * sign convention 5.2b collapsed seven implementations into,
+                 * and re-deriving it in TypeScript would make eight. The
+                 * scorecard row beside this already carries the RAG verdict. */
+                <span class="driver-move">{up ? '▲' : '▼'} {move} vs LY</span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
 
 /** What this metric rolls up into: "ARR -> NRR -> GRR".
  *
@@ -426,6 +507,7 @@ export function Scorecard({ summary }: { summary: Summary }) {
 
       {open && (
         <Sheet sheet={open} kpi={kpis.find((k) => k.kpi_id === openKpi)}
+               nodes={nodes} kpis={kpis} sheets={sheets} onOpen={setOpenKpi}
                currency={currency} rationale={rationale[open.id]}
                onClose={() => setOpenKpi(null)} />
       )}

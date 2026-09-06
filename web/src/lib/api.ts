@@ -149,6 +149,9 @@ export interface Kpi {
   basis?: string | null;
   target?: number | null;
   vs_target?: number | null;
+  /** Absolute move against the same month a year ago, in the metric's own
+   *  unit — not a percentage. Read by the driver drill-down. */
+  yoy_change?: number | null;
   benchmark_p50?: number | null;
   benchmark_position?: string | null;
   owner?: string | null;

@@ -1029,6 +1029,28 @@ th[aria-sort="descending"] .th-sort { color: var(--text-primary); }
 .driver-path { display: block; margin-top: 4px; font-size: 11.5px;
   color: var(--muted); }
 
+/* The other direction: what drives this metric, one level down and walkable.
+   `DriverPath` above walks up. A reader looking at a number that is off does
+   not ask what it contributes to, they ask what moved it, and until 5.3g the
+   graph could only answer the first. */
+.driver-list { list-style: none; margin: 0; padding: 0; }
+.driver-list li { display: flex; align-items: baseline; gap: 8px;
+  padding: 6px 0; border-bottom: 1px solid var(--line); }
+.driver-list li:last-child { border-bottom: 0; }
+.driver-open { background: none; border: 0; padding: 0; font: inherit;
+  color: var(--accent); cursor: pointer; text-align: left; flex: 1 1 auto;
+  text-decoration: underline; text-underline-offset: 2px; }
+.driver-open:hover { color: var(--ink); }
+.driver-value { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.driver-value em { color: var(--muted); font-size: 11.5px;
+  white-space: normal; }
+/* Uncoloured on purpose: the arrow says which way and nothing says whether
+   that is good. Judging it needs `improves_with`, the one sign convention
+   5.2b collapsed seven implementations into, and restating it here would
+   make eight. */
+.driver-move { font-size: 11.5px; color: var(--muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+
 /* A filter above a long option list, and the classification under the chosen
    one. Both arrived with 4.1's twenty sectors: ten options is a list you read,
    twenty is a list you scan and give up on. */

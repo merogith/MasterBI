@@ -49,3 +49,29 @@ export const fmtBytes = (n: number): string =>
   n > 1e6 ? (n / 1e6).toFixed(1) + ' MB'
     : n > 1e3 ? Math.round(n / 1e3) + ' KB'
       : n + ' B';
+
+
+/** How far a metric moved against a prior reading, unsigned.
+ *
+ *  Mirrors `kpi_maker.fmt.fmt_move`, and `tests/test_packaging.py` holds the
+ *  two in step — the same arrangement as STATUS_LABEL above and the design
+ *  tokens, because TypeScript cannot import from the engine.
+ *
+ *  A percentage metric moves in POINTS, not per cent, and `pct` values arrive
+ *  as fractions. Getting that wrong is not hypothetical: the engine's inline
+ *  version printed a 4.4-point move in gross margin as "0.0 pts" on every
+ *  dashboard until 5.3g pulled the rule out and ran it against known inputs.
+ *
+ *  Unsigned on purpose. The direction is an arrow, and whether a move is good
+ *  is `KPI.improves_with` — the one place that decides. */
+export function fmtMove(
+  current: number | null | undefined,
+  prior: number | null | undefined,
+  unit: string | null,
+): string | null {
+  if (current === null || current === undefined) return null;
+  if (prior === null || prior === undefined || !prior) return null;
+  const change = current - prior;
+  if (unit === 'pct') return `${(Math.abs(change) * 100).toFixed(1)} pts`;
+  return `${Math.round((Math.abs(change) / Math.abs(prior)) * 100)}%`;
+}

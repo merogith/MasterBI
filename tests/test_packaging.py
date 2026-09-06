@@ -16,6 +16,8 @@ import re
 import tomllib
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -878,3 +880,56 @@ def test_the_test_job_leaves_room_for_the_suite_it_runs() -> None:
     assert int(cap.group(1)) * 60 >= 1.8 * slowest, (
         f"cap {cap.group(1)}m is not ~2x the slowest recorded run "
         f"({slowest / 60:.1f}m)")
+
+
+def test_the_move_formatter_agrees_across_the_two_languages() -> None:
+    """`fmt.fmt_move` and `format.ts`'s `fmtMove` are one rule in two
+    languages, held in step here because TypeScript cannot import from the
+    engine — the same arrangement as STATUS_LABEL and the design tokens.
+
+    **The rule is worth pinning because getting it wrong shipped.** A `pct`
+    metric moves in *points* and its values arrive as fractions, so the
+    version that lived inline in `render/dashboard._stat_tile` printed a
+    4.4-point move in gross margin as "0.0 pts" — every percentage tile on
+    every dashboard, understated a hundredfold, reading as a plausible "barely
+    moved". It surfaced only when the rule was extracted and run against
+    inputs whose answer was known.
+
+    Mutations: drop the `* 100` on either side; change one side's rounding.
+    """
+    import shutil
+    import subprocess
+
+    from kpi_maker.fmt import fmt_move
+
+    cases = [
+        (0.758, 0.689, "pct"), (0.329, 0.285, "pct"),
+        (0.108, 0.054, "pct"), (0.183, 0.208, "pct"),
+        (158_300.0, 154_200.0, "currency"), (240.0, 225.0, "count"),
+        (12.5, 10.0, "ratio"), (0.048, 0.026, "pct"),
+    ]
+    expected = [fmt_move(c, p, u) for c, p, u in cases]
+    # The bug this pins, stated outright rather than left to the comparison.
+    assert expected[0] == "6.9 pts", expected[0]
+    assert expected[1] == "4.4 pts", expected[1]
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is absent; the three-OS matrix does not install it")
+
+    source = (ROOT / "web/src/lib/format.ts").read_text(encoding="utf-8")
+    body = re.search(r"export function fmtMove\((.*?)\n\}", source, re.S)
+    assert body, "format.ts has no fmtMove"
+    script = (
+        source[body.start():body.end()]
+        .replace("export function", "function")
+        .replace(": number | null | undefined", "")
+        .replace(": string | null", "")
+        .replace("): string | null {", ") {")
+        + "\nconsole.log(JSON.stringify("
+        + json.dumps(cases)
+        + ".map(function (c) { return fmtMove(c[0], c[1], c[2]); })));"
+    )
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True,
+                         check=True).stdout
+    assert json.loads(out) == expected, (json.loads(out), expected)

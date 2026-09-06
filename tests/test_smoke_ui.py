@@ -1028,3 +1028,81 @@ def test_the_export_is_of_what_you_are_looking_at(page):
     exported = [line.split(",")[1].strip('"') for line in lines[1:]]
     assert exported == sorted(exported, key=lambda n: n.lower()), \
         "the export ignored the sort"
+
+
+def test_the_record_sheet_walks_down_the_driver_tree(page):
+    """`ARCHITECTURE.md` promised drill-down along the value-driver tree.
+    `driver_parent` is authored on 56 record sheets and had no consumer at all
+    until 3.3 built the graph — and 3.3 then shipped one, `DriverPath`, which
+    walks *up*: "ARR -> NRR -> GRR", what this metric rolls up into.
+
+    **This walks down, which is the other question.** A reader looking at a
+    number that is off does not ask what it contributes to; they ask what
+    moved it. Measured on real runs the tree can answer: nine to eleven KPIs
+    per scorecard have children, and roots carry five to ten.
+
+    Mutations: render the driver names as text rather than buttons; drop
+    `onOpen` so the panel is a dead end; read `parent` instead of `children`
+    and the section becomes the path that already existed.
+    """
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#tour-dismiss")
+    page.wait_for_selector("#res-scorecard")
+    _freeze_effects(page)
+
+    # The north star is the tree's root on every sample, so it always has
+    # children — picking a row at random would test the sample's ordering.
+    page.locator("#res-scorecard .kpi-open").first.click()
+    page.wait_for_selector("#kpi-sheet")
+
+    drivers = page.locator("#kpi-sheet .driver-open")
+    assert drivers.count() >= 2, (
+        "the record sheet shows no drivers for the top KPI: "
+        + page.locator("#kpi-sheet").inner_text()[:300])
+    opened = page.locator("#kpi-sheet h3").inner_text()
+    first = drivers.first.inner_text()
+
+    # Each driver carries its own number, because a list of names is a diagram
+    # and a list of numbers is an answer.
+    row = page.locator("#kpi-sheet .driver-list li").first.inner_text()
+    assert any(ch.isdigit() for ch in row), row
+
+    # And it is a walk, not a dead end: clicking a driver opens its own sheet.
+    drivers.first.click()
+    page.wait_for_timeout(200)
+    now = page.locator("#kpi-sheet h3").inner_text()
+    assert now != opened, "clicking a driver did not move the panel"
+    assert now.lower().startswith(first.lower()[:8]), (now, first)
+
+
+def test_a_percentage_move_is_reported_in_points(page):
+    """A `pct` metric moves in **points**, and its values arrive as fractions.
+
+    The rule lived inline in `render/dashboard._stat_tile` and dropped the
+    hundred: a real dashboard showed gross margin going 28.5% to 32.9% as
+    "0.0 pts" and EBITDA 5.4% to 10.8% as "0.1 pts" — every percentage tile,
+    understated a hundredfold, reading as a plausible "barely moved". It is
+    `fmt.fmt_move` now, mirrored in `format.ts` under a drift test, and this
+    asserts the browser half against a real run.
+
+    Mutation: drop the `* 100` in `fmtMove`.
+    """
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#tour-dismiss")
+    page.wait_for_selector("#res-scorecard")
+    _freeze_effects(page)
+
+    page.locator("#res-scorecard .kpi-open").first.click()
+    page.wait_for_selector("#kpi-sheet")
+    moves = page.locator("#kpi-sheet .driver-move").all_inner_texts()
+    points = [m for m in moves if "pts" in m]
+    if not points:
+        pytest.skip("this sample's top KPI has no percentage drivers")
+
+    # A hundredfold understatement shows up as every move rounding to nothing.
+    values = [float(m.split()[1]) for m in points]
+    assert any(v >= 0.5 for v in values), (
+        f"every percentage move rounds to nothing, which is what the missing "
+        f"hundred looked like: {points}")
