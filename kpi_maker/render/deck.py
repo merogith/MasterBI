@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
@@ -233,19 +233,75 @@ class Deck:
 DECK_LIMITS = {"exec_summary": {"limit": 5}, "risks": {"limit": 5},
                "actions": {"limit": 8}}
 
-# Which section owns each planned exhibit, so that disabling a section drops
-# its charts from the deck too.
-EXHIBIT_PLAN = [
-    ("arr_trend", "arr", "Trajectory", "deep_dives"),
-    ("arr_bridge", "net_new_arr", "Diagnostic", "diagnostic"),
-    ("retention", "nrr", "Retention", "deep_dives"),
-    ("segment_churn", "logo_churn_rate", "Retention", "deep_dives"),
-    ("cohort_heatmap", "grr", "Retention", "diagnostic"),
-    ("cac_payback", "cac_payback_months", "Efficiency", "deep_dives"),
-    ("channel_cost", "blended_cac", "Efficiency", "deep_dives"),
-    ("indexed_growth", "arr_per_fte", "Leverage", "deep_dives"),
-    ("benchmark_position", None, "Benchmarks", "benchmarks"),
-]
+# Which section owns a planned exhibit, and which KPI's finding titles it.
+#
+# **Hints, not the plan, and the difference was four fifths of the deck.**
+# This was the whole list, so `render_exhibits` iterated nine hardcoded
+# subscription chart ids and a non-SaaS run matched exactly one of them.
+# Measured across the samples before changing it:
+#
+#     northwind_saas       12 charts built    9 in the deck   15 slides
+#     kestrel_retail        8                 1                7
+#     halberd_consulting    7                 1                7
+#     lumen_exchange        7                 1                7
+#     orbis_works           7                 1                7
+#
+# A factory computes an OEE trend, capacity headroom, scrap by family, a
+# decomposition, small multiples and a customer Pareto, and presented **one**
+# chart — the benchmark bars — on the artifact you actually stand up and
+# show a board. The plan called this "`DIAGNOSTIC_EXHIBITS` is hardcoded
+# SaaS"; the reach was the whole deck.
+#
+# The run's own `ChartSpec`s are the plan now. These rows survive as
+# overrides, because a hand-written kicker and an explicit KPI beat a derived
+# one where somebody has done the thinking.
+#
+# **The subscription deck was not whole either**, which is worth recording
+# because the first version of this comment claimed it would be unchanged:
+# northwind went 9 exhibits to 12 and 15 slides to 18. The three it gained
+# are `decomposition`, `segment_multiples` and `customer_pareto` — every
+# exhibit 5.3 added, none of which anyone thought to add to a hardcoded list.
+# A central registry of what to present is a place to forget things, and it
+# had been forgotten on the archetype it was written for.
+EXHIBIT_HINTS = {
+    "arr_trend": ("arr", "Trajectory", "deep_dives"),
+    "arr_bridge": ("net_new_arr", "Diagnostic", "diagnostic"),
+    "retention": ("nrr", "Retention", "deep_dives"),
+    "segment_churn": ("logo_churn_rate", "Retention", "deep_dives"),
+    "cohort_heatmap": ("grr", "Retention", "diagnostic"),
+    "cac_payback": ("cac_payback_months", "Efficiency", "deep_dives"),
+    "channel_cost": ("blended_cac", "Efficiency", "deep_dives"),
+    "indexed_growth": ("arr_per_fte", "Leverage", "deep_dives"),
+    "benchmark_position": (None, "Benchmarks", "benchmarks"),
+}
+
+#: The kicker for a chart nobody wrote a hint for, from the tab it already
+#: declares. One vocabulary rather than a second hand-written one — the
+#: dashboard's `TAB_LABELS` names the same groups.
+_KICKER = {"overview": "Diagnostic", "growth": "Growth",
+           "customer": "Customers", "people": "Leverage",
+           "retention": "Retention"}
+
+
+def exhibit_plan(specs) -> List[Tuple[str, Optional[str], str, str]]:
+    """`(spec_id, kpi_id, kicker, section)` for the charts this run built.
+
+    Derived, so an archetype that was never given a hand-written plan still
+    presents what it computed. A hint wins where one exists; everything else
+    takes its kicker from the tab the chart already declares and lands in the
+    deep dives, which is the section that exists to carry an exhibit and a
+    sentence about it.
+    """
+    plan = []
+    for spec in specs:
+        hint = EXHIBIT_HINTS.get(spec.id)
+        if hint is not None:
+            plan.append((spec.id, *hint))
+            continue
+        plan.append((spec.id, None,
+                     _KICKER.get(getattr(spec, "tab", ""), "Deep dive"),
+                     "deep_dives"))
+    return plan
 EXHIBIT_SECTIONS = ("diagnostic", "deep_dives", "benchmarks")
 
 #: Named here for the callers that already say `STATUS_WORD`; the map
@@ -304,7 +360,7 @@ def _exhibit_slides(deck: Deck, kpi_set: KPISet, results: List[MetricResult],
             f"cohort")
 
     specs_by_id = {s.id: s for s in specs}
-    for spec_id, kpi_id, kicker, owner in EXHIBIT_PLAN:
+    for spec_id, kpi_id, kicker, owner in exhibit_plan(specs):
         if owner not in enabled:
             continue
         spec = specs_by_id.get(spec_id)

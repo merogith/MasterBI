@@ -370,13 +370,44 @@ def _scorecard(ctx: SectionContext) -> SectionContent:
 
 @section("diagnostic", title="Diagnostic", order=3)
 def _diagnostic(ctx: SectionContext) -> SectionContent:
-    content = SectionContent(
-        id="diagnostic", title="Diagnostic",
-        intro="Where the period's performance actually came from. The bridge "
-              "decomposes the movement in the North Star; the cohort view "
-              "shows how much of it persists.")
+    """Where the period's performance came from — **if this run drew it.**
+
+    Both exhibits and the whole intro were subscription-specific and
+    unconditional, so four of the five archetypes shipped a board pack with a
+    section headed "Diagnostic" whose entire content was a paragraph about an
+    ARR bridge and cohort retention, followed by no exhibits at all. Measured
+    on a real factory's PDF before the fix: the intro, then straight to "Deep
+    dives".
+
+    A section that explains two charts a reader cannot see is worse than no
+    section, and the prose was in another business model's vocabulary. So the
+    exhibits are the ones this run actually built, and the intro describes
+    them rather than describing the SaaS pair.
+    """
+    return SectionContent(id="diagnostic", title="Diagnostic",
+                          intro=_diagnostic_intro(ctx),
+                          exhibits=diagnostic_exhibits(ctx))
+
+
+def _diagnostic_intro(ctx: SectionContext) -> str:
+    if any(e.id in DIAGNOSTIC_EXHIBITS for e in diagnostic_exhibits(ctx)):
+        return ("Where the period's performance actually came from. The "
+                "bridge decomposes the movement in the North Star; the "
+                "cohort view shows how much of it persists.")
+    return ("Where the period's performance actually came from, decomposed "
+            "into the parts of the business that moved it.")
+
+
+def diagnostic_exhibits(ctx: SectionContext) -> List[Exhibit]:
+    """The exhibits this section owns, so the deep dives can skip exactly them.
+
+    One function rather than a module constant, because what the section owns
+    now depends on what the run drew: `DIAGNOSTIC_EXHIBITS` alone made
+    `_deep_dives` skip two subscription charts it never had, and would now let
+    the decomposition appear in both sections at once.
+    """
     bridge = next((f for f in ctx.findings if f.id == "arr_bridge"), None)
-    content.exhibits = [
+    candidates = [
         Exhibit(id="arr_bridge", title="ARR bridge, last 12 months",
                 caption="Blue adds, red subtracts",
                 # The bridge's own finding is its footnote here rather than a
@@ -389,7 +420,22 @@ def _diagnostic(ctx: SectionContext) -> SectionContent:
                 note="Rows below 100% at month 12 are cohorts where churn "
                      "outran expansion."),
     ]
-    return content
+    drawn = [e for e in candidates if e.id in ctx.images]
+    if drawn:
+        return drawn
+
+    # Every archetype builds a decomposition of its most senior sliceable KPI
+    # — 5.3a — so there is always something here to say, and it is the same
+    # question the bridge answers for a subscription book.
+    decomposition = next((spec for spec in ctx.specs
+                          if spec.id == "decomposition"
+                          and spec.id in ctx.images), None)
+    if decomposition is None:
+        return []
+    found = next((f for f in ctx.findings if f.id.startswith("decomp_")), None)
+    return [Exhibit(id=decomposition.id, title=decomposition.title,
+                    caption=decomposition.subtitle,
+                    note=found.statement if found else (decomposition.note or ""))]
 
 
 @section("deep_dives", title="Deep dives", order=4)
@@ -404,13 +450,16 @@ def _deep_dives(ctx: SectionContext, limit: Optional[int] = None) -> SectionCont
     found none.
     """
     content = SectionContent(id="deep_dives", title="Deep dives")
+    # Exactly what the diagnostic section took, not a fixed pair of
+    # subscription ids — otherwise this run's decomposition appears twice.
+    owned_by_diagnostic = {e.id for e in diagnostic_exhibits(ctx)}
     by_kpi: Dict[str, List[Finding]] = {}
     for f in ctx.findings:
         for kid in f.kpi_ids:
             by_kpi.setdefault(kid, []).append(f)
 
     for spec in ctx.specs:
-        if spec.id in DIAGNOSTIC_EXHIBITS or spec.id not in ctx.images:
+        if spec.id in owned_by_diagnostic or spec.id not in ctx.images:
             continue
         related = [f for f in ctx.findings
                    if f.id.endswith(spec.id) or spec.id in f.id]
