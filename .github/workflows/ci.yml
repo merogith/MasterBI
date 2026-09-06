@@ -28,6 +28,10 @@ concurrency:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    # Capped for the same reason as `test`, and it was not: 0.8 put a limit on
+    # the job it was debugging and left the other four inheriting GitHub's
+    # six-hour default. Runs in ~30s.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -69,12 +73,35 @@ jobs:
         python: ['3.11', '3.12']
     runs-on: ${{ matrix.os }}
     # A hang is not a failure GitHub notices: the default job limit is six
-    # hours. Both Windows jobs on the two previous runs sat in the Test step
-    # for 22+ minutes and were only stopped because the next push cancelled
-    # them — which is how "Windows has never passed" went unnoticed while the
-    # runs looked merely cancelled. Ubuntu and macOS finish the suite in ~40s,
-    # so twelve minutes is generous even for a slow Windows runner.
-    timeout-minutes: 12
+    # hours. Both Windows jobs on two runs before 0.8 sat in the Test step for
+    # 22+ minutes and were only stopped because the next push cancelled them —
+    # which is how "Windows has never passed" went unnoticed while the runs
+    # looked merely cancelled.
+    #
+    # **The number is calibrated, and the rule matters more than the value:
+    # roughly twice the slowest Windows run observed.** That keeps a genuine
+    # hang failing in minutes rather than hours while leaving room for a suite
+    # that is still growing.
+    #
+    # 0.8 set 12 and justified it with "Ubuntu and macOS finish the suite in
+    # ~40s". That sentence was true when it was written and is now off by
+    # almost an order of magnitude. The stale figure is the whole
+    # justification for the number, so it is the drift that matters: crossing
+    # the cap kills the job with no output, and a killed Windows job is
+    # indistinguishable from the kaleido hang 0.8 spent an item learning to
+    # recognise. The next person would have re-diagnosed a hang that was not
+    # there.
+    #
+    # Slowest Test step of each pair, measured from the run timestamps:
+    #
+    #   run 54   Windows 9m15s   Ubuntu 6m01s
+    #   run 55   Windows 8m54s   Ubuntu 4m18s
+    #   run 56   Windows 9m40s   Ubuntu 5m55s   <- 81% of the old 12
+    #
+    # Re-measure when a run gets close again; the suite grows every item, and
+    # the point of the 2x rule is that this comment has to be re-derived
+    # rather than trusted.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -181,6 +208,12 @@ jobs:
     # here means something different — the suites pass on data the renderers
     # then choke on.
     runs-on: ubuntu-latest
+    # **This is the job that most needed a cap and had none.** It renders
+    # every sample's PNGs, so it drives kaleido — the subprocess whose
+    # untimed `readline()` is the hang 0.8 exists to contain — and an
+    # uncapped hang here would have burned six hours looking like a slow
+    # build. Runs in ~1m40s.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

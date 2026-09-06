@@ -802,3 +802,79 @@ def test_a_status_of_unscored_does_not_claim_there_is_no_target() -> None:
     from kpi_maker.viz.theme import STATUS_LABEL
 
     assert "target" not in STATUS_LABEL["unscored"].lower(), STATUS_LABEL
+
+
+def test_every_ci_job_has_a_timeout() -> None:
+    """A job with no `timeout-minutes` inherits GitHub's **six-hour** default.
+
+    That is the failure 0.8 exists to contain — kaleido's untimed
+    `readline()` parks a Windows job forever, and a job that never finishes is
+    indistinguishable from a slow one until somebody subtracts two
+    timestamps. 0.8 capped the job it was debugging and left `lint` and
+    `artifacts` uncapped, and `artifacts` is the one that renders every
+    sample's PNGs — the job most exposed to that exact hang.
+
+    Asserted as the property rather than by naming the jobs, so a sixth job
+    added later cannot arrive without one.
+
+    Mutation: delete any `timeout-minutes:` line from `ci.yml`.
+    """
+    import re
+
+    text = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    body = text.split("\njobs:\n", 1)[1]
+
+    # Job keys are the two-space-indented mapping keys under `jobs:`.
+    jobs = re.findall(r"^  ([a-z][a-z0-9_-]*):\s*$", body, re.M)
+    assert len(jobs) >= 5, jobs
+
+    blocks = re.split(r"^  (?=[a-z][a-z0-9_-]*:\s*$)", body, flags=re.M)
+    uncapped = [
+        name for name, block in zip(jobs, blocks[1:])
+        if not re.search(r"^\s+timeout-minutes:\s*\d+", block, re.M)
+    ]
+    assert not uncapped, (
+        f"these CI jobs inherit GitHub's six-hour default: {uncapped}")
+
+
+def test_the_test_job_leaves_room_for_the_suite_it_runs() -> None:
+    """The Windows cap is calibrated at roughly twice the slowest observed
+    Windows run, and the value is only defensible while that stays true.
+
+    Measured across runs 54-56 the slowest Windows Test step was 9m40s, which
+    was **81% of the old 12-minute cap** — and 0.8's justification for that 12
+    read "Ubuntu and macOS finish the suite in ~40s", a figure that had gone
+    stale by almost an order of magnitude. Crossing the cap kills the job with
+    no output, so the drift would have surfaced as a phantom hang.
+
+    This cannot check CI timings from here, so it checks the two things it
+    can: the cap is at least the headroom that measurement implied, and the
+    comment still carries the numbers it was derived from rather than a bare
+    value nobody can re-check.
+
+    Mutation: drop the cap back to 12, or delete the measurement table.
+    """
+    import re
+
+    text = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    test_block = text.split("\n  test:\n", 1)[1].split("\n  smoke:", 1)[0]
+
+    cap = re.search(r"^\s+timeout-minutes:\s*(\d+)", test_block, re.M)
+    assert cap, "the test job lost its timeout"
+    assert int(cap.group(1)) >= 18, (
+        f"timeout-minutes is {cap.group(1)}; the slowest measured Windows run "
+        f"was 9m40s and the rule is roughly 2x that")
+
+    # At least three, because "roughly twice the slowest observed" is a claim
+    # about a trend and one reading cannot support it. The first version of
+    # this asserted a single row and stayed green when two of the three were
+    # deleted -- a weak mutation, but the test was the weaker half.
+    rows = re.findall(r"run \d+\s+Windows (\d+)m(\d+)s", test_block)
+    assert len(rows) >= 3, (
+        f"only {len(rows)} measurement(s) left in the comment; the cap's "
+        f"justification is a trend, and this is how the previous value "
+        f"outlived its own")
+    slowest = max(int(m) * 60 + int(sec) for m, sec in rows)
+    assert int(cap.group(1)) * 60 >= 1.8 * slowest, (
+        f"cap {cap.group(1)}m is not ~2x the slowest recorded run "
+        f"({slowest / 60:.1f}m)")
