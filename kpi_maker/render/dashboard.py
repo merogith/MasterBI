@@ -24,6 +24,7 @@ from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
 from ..viz.charts import ChartSpec, build_all
 from ..viz.theme import FONT_STACK, STATUS_GLYPH, STATUS_LABEL, TOKENS
+from .sections import finding_for_exhibit
 
 # Every `tab=` value any registered chart declares needs an entry. A missing
 # one falls through to `t.title()`, which is why the four e-commerce exhibits
@@ -492,11 +493,28 @@ def _appendix(results: List[MetricResult], kpi_set: KPISet,
       </section>"""
 
 
-def _chart_html(specs: List[ChartSpec], mode: str) -> str:
+def _chart_html(specs: List[ChartSpec], mode: str,
+                findings: Optional[List[Finding]] = None) -> str:
     """Emit one tab-panel per tab. Plotly's JS is inlined once in <head>, so
-    every figure here embeds without it."""
+    every figure here embeds without it.
+
+    **Titles are message-driven**, which is IBCS's first rule and what the
+    deck has always done: the headline is the ranked finding attached to the
+    exhibit, and the chart's own descriptive title drops to the line below.
+    "Net Revenue by channel" tells a board nothing it cannot see from the
+    axes; "direct accounts for 80% of the year's move" is why the chart is in
+    the pack at all. A chart with no finding keeps its descriptive title
+    rather than being given an invented message.
+    """
     blocks: Dict[str, List[str]] = {}
+    headlined: set = set()
     for spec in specs:
+        found = finding_for_exhibit(spec, findings or [], headlined)
+        heading = found.title if found else spec.title
+        # The descriptive title is not thrown away — it names what is plotted,
+        # which the message does not, so it joins the subtitle.
+        sub = (f"{spec.title} · {spec.subtitle}" if found and spec.subtitle
+               else (spec.title if found else spec.subtitle))
         inner = spec.figure.to_html(
             full_html=False,
             include_plotlyjs=False,
@@ -507,8 +525,8 @@ def _chart_html(specs: List[ChartSpec], mode: str) -> str:
         blocks.setdefault(spec.tab, []).append(f"""
           <figure class="card card-{spec.width}">
             <figcaption>
-              <h3>{html.escape(spec.title)}</h3>
-              <p>{html.escape(spec.subtitle)}</p>
+              <h3>{html.escape(heading)}</h3>
+              <p>{html.escape(sub)}</p>
             </figcaption>
             <div class="plot">{inner}</div>
             {note}
@@ -769,8 +787,8 @@ code {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 
   {_findings_section(findings, (narrative or {}).get("exec_summary"))}
 
   <div class="tabs" role="tablist">{tab_buttons}</div>
-  <div class="theme-set active" data-mode="light">{_chart_html(specs_light, "light")}</div>
-  <div class="theme-set" data-mode="dark">{_chart_html(specs_dark, "dark")}</div>
+  <div class="theme-set active" data-mode="light">{_chart_html(specs_light, "light", findings)}</div>
+  <div class="theme-set" data-mode="dark">{_chart_html(specs_dark, "dark", findings)}</div>
 
   {_scorecard_table(results, kpi_set, profile.identity.currency, locale)}
   {_appendix(results, kpi_set, profile, checks, anomaly_notes)}

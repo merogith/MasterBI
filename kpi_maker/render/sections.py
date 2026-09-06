@@ -26,7 +26,7 @@ recorded intent instead of drift nobody can tell from a bug.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set
 
 from ..fmt import fmt_value
 from ..insight.detectors import Finding
@@ -68,6 +68,16 @@ class Bullet:
     title: str = ""
     text: str = ""
     tint: str = ""
+    #: "modelled" or "mixed" when any KPI this statement rests on was not
+    #: measured from the user's own data; empty when every one was.
+    #:
+    #: Quiet in the common case, on `_basis_badge`'s reasoning: labelling
+    #: every measured figure would make the distinction invisible through
+    #: repetition. It is the exec summary that most needs it — a reader who
+    #: takes one page away should not have to go to the scorecard to learn
+    #: that the number in the top bullet came from the generator filling a
+    #: gap in their upload.
+    basis: str = ""
 
     @property
     def lead(self) -> str:
@@ -330,12 +340,28 @@ def _exec_summary(ctx: SectionContext, limit: int = 5) -> SectionContent:
         intro="Every statement below is computed directly from the underlying "
               "data. Figures in this section reconcile to the scorecard that "
               "follows.")
+    basis_of = {r.kpi.id: r.basis for r in ctx.results if r.computed}
     content.bullets = [
         Bullet(label=SEVERITY_WORD.get(f.severity, ""), title=f.title,
-               text=f.statement)
+               text=f.statement, basis=_finding_basis(f, basis_of))
         for f in ctx.findings[:limit]
     ]
     return content
+
+
+def _finding_basis(finding: Finding, basis_of: Dict[str, str]) -> str:
+    """The weakest basis among the KPIs a statement rests on.
+
+    Weakest rather than first: a bullet standing on one measured KPI and one
+    the generator supplied is not a measured statement, and reporting the
+    better of the two is the direction that misleads.
+    """
+    seen = {basis_of.get(k, "") for k in finding.kpi_ids} - {""}
+    if "modelled" in seen:
+        return "modelled"
+    if "mixed" in seen:
+        return "mixed"
+    return ""
 
 
 @section("scorecard", title="Scorecard", order=2)
@@ -366,6 +392,59 @@ def _scorecard(ctx: SectionContext) -> SectionContent:
             headers=["KPI", "Current", "12mo ago", "Target", "Cohort med.", "Status"],
             rows=rows, aligns=["L", "R", "R", "R", "R", "L"], row_tints=tints))
     return content
+
+
+def finding_for_exhibit(spec, findings: Sequence[Finding],
+                        used: Optional[Set[str]] = None) -> Optional[Finding]:
+    """The ranked finding this exhibit is about, or None.
+
+    **`used` is what stops one finding headlining two charts.** The
+    decomposition and the small multiples are both about the same KPI by
+    construction — one splits its move, the other draws its segments side by
+    side — so on a real dashboard they came out under the identical headline,
+    "direct drove most of the move in Revenue", twice in a row. Two adjacent
+    cards saying the same thing is worse than the descriptive titles they
+    replaced. A caller passing a running set gets each finding once, in
+    exhibit order, and the rest keep their own titles.
+
+    **One rule, because there were two and both were mostly missing.**
+    `render/deck.py` matched a hand-written KPI id per chart;
+    `_deep_dives` matched by spelling — `finding.id.endswith(spec.id) or
+    spec.id in finding.id`. Measured across the samples, the spelling rule
+    found a finding for **3 of 12** exhibits on the subscription run and
+    **0 of 7** on the marketplace, and it missed `decomposition` on every
+    archetype: "decomp_net_revenue_channel" neither ends with nor contains
+    "decomposition". So the PDF printed exhibits with no observation while
+    the sentence about them sat in `findings.json`.
+
+    `ChartSpec.about` names the KPI ids an exhibit draws, so the match is
+    exact. Findings arrive ranked, so the first hit is the most important
+    thing anyone has to say about that chart.
+
+    The spelling rule survives as a fallback rather than being deleted: some
+    findings are named for the exhibit rather than for a KPI, and dropping it
+    would lose matches this is meant to add to.
+    """
+    taken = used if used is not None else set()
+    # A chart that slices by one dimension takes only a finding about that
+    # dimension. The decomposition ids carry it — `decomp_<kpi>_<dimension>`
+    # — so this is an exact suffix, not more spelling guesswork.
+    slice_of = getattr(spec, "dimension", "")
+    for finding in findings:
+        if finding.id in taken:
+            continue
+        if slice_of and not finding.id.endswith(f"_{slice_of}"):
+            continue
+        if spec.about and any(k in spec.about for k in finding.kpi_ids):
+            taken.add(finding.id)
+            return finding
+    for finding in findings:
+        if finding.id in taken:
+            continue
+        if finding.id.endswith(spec.id) or spec.id in finding.id:
+            taken.add(finding.id)
+            return finding
+    return None
 
 
 @section("diagnostic", title="Diagnostic", order=3)
@@ -453,23 +532,21 @@ def _deep_dives(ctx: SectionContext, limit: Optional[int] = None) -> SectionCont
     # Exactly what the diagnostic section took, not a fixed pair of
     # subscription ids — otherwise this run's decomposition appears twice.
     owned_by_diagnostic = {e.id for e in diagnostic_exhibits(ctx)}
-    by_kpi: Dict[str, List[Finding]] = {}
-    for f in ctx.findings:
-        for kid in f.kpi_ids:
-            by_kpi.setdefault(kid, []).append(f)
+    headlined: Set[str] = set()
 
     for spec in ctx.specs:
         if spec.id in owned_by_diagnostic or spec.id not in ctx.images:
             continue
-        related = [f for f in ctx.findings
-                   if f.id.endswith(spec.id) or spec.id in f.id]
-        if not related:
-            for kid, group in by_kpi.items():
-                if kid in spec.id or spec.id in kid:
-                    related.extend(group)
-        first = related[0] if related else None
+        first = finding_for_exhibit(spec, ctx.findings, headlined)
         content.exhibits.append(Exhibit(
-            id=spec.id, title=spec.title, caption=spec.subtitle, note=spec.note,
+            # **Message-driven, which is IBCS's first rule and the deck's
+            # convention already.** "Net Revenue by channel" tells a board
+            # nothing it cannot see; "direct accounts for 80% of the year's
+            # move" is the reason the chart is in the pack. The descriptive
+            # title stays as the caption's neighbour, and a chart with no
+            # finding keeps it.
+            id=spec.id, title=first.title if first else spec.title,
+            caption=spec.subtitle, note=spec.note,
             observation=first.statement if first else "",
             implication=(first.recommendation if first and first.recommendation
                          else "")))

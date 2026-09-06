@@ -75,6 +75,31 @@ class ChartSpec:
     # trace index -> token role, so the theme toggle knows what to recolour
     trace_tokens: Dict[int, str] = field(default_factory=dict)
     colorscale_tokens: List[str] = field(default_factory=list)
+    #: The KPI ids this exhibit draws, so a finding can be matched to it
+    #: exactly rather than by guessing from the two ids' spelling.
+    #:
+    #: **Measured before adding it**: the substring rule the renderers shared
+    #: — `finding.id.endswith(spec.id) or spec.id in finding.id` — matched
+    #: 3 of 12 exhibits on the subscription sample and **0 of 7** on the
+    #: marketplace. It misses `decomposition` on every archetype, whose
+    #: findings are produced by the very module that draws it, because
+    #: "decomp_net_revenue_channel" neither ends with nor contains
+    #: "decomposition". So the PDF's deep dives printed exhibits with no
+    #: observation under them while the sentence sat in `findings.json`.
+    #:
+    #: Empty is honest: a chart drawn from a fact table rather than a metric
+    #: — the OEE trend, revenue and orders — is about no single KPI, and
+    #: those keep their descriptive title.
+    about: Tuple[str, ...] = ()
+    #: The segment dimension this exhibit slices by, when it slices by one.
+    #:
+    #: Matching on the KPI alone is not enough for these: the decomposition
+    #: and the small multiples are both about the same metric, so a factory's
+    #: channel small-multiples came out headlined "premium drove most of the
+    #: move in Revenue" — a product family, over a chart with no product
+    #: families on it. A headline naming something the reader cannot find
+    #: below it is worse than a descriptive one.
+    dimension: str = ""
 
 
 # --------------------------------------------------------------------------
@@ -463,7 +488,7 @@ def plan_vs_actual(results: List[MetricResult]) -> Optional[ChartSpec]:
             subtitle = (f"{amount} {'ahead of' if ahead else 'behind'} plan "
                         f"in the latest month")
     return ChartSpec(
-        id="plan_vs_actual", title=f"{r.kpi.name} vs plan",
+        id="plan_vs_actual", title=f"{r.kpi.name} vs plan", about=(r.kpi.id,),
         subtitle=subtitle, figure=fig, tab="overview", width="full",
         trace_tokens=tokens,
         note=("The plan line is this KPI's own target rule, not a stated "
@@ -585,7 +610,8 @@ def decomposition(results: List[MetricResult]) -> Optional[ChartSpec]:
          else fig.update_xaxes)(tickformat=".1%")
     cut = found.dimension.replace("_", " ")
     return ChartSpec(
-        id="decomposition",
+        id="decomposition", about=(result.kpi.id,),
+        dimension=found.dimension,
         title=f"{result.kpi.name} by {cut}",
         subtitle=subtitle, figure=fig, tab="overview", width="full",
         note=note, trace_tokens=tokens,
@@ -709,7 +735,8 @@ def segment_multiples(results: List[MetricResult]) -> Optional[ChartSpec]:
     unit = result.kpi.unit
     cut = dimension.replace("_", " ")
     return ChartSpec(
-        id="segment_multiples",
+        id="segment_multiples", about=(result.kpi.id,),
+        dimension=dimension,
         title=f"{result.kpi.name} by {cut}, side by side",
         subtitle=(f"{high.replace('_', ' ')} "
                   f"{fmt_value(latest[high], unit, _CURRENCY.get(), locale=_LOCALE.get())} "
@@ -758,7 +785,7 @@ def arr_trend(results: List[MetricResult]) -> Optional[ChartSpec]:
     fig.update_layout(hovermode="x unified")
     money_axis(fig)
     return ChartSpec(
-        id="arr_trend", title="Annual Recurring Revenue",
+        id="arr_trend", title="Annual Recurring Revenue", about=("arr",),
         subtitle="Monthly, trailing 36 months", figure=fig,
         tab="overview", width="full",
         trace_tokens={0: "series_1", 1: "series_1"},
@@ -809,7 +836,7 @@ def arr_bridge(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     _base_layout(fig, height=340)
     money_axis(fig)
     return ChartSpec(
-        id="arr_bridge", title="ARR bridge, last 12 months",
+        id="arr_bridge", title="ARR bridge, last 12 months", about=("net_new_arr",),
         subtitle="Where the year's ARR movement came from", figure=fig,
         tab="overview", width="full",
         note="Blue adds, red subtracts. The gap between gross additions and closing ARR is leakage.",
@@ -851,6 +878,7 @@ def retention_lines(results: List[MetricResult]) -> Optional[ChartSpec]:
     fig.update_yaxes(ticksuffix="%")
     return ChartSpec(
         id="retention", title="Net and gross revenue retention",
+        about=("nrr", "grr"),
         subtitle="Trailing 12-month cohort basis", figure=fig,
         tab="customer", width="half", trace_tokens=tokens,
         note="The gap between the two lines is expansion; it is the only thing holding NRR above GRR.",
@@ -885,6 +913,7 @@ def segment_churn(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     fig.update_yaxes(showgrid=False)
     return ChartSpec(
         id="segment_churn", title="ARR lost to churn, by segment",
+        about=("logo_churn_rate",),
         subtitle=f"{worst} highlighted — the aggregate number hides it", figure=fig,
         tab="customer", width="half",
         note="Blended churn is close to meaningless when segments differ this much.",
@@ -927,6 +956,7 @@ def indexed_growth(results: List[MetricResult],
     fig.update_layout(hovermode="x unified", margin=dict(l=8, r=90, t=8, b=8))
     return ChartSpec(
         id="indexed_growth", title="Operating leverage: ARR vs headcount",
+        about=("arr_per_fte",),
         subtitle="Both indexed to 100 at the start of the period", figure=fig,
         tab="people", width="half", trace_tokens={0: "series_1", 1: "series_3"},
         note="The gap between the lines IS operating leverage. Indexed to a common base — never a dual axis.",
@@ -958,7 +988,7 @@ def cac_payback(results: List[MetricResult]) -> Optional[ChartSpec]:
     fig.update_layout(hovermode="x unified")
     fig.update_yaxes(ticksuffix=" mo")
     return ChartSpec(
-        id="cac_payback", title="CAC payback period",
+        id="cac_payback", title="CAC payback period", about=("cac_payback_months",),
         subtitle="Gross-margin adjusted, 3-month smoothed", figure=fig,
         tab="growth", width="half", trace_tokens={0: "series_1"},
     )
@@ -1015,6 +1045,7 @@ def cohort_heatmap(tables: Dict[str, pd.DataFrame], quarters: int = 8,
     fig.update_yaxes(autorange="reversed")
     return ChartSpec(
         id="cohort_heatmap", title="Revenue retention by acquisition cohort",
+        about=("grr",),
         subtitle="% of the cohort's initial ARR still held, by month since signup",
         figure=fig, tab="customer", width="full",
         colorscale_tokens=["seq_1", "seq_2", "seq_3", "seq_4", "seq_5"],
@@ -1066,6 +1097,7 @@ def channel_dumbbell(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     n = len(shared)
     return ChartSpec(
         id="channel_cost", title="Cost per qualified lead, by channel",
+        about=("blended_cac",),
         subtitle="Last 6 months vs the same period a year earlier", figure=fig,
         tab="growth", width="half",
         trace_tokens={n: "seq_1", n + 1: "seq_5"},
@@ -1182,7 +1214,7 @@ def customer_pareto(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
                      title=None)
     fig.update_yaxes(tickformat=".0%")
     return ChartSpec(
-        id="customer_pareto",
+        id="customer_pareto", about=("revenue_concentration_top10",),
         title="How much of the revenue rides on the largest customers",
         subtitle=(f"The ten largest are {_share_words(top10)} of revenue; "
                   f"{half:,} of {n:,} customers account for half"),
@@ -1354,6 +1386,7 @@ def revenue_and_orders(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
                                             size=11)))
     return ChartSpec(
         id="revenue_orders", title="Net revenue and order volume",
+        about=("net_revenue", "orders_count"),
         subtitle="Orders rescaled to the revenue axis at the first month — "
                  "shape is comparable, level is not",
         figure=fig, tab="overview", width="full",
@@ -1412,6 +1445,7 @@ def aov_and_conversion(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     )
     return ChartSpec(
         id="aov_conversion", title="Average order value and conversion rate",
+        about=("aov", "conversion_rate"),
         subtitle="Basket size on the left, conversion on the right",
         figure=fig, tab="growth", width="full",
         note="Both respond faster than acquisition does, and neither needs "
@@ -1448,7 +1482,7 @@ def category_returns(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     blended = grouped["returns"].sum() / max(
         (grouped["gross"] - grouped["discounts"]).sum(), 1e-9)
     return ChartSpec(
-        id="category_returns", title="Return rate by category",
+        id="category_returns", title="Return rate by category", about=("return_rate",),
         subtitle=f"Blended rate {blended:.1%} — the number a dashboard usually shows",
         figure=fig, tab="retention", width="half",
         note="A blended return rate that rises may only mean the worst "
@@ -1482,6 +1516,7 @@ def buyer_mix(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     share = frame["repeat_buyers"].sum() / max(frame["active_buyers"].sum(), 1e-9)
     return ChartSpec(
         id="buyer_mix", title="Who bought: new against repeat",
+        about=("new_buyer_share", "repeat_purchase_rate"),
         subtitle=f"{share:.0%} of purchases came from buyers who had bought before",
         figure=fig, tab="retention", width="full",
         note="A business growing on new buyers alone is renting its revenue. "
@@ -1544,6 +1579,7 @@ def utilisation_and_realisation(tables: Dict[str, pd.DataFrame]) -> Optional[Cha
                                             size=11)))
     return ChartSpec(
         id="utilisation_realisation",
+        about=("utilisation_rate", "realisation_rate"),
         title="Utilisation and realisation",
         subtitle="Share of available hours that were billed, and share of "
                  "standard fee those hours actually earned",
@@ -1600,6 +1636,7 @@ def backlog_and_book_to_bill(tables: Dict[str, pd.DataFrame]) -> Optional[ChartS
                     / max(frame["revenue_recognised"].tail(12).mean(), 1e-9))
     return ChartSpec(
         id="backlog_cover", title="Backlog and book-to-bill",
+        about=("backlog_cover_months", "book_to_bill"),
         subtitle=f"{months_cover:.1f} months of delivered revenue sitting in "
                  f"sold work at the end of the period",
         figure=fig, tab="growth", width="full",
@@ -1646,7 +1683,7 @@ def service_line_margin(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     )
     worst = labels[0]
     return ChartSpec(
-        id="service_line_margin",
+        id="service_line_margin", about=("gross_margin",),
         title="Realisation by service line",
         subtitle=f"Fee earned as a share of fee at standard rate — "
                  f"{worst} concedes the most",
@@ -1716,6 +1753,7 @@ def oee_trend(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     # the identity and in the workbook for anyone who wants it.
     return ChartSpec(
         id="oee_trend", title="Overall equipment effectiveness, and where it goes",
+        about=("oee", "equipment_availability", "line_performance"),
         subtitle="OEE against the two losses that move it — the line was not "
                  "running, or what it made was scrap",
         figure=fig, tab="overview", width="full",
@@ -1769,6 +1807,7 @@ def capacity_headroom(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
                            / max(grouped["nameplate"].tail(12).sum(), 1e-9))
     return ChartSpec(
         id="capacity_headroom", title="Output against the ceiling",
+        about=("schedule_utilisation",),
         subtitle=f"{headroom:.0%} of nameplate capacity unscheduled over the "
                  f"last twelve months",
         figure=fig, tab="growth", width="full",
@@ -1811,7 +1850,7 @@ def scrap_by_family(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     )
     worst = labels[-1]
     return ChartSpec(
-        id="scrap_by_family", title="Scrap rate by product family",
+        id="scrap_by_family", title="Scrap rate by product family", about=("scrap_rate",),
         subtitle=f"Blended {blended:.1%}, and {worst} is the line carrying it",
         figure=fig, tab="people", width="half",
         note="Scrapped units cost what they cost and earn nothing, so this is a "
@@ -1882,6 +1921,7 @@ def gmv_and_take(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
                     / max(grouped["value"].tail(12).sum(), 1e-9))
     return ChartSpec(
         id="gmv_and_take", title="GMV, net revenue and the take rate",
+        about=("gmv_ttm", "take_rate"),
         subtitle=f"{blended:.1%} of everything transacted stayed with the "
                  f"platform over the last twelve months",
         figure=fig, tab="overview", width="full",
@@ -1929,6 +1969,7 @@ def liquidity_trend(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
                  / max(grouped["demand"].tail(12).sum(), 1e-9))
     return ChartSpec(
         id="liquidity_trend", title="Supply, demand and what cleared",
+        about=("match_rate",),
         subtitle=f"{rate:.0%} of requests found a match over the last twelve "
                  f"months",
         figure=fig, tab="growth", width="full",
@@ -1969,7 +2010,7 @@ def take_by_category(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
                      line=dict(color=LIGHT["axis"], width=1, dash="dash"))],
     )
     return ChartSpec(
-        id="take_by_category", title="Take rate by category",
+        id="take_by_category", title="Take rate by category", about=("take_rate",),
         subtitle=f"Blended {blended:.1%}, and the spread is the negotiating "
                  f"position",
         figure=fig, tab="people", width="half",

@@ -81,6 +81,9 @@ class PDFReport(FPDF):
         self.family = "helvetica"
         self.set_margins(18, 18, 18)
         self.set_auto_page_break(auto=True, margin=20)
+        #: Set only by the table-of-contents placeholder, which opens a page
+        #: the following section would otherwise abandon. See `add_page`.
+        self._page_untouched = False
         self._load_font()
         self.cover_done = False
 
@@ -192,6 +195,23 @@ class PDFReport(FPDF):
         self.cell(half, 4, f"{self.page_no()}", align="R")
 
     # -- typography -------------------------------------------------------
+    def add_page(self, *args, **kwargs):  # type: ignore[override]
+        """Start a new page, unless one was just opened and left untouched.
+
+        `insert_toc_placeholder` performs its own page break, and every
+        section starts with `add_page()`, so the contents page was followed
+        by a blank one carrying nothing but the header and footer. Rather
+        than special-casing the first section, the page break itself becomes
+        idempotent: asking for a fresh page when the current one is already
+        fresh gives you the one you are on.
+        """
+        if self._page_untouched:
+            self._page_untouched = False
+            return None
+        result = super().add_page(*args, **kwargs)
+        self._page_untouched = False
+        return result
+
     def _flow(self) -> None:
         """Return the cursor to the left margin before flowing text."""
         self.set_x(self.l_margin)
@@ -213,6 +233,10 @@ class PDFReport(FPDF):
 
     def h1(self, text: str) -> None:
         self._flow()
+        # Registers the heading in fpdf2's outline, which is what both the
+        # table of contents and a PDF reader's bookmark pane read. Free here
+        # and impossible to keep in step if written out separately.
+        self.start_section(self.clean(text), level=0)
         self.ln(3)
         self.set_font(self.family, "B", 16)
         self.set_text_color(*_rgb(self.t["text_primary"]))
@@ -391,6 +415,11 @@ def _draw_cover(pdf: PDFReport, c: SectionContent) -> None:
     pdf.cover_done = True
 
 
+#: How a non-measured basis reads in prose. `_basis_badge`'s words, in the
+#: one place the PDF needs them.
+BASIS_WORD = {"modelled": "modelled data", "mixed": "part modelled"}
+
+
 def _draw_bullets(pdf: PDFReport, c: SectionContent) -> None:
     """Exec summary and risks: a bold lead-in, then the sentence."""
     pdf.add_page()
@@ -406,7 +435,14 @@ def _draw_bullets(pdf: PDFReport, c: SectionContent) -> None:
     for b in c.bullets:
         pdf.set_font(pdf.family, "B", 9.5)
         pdf.set_text_color(*_rgb(pdf.t[b.tint or "text_primary"]))
-        pdf.multi_cell(0, 4.8, pdf.clean(b.lead))
+        # The basis rides on the lead-in rather than a separate line: a
+        # reader taking one page away should not have to go to the scorecard
+        # to learn that the number in the top bullet came from the generator
+        # filling a gap in their upload. Quiet when everything was measured.
+        lead = b.lead
+        if b.basis:
+            lead += f"  ({BASIS_WORD.get(b.basis, b.basis)})"
+        pdf.multi_cell(0, 4.8, pdf.clean(lead))
         if b.tint:
             # Risks put the statement in the standard body style; the exec
             # summary sets its own, slightly tighter, leading.
@@ -571,8 +607,70 @@ def render_report(path: Path, profile: CompanyProfile, kpi_set: KPISet,
         anomaly_notes=anomaly_notes, period=period, origins=origins or {},
         narrated=sorted(narrative or {}), ai_notes=list(ai_notes or []),
         caveats=list(caveats or []), locale=locale)
-    for content in build_sections(ctx, section_order, narrative=narrative):
+    drawn = list(build_sections(ctx, section_order, narrative=narrative))
+
+    # **A sixteen-page board pack with no way in.** The report has run to
+    # nine numbered sections since it was written and there was no table of
+    # contents anywhere — a reader wanting the benchmarks had to thumb
+    # through the deep dives.
+    #
+    # `insert_toc_placeholder` is fpdf2's own two-pass machinery: it reserves
+    # the page here and renders it once the real page numbers exist. Doing it
+    # by hand would mean either drawing everything twice or guessing where
+    # the sections land, and a table of contents with the wrong numbers in it
+    # is worse than none.
+    #
+    # After the cover, before the first numbered section, which is where a
+    # reader looks for it.
+    for index, content in enumerate(drawn):
+        if index == 1:
+            # A page of its own first: `insert_toc_placeholder` reserves the
+            # rest of whatever page is current, so calling it straight after
+            # the cover reserved the cover.
+            pdf.add_page()
+            pdf.insert_toc_placeholder(_draw_toc, pages=1)
+            # The placeholder broke to a fresh page of its own; the next
+            # section should land on it rather than open another.
+            pdf._page_untouched = True
         DRAW[content.id](pdf, content)
 
     pdf.output(str(path))
     return path
+
+
+def _draw_toc(pdf: "PDFReport", outline) -> None:
+    """The contents page, from the headings `h1` already registered.
+
+    Derived from the outline rather than from a second list of section names:
+    a hand-kept copy is the drift this repo tests for everywhere else, and
+    here it would be a contents page pointing at sections the run did not
+    produce — `design.sections` can switch any of them off.
+    """
+    # Neither `add_page()` nor `h1()`. The placeholder has already reserved
+    # and positioned this page, so adding one spends the reservation and
+    # raises; and `h1` registers an outline entry, which would append to the
+    # very list this function is iterating.
+    pdf.set_font(pdf.family, "B", 16)
+    pdf.set_text_color(*_rgb(pdf.t["text_primary"]))
+    pdf.set_x(pdf.l_margin)
+    pdf.multi_cell(0, 7, "Contents")
+    pdf.ln(2)
+    for entry in outline:
+        if entry.level != 0 or entry.name == "Contents":
+            continue
+        pdf.set_font(pdf.family, "", 10.5)
+        pdf.set_text_color(*_rgb(pdf.t["text_primary"]))
+        # A dotted leader, so the eye can cross the page to the number. The
+        # width is measured rather than a fixed count of dots, which would
+        # wrap on a long section title.
+        label = pdf.clean(entry.name)
+        number = str(entry.page_number)
+        room = (pdf.w - pdf.l_margin - pdf.r_margin
+                - pdf.get_string_width(label) - pdf.get_string_width(number) - 3)
+        dot = pdf.get_string_width(" .") or 1.0
+        leader = " " + "." * max(0, int(room / dot))
+        pdf.cell(pdf.get_string_width(label), 6.5, label)
+        pdf.set_text_color(*_rgb(pdf.t["muted"]))
+        pdf.cell(room, 6.5, leader)
+        pdf.set_text_color(*_rgb(pdf.t["text_primary"]))
+        pdf.cell(0, 6.5, number, align="R", new_x="LMARGIN", new_y="NEXT")

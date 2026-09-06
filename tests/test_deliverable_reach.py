@@ -181,3 +181,179 @@ def test_the_deep_dives_skip_exactly_what_the_diagnostic_took(runs):
         assert len(shown) == len(set(shown)), f"{sample}: {shown}"
         assert not (owned & set(shown)), (
             f"{sample}: {sorted(owned & set(shown))} is in both sections")
+
+
+# --------------------------------------------------------------------------
+# 5.4b — message-driven titles, exec-summary basis, contents page
+# --------------------------------------------------------------------------
+
+
+def test_one_matcher_finds_the_finding_an_exhibit_is_about(runs):
+    """**There were two rules and both were mostly missing.** `deck.py`
+    matched a hand-written KPI id per chart; `_deep_dives` matched by
+    spelling — `finding.id.endswith(spec.id) or spec.id in finding.id`.
+
+    Measured, the spelling rule found a finding for **3 of 12** exhibits on
+    the subscription run and **0 of 7** on the marketplace, and it missed
+    `decomposition` on every archetype: "decomp_net_revenue_channel" neither
+    ends with nor contains "decomposition". The PDF printed exhibits with no
+    observation while the sentence about them sat in `findings.json`.
+
+    `ChartSpec.about` names the KPI ids an exhibit draws, so the match is
+    exact. Across the samples this went from 6 of 41 charts to 25.
+
+    Mutation: drop the `about` branch and leave only the spelling fallback.
+    """
+    from kpi_maker.render.sections import finding_for_exhibit
+
+    total = matched = 0
+    for sample in SAMPLES:
+        _, _, _, findings, specs = runs[sample]
+        used: set = set()
+        hits = [s for s in specs if finding_for_exhibit(s, findings, used)]
+        total += len(specs)
+        matched += len(hits)
+    assert matched >= 20, f"only {matched} of {total} exhibits found a finding"
+
+
+def test_a_finding_headlines_at_most_one_exhibit(runs):
+    """The decomposition and the small multiples are about the same KPI by
+    construction — one splits its move, the other draws its segments — so a
+    real dashboard showed both under the identical headline, "direct drove
+    most of the move in Revenue", twice in a row. Two adjacent cards saying
+    the same thing is worse than the descriptive titles they replaced.
+
+    Mutation: drop the `used` set, or stop passing it.
+    """
+    from kpi_maker.render.sections import finding_for_exhibit
+
+    for sample in SAMPLES:
+        _, _, _, findings, specs = runs[sample]
+        used: set = set()
+        got = [f.id for s in specs
+               if (f := finding_for_exhibit(s, findings, used))]
+        assert len(got) == len(set(got)), f"{sample}: {got}"
+
+
+def test_a_sliced_exhibit_only_takes_a_finding_about_its_own_cut(runs):
+    """A headline naming something the reader cannot find below it is worse
+    than a descriptive one. Matching on the KPI alone put "premium drove most
+    of the move in Revenue" — a product family — over a factory's *channel*
+    small multiples.
+
+    Mutation: drop the `slice_of` check.
+    """
+    from kpi_maker.render.sections import finding_for_exhibit
+
+    for sample in SAMPLES:
+        _, _, _, findings, specs = runs[sample]
+        for spec in specs:
+            cut = getattr(spec, "dimension", "")
+            if not cut:
+                continue
+            found = finding_for_exhibit(spec, findings)
+            if found is not None:
+                assert found.id.endswith(f"_{cut}"), (
+                    f"{sample}/{spec.id} draws {cut} and is headlined by "
+                    f"{found.id}")
+
+
+def test_no_exhibit_claims_a_kpi_that_does_not_exist():
+    """An `about` naming a KPI id nothing defines never matches, and never
+    says so — the silent-no-match shape of 4.3b's `serves_objectives`, which
+    had eight entries worth nothing at the heaviest scoring weight.
+
+    Checked against every pack, because a chart is archetype-specific and its
+    KPI lives in that archetype's pack rather than the one a test happens to
+    load.
+
+    Mutation: misspell any id in any `about=`.
+    """
+    import re
+
+    library = set()
+    for path in (ROOT / "kpi_maker/kpi/library").glob("*.yaml"):
+        library |= set(re.findall(r"^- id: ([a-z0-9_]+)", path.read_text(
+            encoding="utf-8"), re.M))
+    assert len(library) > 100, len(library)
+
+    source = (ROOT / "kpi_maker/viz/charts.py").read_text(encoding="utf-8")
+    named = set(re.findall(r'about=\(([^)]*)\)', source))
+    ids = {i for group in named for i in re.findall(r'"([a-z0-9_]+)"', group)}
+    assert ids, "no exhibit declares what it is about"
+    assert not (ids - library), f"exhibits name unknown KPIs: {sorted(ids - library)}"
+
+
+def test_the_exec_summary_says_when_a_statement_is_not_measured():
+    """A reader who takes one page away should not have to go to the
+    scorecard to learn that the number in the top bullet came from the
+    generator filling a gap in their upload.
+
+    Quiet when everything was measured, on `_basis_badge`'s reasoning — which
+    is why this is constructed rather than measured off a sample: every
+    figure in a synthetic run is `measured`, so the feature is invisible
+    there and a sample-based test would assert nothing.
+
+    The **weakest** basis wins: a bullet standing on one measured KPI and one
+    the generator supplied is not a measured statement, and reporting the
+    better of the two is the direction that misleads.
+
+    Mutation: return the first basis rather than the weakest, or drop the
+    field.
+    """
+    from kpi_maker.insight.detectors import Finding
+    from kpi_maker.render.sections import _finding_basis
+
+    finding = Finding(id="x", severity="high", title="t", statement="s",
+                      kpi_ids=["a", "b"])
+    assert _finding_basis(finding, {"a": "measured", "b": "measured"}) == ""
+    assert _finding_basis(finding, {"a": "measured", "b": "modelled"}) == "modelled"
+    assert _finding_basis(finding, {"a": "mixed", "b": "measured"}) == "mixed"
+    assert _finding_basis(finding, {"a": "mixed", "b": "modelled"}) == "modelled"
+    # A KPI the run never computed contributes nothing rather than "".
+    assert _finding_basis(finding, {}) == ""
+
+
+def test_the_report_has_a_contents_page(tmp_path):
+    """A sixteen-page board pack with no way in: nine numbered sections and
+    no table of contents anywhere, so a reader wanting the benchmarks thumbed
+    through the deep dives.
+
+    Asserted on a rendered PDF rather than on the code, because the page
+    numbers are the part that can be wrong — a contents page pointing at the
+    wrong pages is worse than none, and `insert_toc_placeholder`'s two-pass
+    rendering is what makes them right.
+
+    Mutations: remove the placeholder; render the ToC before the cover; drop
+    the `_page_untouched` reuse and a blank page returns.
+    """
+    import re
+
+    import pypdf
+
+    from kpi_maker.cli import run_pipeline
+
+    profile = load_profile(ROOT / "samples" / "orbis_works.json")
+    run_pipeline(profile, tmp_path, quiet=True)
+    reader = pypdf.PdfReader(str(tmp_path / "report.pdf"))
+
+    contents = reader.pages[1].extract_text() or ""
+    assert "Contents" in contents, contents[:200]
+
+    listed = dict(re.findall(r"(\d+)\.\s+([A-Za-z][A-Za-z \-]+?)\s*\.{3,}\s*(\d+)",
+                             contents) and
+                  [(m[1].strip(), int(m[2])) for m in
+                   re.findall(r"(\d+)\.\s+([A-Za-z][A-Za-z \-]+?)\s*\.{3,}\s*(\d+)",
+                              contents)])
+    assert len(listed) >= 6, listed
+
+    # Every number points at the page whose heading it names — the thing a
+    # hand-built contents page gets wrong.
+    for title, page in listed.items():
+        text = reader.pages[page - 1].extract_text() or ""
+        assert title.lower() in text.lower(), (
+            f"contents sends {title!r} to page {page}, which does not carry it")
+
+    # And no blank page between the contents and the first section.
+    third = (reader.pages[2].extract_text() or "")
+    assert len(third.strip()) > 120, f"page 3 looks blank: {third!r}"

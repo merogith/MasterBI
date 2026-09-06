@@ -22,7 +22,7 @@ from ..kpi.schema import KPISet
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
 from ..viz.theme import STATUS_LABEL, TOKENS
-from .sections import SectionContext
+from .sections import SectionContext, finding_for_exhibit
 from .sections import build as build_sections
 
 # The default only. `brand.font_stack` overrides it per run — PPTX stores a
@@ -331,10 +331,13 @@ def _exhibit_slides(deck: Deck, kpi_set: KPISet, results: List[MetricResult],
                     findings: List[Finding], specs: List,
                     images: Dict[str, bytes], enabled: set, cur: str) -> None:
     """One slide per chart, headlined by the finding attached to it."""
-    finding_for: Dict[str, Finding] = {}
+    # `finding_for_exhibit` is the one rule now — this had its own map keyed
+    # by a hand-written KPI id per chart, which is why a chart without a hint
+    # could never be headlined by a finding.
+    by_kpi: Dict[str, Finding] = {}
     for f in findings:
         for kid in f.kpi_ids:
-            finding_for.setdefault(kid, f)
+            by_kpi.setdefault(kid, f)
 
     # Where no finding is attached, compute a headline rather than falling back
     # to the chart's topic. "Annual Recurring Revenue" tells a board nothing.
@@ -360,13 +363,16 @@ def _exhibit_slides(deck: Deck, kpi_set: KPISet, results: List[MetricResult],
             f"cohort")
 
     specs_by_id = {s.id: s for s in specs}
+    headlined: set = set()
     for spec_id, kpi_id, kicker, owner in exhibit_plan(specs):
         if owner not in enabled:
             continue
         spec = specs_by_id.get(spec_id)
         if spec is None or spec_id not in images:
             continue
-        f = finding_for.get(kpi_id) if kpi_id else None
+        f = by_kpi.get(kpi_id) if kpi_id else None
+        if f is None:
+            f = finding_for_exhibit(spec, findings, headlined)
         headline = f.title if f else fallbacks.get(spec_id, spec.title)
         deck.exhibit_slide(headline, images[spec_id], kicker=kicker,
                            caption=spec.note or spec.subtitle)
