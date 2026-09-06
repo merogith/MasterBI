@@ -94,14 +94,18 @@ jobs:
     #
     # Slowest Test step of each pair, measured from the run timestamps:
     #
-    #   run 54   Windows 9m15s   Ubuntu 6m01s
-    #   run 55   Windows 8m54s   Ubuntu 4m18s
     #   run 56   Windows 9m40s   Ubuntu 5m55s   <- 81% of the old 12
+    #   run 60   Windows 10m55s  Ubuntu 6m41s
+    #   run 61   Windows 10m50s  Ubuntu 7m22s   <- 54% of this 22
     #
-    # Re-measure when a run gets close again; the suite grows every item, and
-    # the point of the 2x rule is that this comment has to be re-derived
-    # rather than trusted.
-    timeout-minutes: 20
+    # Run 56 is kept rather than the two runs either side of it, because the
+    # informative thing is the growth: 706 tests to 720 moved the slowest
+    # Windows step 9m40s to 10m55s. Re-derived here rather than trusted, which
+    # is the whole point of the rule -- 2x the slowest observed is 21m50s, so
+    # the cap follows the measurement upward instead of the measurement being
+    # quietly left behind. That is exactly how the old 12 outlived its own
+    # justification.
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

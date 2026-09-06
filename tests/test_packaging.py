@@ -850,9 +850,16 @@ def test_the_test_job_leaves_room_for_the_suite_it_runs() -> None:
     no output, so the drift would have surfaced as a phantom hang.
 
     This cannot check CI timings from here, so it checks the two things it
-    can: the cap is at least the headroom that measurement implied, and the
-    comment still carries the numbers it was derived from rather than a bare
-    value nobody can re-check.
+    can: the cap is at least twice the slowest run the comment records, and
+    the comment still carries the numbers it was derived from rather than a
+    bare value nobody can re-check.
+
+    **The floor is derived from those rows, not written down beside them.**
+    The first version also asserted a bare `>= 18`, a number that came from
+    the 9m40s of runs 54-56 — so the test guarding against a stale
+    justification carried one of its own, and it went out of date the moment
+    Windows reached 10m55s at run 60. A constant restating what the rows
+    already imply is the second copy this repo keeps deleting.
 
     Mutation: drop the cap back to 12, or delete the measurement table.
     """
@@ -863,9 +870,6 @@ def test_the_test_job_leaves_room_for_the_suite_it_runs() -> None:
 
     cap = re.search(r"^\s+timeout-minutes:\s*(\d+)", test_block, re.M)
     assert cap, "the test job lost its timeout"
-    assert int(cap.group(1)) >= 18, (
-        f"timeout-minutes is {cap.group(1)}; the slowest measured Windows run "
-        f"was 9m40s and the rule is roughly 2x that")
 
     # At least three, because "roughly twice the slowest observed" is a claim
     # about a trend and one reading cannot support it. The first version of
