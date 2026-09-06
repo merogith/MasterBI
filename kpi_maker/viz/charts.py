@@ -1073,6 +1073,132 @@ def channel_dumbbell(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
     )
 
 
+def _share_words(share: float) -> str:
+    """A share that rounds to nothing says so rather than reading as zero.
+
+    5.1's "+£0" on a real 41p miss, and 5.3d's two adjacent rows both
+    labelled "100%" with opposite colours. Here a 61,000-customer retailer's
+    top ten came out as "0% of revenue", which is true to the rounding and
+    reads as a broken figure on the one line that is meant to reassure.
+    """
+    if share > 0 and round(share * 100) == 0:
+        return "under 1%"
+    return f"{share:.0%}"
+
+
+@chart("customer_pareto", order=2.7, takes=("tables",))
+def customer_pareto(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
+    """Cumulative share of revenue against customers, largest first.
+
+    **A different concentration from the one the other three segment exhibits
+    draw, and the samples prove it rather than this docstring asserting it:**
+    `atlas_enterprise` is 86% concentrated by *segment* and 11% by
+    *customer*, while `orbis_works` is the other way round — an even channel
+    and product mix with ten accounts holding 31% of a EUR 38M book. One word
+    covered both until 5.3f, and only the segment half was ever computed.
+
+    **The one exhibit here with enough entities to be a Pareto at all.**
+    Measured before building it: every *categorical* dimension this engine
+    emits carries three to seven levels, so a Pareto over one is a sorted bar
+    chart with a redundant cumulative line — and `decomposition`,
+    `segment_multiples` and the per-archetype category bars already draw that
+    composition three ways. `customers` is the exception: 111 to 61,034 rows
+    with a value each, which is the shape the form was invented for.
+
+    **The x axis is a customer count, not a percentile, and looking at the
+    first version is why.** Drawn against rank-as-a-fraction-of-the-book it is
+    a Lorenz curve, and a Lorenz curve measures *inequality* — which is a
+    different question from the exposure the subtitle claims. The retailer and
+    the consultancy came out with near-identical bows while one held under 1%
+    of its revenue in its ten largest customers and the other held about half,
+    because "the top 10% of customers" is eleven clients for one and six
+    thousand for the other. The curves were right and the exhibit was
+    answering a question nobody asked.
+
+    On a log count the ten largest are the same readable position on every
+    chart, so the two separate the way the numbers do. The book's own length
+    then shows as how far right the line runs, which is worth seeing rather
+    than normalising away.
+
+    The reference line is what makes the gap legible: without one an
+    upward-curving line looks concentrated whatever it does, which is 5.3c's
+    shared-scale argument in another geometry.
+    """
+    from ..insight.detectors import CUSTOMER_BOOK_MINIMUM, customer_book
+
+    values = customer_book(tables)
+    if values is None or len(values) < CUSTOMER_BOOK_MINIMUM:
+        return None
+
+    n = len(values)
+    total = float(values.sum())
+    cumulative = (values.cumsum() / total).to_numpy()
+    rank = np.arange(1, n + 1, dtype=float)
+
+    # A 61,000-customer book does not need 61,000 points to draw a smooth
+    # curve, and shipping them inflates the dashboard by megabytes. Sampled
+    # so the head — which on a log axis is most of the chart, and where all
+    # the shape is — keeps full resolution.
+    if n > 600:
+        keep = np.unique(np.concatenate([
+            np.arange(0, 200),
+            np.geomspace(200, n, 400).astype(int) - 1,
+        ]))
+        keep = keep[keep < n]
+        rank, cumulative = rank[keep], cumulative[keep]
+
+    top10 = float(values.head(10).sum()) / total
+    half = int((values.cumsum() / total < 0.5).sum()) + 1
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=rank, y=rank / n, mode="lines", name="An even book",
+        line=dict(color=LIGHT["axis"], width=1, dash="dash"),
+        hoverinfo="skip", showlegend=True,
+    ))
+    fig.add_trace(go.Scatter(
+        x=rank, y=cumulative, mode="lines", name="This book",
+        line=dict(color=LIGHT["series_1"], width=2.4),
+        fill="tonexty", fillcolor=_rgba(LIGHT["series_1"], 0.10),
+        hovertemplate=("largest %{x:,.0f} customers<br>"
+                       "<b>%{y:.0%}</b> of revenue<extra></extra>"),
+        showlegend=True,
+    ))
+    # The ten largest are the point the subtitle quotes, so they are marked
+    # rather than left for the reader to find on a log axis.
+    fig.add_trace(go.Scatter(
+        x=[10.0], y=[top10], mode="markers", name="The ten largest",
+        marker=dict(color=LIGHT["series_1"], size=9,
+                    line=dict(color=LIGHT["page"], width=2)),
+        hovertemplate=f"the ten largest<br><b>{top10:.1%}</b> of revenue"
+                      f"<extra></extra>",
+        showlegend=False,
+    ))
+    _base_layout(fig, height=340)
+    fig.update_layout(showlegend=True,
+                      legend=dict(orientation="h", y=1.06, x=0,
+                                  bgcolor="rgba(0,0,0,0)"))
+    fig.update_xaxes(type="log", showgrid=True, gridcolor=LIGHT["grid"],
+                     title=None)
+    fig.update_yaxes(tickformat=".0%")
+    return ChartSpec(
+        id="customer_pareto",
+        title="How much of the revenue rides on the largest customers",
+        subtitle=(f"The ten largest are {_share_words(top10)} of revenue; "
+                  f"{half:,} of {n:,} customers account for half"),
+        figure=fig, tab="overview", width="half",
+        note=("Active customers only — a churned account is not exposure, and "
+              "counting one pads the tail with revenue nobody will collect "
+              "again. The customer count is on a log scale, so the ten "
+              "largest sit at the same place on every chart; the dashed line "
+              "is a book where every customer is worth the same, and the gap "
+              "between them is the concentration. This is a different "
+              "question from the segment mix, and a company can be "
+              "concentrated on one and not the other."),
+        trace_tokens={0: "axis", 1: "series_1", 2: "series_1"},
+    )
+
+
 @chart("benchmark_position", order=3, takes=("results",))
 def benchmark_position(results: List[MetricResult]) -> Optional[ChartSpec]:
     """Diverging bar: distance from the cohort median, signed by good/bad."""

@@ -659,3 +659,167 @@ def test_the_registry_and_the_name_list_agree():
     findings = detect_all(results, tables, profile, spec=_Spec())
     assert findings, "selecting only the new detectors produced nothing"
     assert {"driver_decomposition", "concentration"} <= set(DETECTOR_NAMES)
+
+
+# --------------------------------------------------------------------------
+# 5.3f — customer concentration
+# --------------------------------------------------------------------------
+
+
+def _book_finding(values, active=True):
+    """A `customers` table with the revenue stated exactly."""
+    from kpi_maker.insight.detectors import _customer_concentration
+
+    frame = pd.DataFrame({
+        "customer_id": [f"c{i}" for i in range(len(values))],
+        "revenue": list(values),
+        "is_active": [active] * len(values),
+    })
+    found = _customer_concentration({"customers": frame})
+    return found[0] if found else None
+
+
+def test_an_even_book_is_never_reported_as_customer_concentrated():
+    """**The same trap as 5.3e, in a different quantity.**
+
+    An evenly spread book of `n` customers puts `10/n` in its top ten, so a
+    flat "top 10 are 25% of revenue" rule fires unconditionally at n <= 40 and
+    a 40% rule at n <= 25. The guard is the book minimum, and the invariant it
+    exists for is that an even book is silent — checked from the smallest
+    book the detector will look at upwards.
+
+    Mutation: drop `CUSTOMER_BOOK_MINIMUM` to 10.
+    """
+    from kpi_maker.insight.detectors import CUSTOMER_BOOK_MINIMUM
+
+    for n in (CUSTOMER_BOOK_MINIMUM, 60, 100, 400, 2000):
+        even = _book_finding([1000.0] * n)
+        assert even is None, f"{n} equal customers reported as concentrated"
+
+    # And a book too small for "the ten largest" to mean anything is refused
+    # outright rather than reported at 100%.
+    assert _book_finding([1000.0] * 12) is None
+
+
+def test_the_severity_bands_track_the_exposure_not_the_book_size():
+    """Losing ten named accounts is a concrete event, so the measure is the
+    absolute share they hold — which is what a board asks about — and the
+    book minimum is what keeps that from being trivially true.
+
+    Mutations: swap `TOP10_HIGH` and `TOP10_MEDIUM`; drop the `n` guard.
+    """
+    from kpi_maker.insight.detectors import TOP10_HIGH, TOP10_MEDIUM
+
+    assert 0 < TOP10_MEDIUM < TOP10_HIGH < 1
+
+    # Ten accounts at half the revenue, ninety sharing the rest.
+    heavy = _book_finding([50_000.0] * 10 + [1_000.0] * 90)
+    assert heavy is not None and heavy.severity == "high"
+    assert heavy.evidence["current"] == pytest.approx(500_000 / 590_000)
+
+    # Ten at ~28%: over the medium bar, under the high one.
+    tilted = _book_finding([10_000.0] * 10 + [1_000.0] * 260)
+    assert tilted is not None and tilted.severity == "medium"
+
+    # A long, flat tail: no exposure at all.
+    flat = _book_finding([1_200.0] * 10 + [1_000.0] * 990)
+    assert flat is None
+
+
+def test_a_churned_account_is_not_exposure():
+    """Counting churned customers pads the tail with revenue nobody will
+    collect again, which flatters a concentrated book.
+
+    Mutation: drop the `is_active` filter.
+    """
+    from kpi_maker.insight.detectors import _customer_concentration
+
+    live = pd.DataFrame({
+        "customer_id": [f"c{i}" for i in range(60)],
+        "revenue": [50_000.0] * 10 + [1_000.0] * 50,
+        "is_active": [True] * 60,
+    })
+    churned = pd.DataFrame({
+        "customer_id": [f"x{i}" for i in range(600)],
+        "revenue": [1_000.0] * 600,
+        "is_active": [False] * 600,
+    })
+    both = pd.concat([live, churned], ignore_index=True)
+
+    on_live = _customer_concentration({"customers": live})
+    assert on_live, "premise: the live book is concentrated"
+    with_dead = _customer_concentration({"customers": both})
+    assert with_dead, "the churned tail hid a real concentration"
+    assert on_live[0].evidence["current"] == pytest.approx(
+        with_dead[0].evidence["current"])
+    assert with_dead[0].evidence["customers"] == 60
+
+
+def test_customer_and_segment_concentration_are_different_questions():
+    """**The samples prove it rather than the docstring asserting it**, and
+    they disagree in both directions:
+
+    * `atlas_enterprise` — 86% of revenue in one *segment*, 11% in its ten
+      largest *customers*. A shock to Enterprise hurts; losing any one
+      account does not.
+    * `orbis_works` — an even channel and product mix, and ten accounts
+      holding 31% of a EUR 38M book.
+
+    The product had one word for both, and only the segment half was ever
+    computed.
+
+    Mutation: point `_customer_concentration` at `segment_financials`, and
+    the two collapse into each other.
+    """
+    from kpi_maker.insight.detectors import _customer_concentration
+
+    def both(sample):
+        profile = load_profile(ROOT / "samples" / f"{sample}.json")
+        spec = RunSpec(profile=profile)
+        tables = dict(GENERATORS[spec.resolve_archetype()](profile).tables)
+        return _concentration(tables), _customer_concentration(tables)
+
+    by_segment, by_customer = both("atlas_enterprise")
+    assert any(f.severity == "high" for f in by_segment)
+    assert not by_customer, "the enterprise SaaS book is not customer-concentrated"
+
+    by_segment, by_customer = both("orbis_works")
+    assert not by_segment, "premise: the factory's segment mix is even"
+    assert by_customer and by_customer[0].severity == "medium"
+
+
+def test_the_monthly_kpi_stays_subscription_bound_because_the_data_is():
+    """`revenue_concentration_top10` reads `customer_mrr_matrix()`, so it
+    needs month-by-customer rows — and **only the subscription generator
+    emits any**, verified across all five archetypes.
+
+    That is a fact about the data, not the SaaS-hardwiring 3.4b found in
+    `_operating_leverage`, where the tables existed everywhere and the
+    detector was reading a SaaS id. This test exists so the distinction is
+    checked rather than asserted: if another generator ever emits
+    month-by-customer rows, the monthly KPI becomes portable and this goes
+    red to say so.
+
+    Mutation: none needed — it is a premise guard, and its job is to fail
+    when the premise changes.
+    """
+    from kpi_maker.datagen import GENERATORS as ALL
+
+    carriers = {}
+    for archetype, sample in (("saas", "northwind_saas"),
+                              ("ecommerce", "kestrel_retail"),
+                              ("project", "halberd_consulting"),
+                              ("production", "orbis_works"),
+                              ("marketplace", "lumen_exchange")):
+        profile = load_profile(ROOT / "samples" / f"{sample}.json")
+        tables = dict(ALL[archetype](profile).tables)
+        carriers[archetype] = sorted(
+            name for name, df in tables.items()
+            if "customer_id" in df.columns and "month" in df.columns)
+
+    assert carriers["saas"] == ["mrr_movements"]
+    for archetype in ("ecommerce", "project", "production", "marketplace"):
+        assert carriers[archetype] == [], (
+            f"{archetype} now carries month-by-customer data "
+            f"({carriers[archetype]}), so revenue_concentration_top10 no "
+            f"longer has a reason to be subscription-only")

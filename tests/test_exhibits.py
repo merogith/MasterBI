@@ -705,3 +705,132 @@ def test_a_run_with_nothing_sliceable_draws_no_grid(runs):
         clone.by_segment = {}
         stripped.append(clone)
     assert C.segment_multiples(stripped) is None
+
+
+# --------------------------------------------------------------------------
+# 5.3f — the customer Pareto
+# --------------------------------------------------------------------------
+
+
+def _pareto(sample):
+    profile = load_profile(ROOT / "samples" / f"{sample}.json")
+    spec = RunSpec(profile=profile)
+    tables = dict(GENERATORS[spec.resolve_archetype()](profile).tables)
+    C.set_currency(profile.identity.currency)
+    return C.customer_pareto(tables)
+
+
+def test_the_x_axis_counts_customers_rather_than_percentiles():
+    """**The defect that a Lorenz curve hides, found by looking at two of
+    them side by side.**
+
+    Drawn against rank-as-a-fraction-of-the-book, the retailer and the
+    consultancy came out with near-identical bows while holding under 1% and
+    40% in their top ten — because "the top 10% of customers" is eleven
+    clients for one and six thousand for the other. The curves were correct
+    and the exhibit was answering inequality while its subtitle claimed
+    exposure.
+
+    On a log count the ten largest are the same readable position on every
+    chart, so the two separate the way the numbers do.
+
+    Mutation: `x=rank / n` with a linear axis, and the two books' curves come
+    back within a few points of each other at every x.
+    """
+    thin = _pareto("halberd_consulting")
+    fat = _pareto("kestrel_retail")
+    assert thin is not None and fat is not None
+
+    for spec in (thin, fat):
+        assert spec.figure.layout.xaxis.type == "log", spec.id
+        # Absolute ranks: the axis must start at customer 1, not at 0%.
+        assert min(spec.figure.data[1].x) == 1
+
+    # The marked point is the tenth customer on both, and that is where the
+    # two books have to disagree.
+    def at_ten(spec):
+        marker = spec.figure.data[2]
+        assert list(marker.x) == [10.0]
+        return float(marker.y[0])
+
+    assert at_ten(thin) > 0.35
+    assert at_ten(fat) < 0.01
+    assert at_ten(thin) > 30 * at_ten(fat)
+
+
+def test_a_share_that_rounds_to_nothing_says_so():
+    """5.1's "+£0" on a real 41p miss, and 5.3d's two adjacent rows both
+    printed "100%" with opposite colours. Here the retailer's top ten came
+    out as "0% of revenue" — true to the rounding, and reading as a broken
+    figure on the one line meant to reassure.
+
+    Mutation: `f"{top10:.0%}"` in the subtitle.
+    """
+    import re
+
+    fat = _pareto("kestrel_retail")
+    assert "under 1%" in fat.subtitle, fat.subtitle
+    assert "0% of revenue" not in fat.subtitle
+
+    # The consultancy's exact share moves with `conftest`'s pinned
+    # `MASTERBI_HISTORY_END`, so this asserts that a share big enough to print
+    # prints as a percentage -- not the figure itself. The first version
+    # pinned "40%", measured *without* the env var the suite sets, and went
+    # red at 52%: a number quoted from outside the test environment, which is
+    # the same premise failure as 5.3e's label sweep.
+    thin = _pareto("halberd_consulting")
+    assert "under 1%" not in thin.subtitle, thin.subtitle
+    assert re.search(r"are \d+% of revenue", thin.subtitle), thin.subtitle
+
+
+def test_a_book_too_small_to_be_a_pareto_is_not_drawn():
+    """The exhibit and the finding share `customer_book` and the same
+    minimum, so the chart cannot appear making a claim the sentence beside it
+    refuses to make. That is 5.3a's reason for reusing `is_additive` rather
+    than reimplementing it.
+
+    Mutation: give `customer_pareto` its own threshold.
+    """
+    import pandas as pd
+
+    from kpi_maker.insight.detectors import CUSTOMER_BOOK_MINIMUM
+
+    small = pd.DataFrame({
+        "customer_id": [f"c{i}" for i in range(CUSTOMER_BOOK_MINIMUM - 1)],
+        "revenue": [1000.0] * (CUSTOMER_BOOK_MINIMUM - 1),
+        "is_active": [True] * (CUSTOMER_BOOK_MINIMUM - 1),
+    })
+    assert C.customer_pareto({"customers": small}) is None
+    # And a run with no customer table at all simply has no exhibit.
+    assert C.customer_pareto({}) is None
+
+
+def test_the_curve_is_downsampled_without_losing_its_head():
+    """A 61,000-customer book does not need 61,000 points, and shipping them
+    inflates every dashboard that embeds the figure. The head is where all
+    the shape is, so it keeps full resolution.
+
+    Mutation: drop the sampling, or sample linearly (which flattens the head
+    on a log axis into a handful of points).
+    """
+    fat = _pareto("kestrel_retail")
+    x = list(fat.figure.data[1].x)
+    assert len(x) < 700, f"{len(x)} points shipped"
+    # Every one of the first hundred customers is present, because that is
+    # the part a reader actually looks at.
+    assert x[:100] == [float(i) for i in range(1, 101)]
+    assert max(x) > 10_000, "the tail was truncated rather than sampled"
+
+
+def test_every_sample_with_a_book_gets_the_exhibit(runs):
+    """All five archetypes carry a `customers` table with a value per row —
+    which is what makes this the one exhibit here with enough entities to be
+    a Pareto at all. Every *categorical* dimension has three to seven levels.
+
+    Mutation: read `segment_financials` instead, and the panel counts collapse
+    to single digits.
+    """
+    for sample in runs:
+        spec = _pareto(sample)
+        assert spec is not None, f"{sample}: no customer Pareto"
+        assert len(spec.figure.data[1].x) >= 50, sample

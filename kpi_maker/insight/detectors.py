@@ -136,6 +136,7 @@ def detect_all(results: List[MetricResult], tables: Dict[str, pd.DataFrame],
         "runway": lambda: _runway(by_id),
         "driver_decomposition": lambda: _driver_decomposition(results),
         "concentration": lambda: _concentration(tables),
+        "customer_concentration": lambda: _customer_concentration(tables),
     }
 
     wanted = list(registry) if spec is None or spec.detectors is None else [
@@ -205,7 +206,7 @@ _SUBSCRIPTION_ONLY = {"arr_bridge", "segment_outliers"}
 DETECTOR_NAMES = [
     "status_breaches", "benchmark_gaps", "trend_breaks", "segment_outliers",
     "operating_leverage", "arr_bridge", "channel_efficiency", "runway",
-    "driver_decomposition", "concentration",
+    "driver_decomposition", "concentration", "customer_concentration",
 ]
 
 
@@ -926,3 +927,100 @@ def _concentration(tables: Dict[str, pd.DataFrame]) -> List[Finding]:
             effort="medium",
         ))
     return out
+
+
+#: The book has to be big enough that "the ten largest" is a selective
+#: statement. **The floor is the same trap 5.3e fixed for the Herfindahl
+#: index, in a different quantity**: an evenly-spread book of `n` customers
+#: puts `10/n` in its top ten, so a 25% rule fires unconditionally at n <= 40
+#: and a 40% rule at n <= 25. At fifty customers an even book scores 20% and
+#: is silent, which is the invariant these thresholds are chosen to satisfy.
+CUSTOMER_BOOK_MINIMUM = 50
+TOP10_MEDIUM = 0.25
+TOP10_HIGH = 0.40
+
+#: `customers` is entity-grain, and the revenue column is named for what the
+#: archetype sells. Subscriptions carry the contract value; everyone else
+#: carries what the customer actually spent.
+_CUSTOMER_VALUE_COLUMNS = ("revenue", "final_acv")
+
+
+def customer_book(tables: Dict[str, pd.DataFrame]) -> Optional[pd.Series]:
+    """Active customers' revenue, largest first — or None if unanswerable.
+
+    Shared by the finding below and by `viz.charts.customer_pareto`, so the
+    exhibit and the sentence beside it cannot disagree about which customers
+    were counted. That is the same reason 5.3a's waterfall reuses
+    `decompose.is_additive` rather than reimplementing the test.
+    """
+    customers = tables.get("customers")
+    if customers is None or customers.empty:
+        return None
+    column = next((c for c in _CUSTOMER_VALUE_COLUMNS if c in customers.columns),
+                  None)
+    if column is None:
+        return None
+    rows = customers
+    if "is_active" in rows.columns:
+        # Churned customers are not exposure. Including them would flatter a
+        # concentrated book by padding the tail with revenue nobody will
+        # collect again.
+        rows = rows[rows["is_active"].astype(bool)]
+    values = pd.to_numeric(rows[column], errors="coerce").dropna()
+    values = values[values > 0].sort_values(ascending=False)
+    return values if not values.empty else None
+
+
+def _customer_concentration(tables: Dict[str, pd.DataFrame]) -> List[Finding]:
+    """How much of the revenue rides on the ten largest customers.
+
+    **A different question from `_concentration` above, and the samples prove
+    it rather than the docstring asserting it.** `atlas_enterprise` is 86%
+    concentrated *by segment* and 11% *by customer*: a shock to the Enterprise
+    segment hurts, losing any one account does not. Until now the product had
+    one word for both, and only the segment half was computed.
+
+    Available for every archetype, which the monthly KPI is not.
+    `revenue_concentration_top10` reads `customer_mrr_matrix()`, so it needs
+    month-by-customer data — and **only the subscription generator emits
+    any**, verified across all five. That is a fact about the data rather than
+    the SaaS-hardwiring 3.4b found in `_operating_leverage`, where the tables
+    existed everywhere and the detector was reading a SaaS id. So the KPI
+    stays as it is and this reports the point-in-time question the entity
+    table can actually answer, under its own name.
+    """
+    values = customer_book(tables)
+    if values is None or len(values) < CUSTOMER_BOOK_MINIMUM:
+        return []
+
+    total = float(values.sum())
+    if total <= 0:
+        return []
+    top10 = float(values.head(10).sum()) / total
+    if top10 < TOP10_MEDIUM:
+        return []
+
+    n = len(values)
+    cumulative = values.cumsum() / total
+    half = int((cumulative < 0.5).sum()) + 1
+    even = min(1.0, 10.0 / n)
+    return [Finding(
+        id="customer_concentration",
+        severity="high" if top10 >= TOP10_HIGH else "medium",
+        title="Revenue is concentrated in a few customers",
+        statement=(
+            f"The ten largest customers are {_pct(top10, 0)} of revenue "
+            f"across a book of {n:,} — an evenly spread book would put "
+            f"{_pct(even, 0)} in its top ten. {half} customers account for "
+            f"half of it."
+        ),
+        evidence={"current": top10, "threshold": TOP10_HIGH,
+                  "customers": float(n), "even_top10": even,
+                  "customers_to_half": float(half)},
+        kpi_ids=["revenue_concentration_top10"],
+        recommendation=(
+            "Name the ten and check how many are on rolling contracts before "
+            "committing to next year's plan."),
+        impact="high",
+        effort="low",
+    )]
