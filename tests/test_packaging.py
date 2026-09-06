@@ -749,3 +749,56 @@ def test_the_studio_asks_for_its_own_run_s_tables() -> None:
     shim = (ROOT / "tools" / "static_shim.js").read_text(encoding="utf-8")
     assert "data/runs/${run}/options.json" in shim, \
         "the hosted demo serves the union to every run again"
+
+
+def test_one_status_vocabulary_across_every_surface() -> None:
+    """The RAG chip's words live in `viz/theme.STATUS_LABEL` and nowhere else.
+
+    They used to live in **four** places — `viz/theme.py`, `render/sections.py`,
+    `render/deck.py` and `web/src/lib/format.ts` — as four verbatim copies. So
+    when 5.3d found that `unscored` read "No target" and contradicted the
+    Target column beside it (Revenue per Employee showed a target of €165.0K
+    with a chip saying "No target"), correcting the word in the obvious place
+    would have fixed one surface of four and left the PDF and the deck saying
+    the old thing.
+
+    The three Python surfaces import it now. TypeScript cannot, so it is held
+    in step here, the same arrangement as the design tokens and the
+    table-to-KPI map.
+
+    Mutations: restore either renderer's literal dict, or change the word in
+    `theme.py` without changing `format.ts`.
+    """
+    import re
+
+    from kpi_maker.viz.theme import STATUS_LABEL
+
+    for module in ("kpi_maker/render/sections.py", "kpi_maker/render/deck.py",
+                   "kpi_maker/render/dashboard.py"):
+        text = (ROOT / module).read_text(encoding="utf-8")
+        assert '"unscored":' not in text, (
+            f"{module} keeps its own copy of the status words; import "
+            f"STATUS_LABEL from viz.theme instead")
+
+    ts = (ROOT / "web/src/lib/format.ts").read_text(encoding="utf-8")
+    block = re.search(r"STATUS_LABEL[^{]*\{(.*?)\}", ts, re.S)
+    assert block, "web/src/lib/format.ts has no STATUS_LABEL"
+    pairs = dict(re.findall(r"(\w+):\s*'([^']*)'", block.group(1)))
+    assert pairs == STATUS_LABEL, (
+        f"the front end and the engine disagree about the status words:\n"
+        f"  engine: {STATUS_LABEL}\n  web:    {pairs}")
+
+
+def test_a_status_of_unscored_does_not_claim_there_is_no_target() -> None:
+    """`KPI.status` returns "unscored" when a metric has a value and no
+    *threshold* to judge it against — a statement about alert bands, which
+    says nothing at all about targets.
+
+    Its word was "No target", which was merely vague until 5.3d made the
+    Target column legible and it became self-contradicting on the same row.
+
+    Mutation: put "No target" back.
+    """
+    from kpi_maker.viz.theme import STATUS_LABEL
+
+    assert "target" not in STATUS_LABEL["unscored"].lower(), STATUS_LABEL

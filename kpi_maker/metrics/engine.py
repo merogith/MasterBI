@@ -18,7 +18,7 @@ import pandas as pd
 from ..kpi.schema import KPI, KPISet
 from ..profile.schema import CompanyProfile
 from .plan import resolve as _resolve_plan
-from .targets import resolve_target
+from .targets import Target, resolve_target
 
 # LTV horizon cap. Without this, low churn sends LTV to infinity and the
 # LTV/CAC ratio becomes fiction. See the `pitfalls` note on ltv_cac_ratio.
@@ -176,6 +176,19 @@ class MetricResult:
     #: `basis` does: a plan the engine drew and one the board approved are not
     #: interchangeable, and whoever renders it must be able to say which.
     plan_basis: str = ""
+
+    #: Which of `resolve_target`'s four fallbacks produced `target` —
+    #: "override", "rule", "benchmark", "band", or None when there is none.
+    #:
+    #: `metrics/targets.py` has always *said* it "falls back and says which
+    #: fallback it took" and never did; measuring the mix is what found the
+    #: sentence to be untrue. It matters because the answer is lopsided:
+    #: **109 of 123 targets across the seven samples are the cohort median**,
+    #: which the same run also plots as "Position against the peer cohort
+    #: median". Two surfaces, one number, and nothing said so. A table cell
+    #: can carry that; a target marker on a chart cannot, which is 5.1's rule
+    #: about plan applied to the scenario next to it.
+    target_basis: Optional[str] = None
 
     @property
     def plan_current(self) -> Optional[float]:
@@ -623,9 +636,10 @@ def _enps(ctx):
 
 def _resolve_target(kpi: KPI, current: Optional[float],
                     prior_year: Optional[float] = None,
-                    prior_month: Optional[float] = None) -> Optional[float]:
+                    prior_month: Optional[float] = None) -> Target:
     """Evaluate the KPI's target rule. See `metrics/targets.py` for why it is
-    no longer a lookup table of four exact strings."""
+    no longer a lookup table of four exact strings, and why it now reports
+    which of the four fallbacks answered."""
     return resolve_target(kpi, current, prior_year, prior_month)
 
 
@@ -908,7 +922,8 @@ def compute(kpi_set: KPISet, tables: Dict[str, pd.DataFrame],
         prior_year = _year_ago(series)
 
         used = evaluator.tables_used(kpi.id)
-        target = _resolve_target(kpi, current, prior_year, prior_month)
+        target, target_basis = _resolve_target(kpi, current, prior_year,
+                                               prior_month)
         # Resolved here rather than in a later stage: the plan is a property of
         # this metric's own month index, and a renderer handed a bare dict
         # would have to re-derive the alignment that `plan.resolve` already
@@ -921,6 +936,7 @@ def compute(kpi_set: KPISet, tables: Dict[str, pd.DataFrame],
             prior_year=prior_year,
             prior_month=prior_month,
             target=target,
+            target_basis=target_basis,
             status=kpi.status(current),
             benchmark_position=kpi.vs_benchmark(current),
             computed=True,
@@ -999,6 +1015,7 @@ def facts_table(results: List[MetricResult]) -> pd.DataFrame:
             "yoy_change": r.yoy_change,
             "target": r.target,
             "vs_target": r.vs_target,
+            "target_basis": r.target_basis,
             "plan": r.plan_current,
             "vs_plan": r.vs_plan,
             "plan_basis": r.plan_basis,

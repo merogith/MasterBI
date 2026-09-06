@@ -36,11 +36,44 @@ which fallback it took.
 from __future__ import annotations
 
 import ast
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NamedTuple, Optional
 
 from ..formula.errors import FormulaError
 from ..formula.evaluate import Resolver, evaluate, validate
 from ..formula.functions import ROW
+
+
+class Target(NamedTuple):
+    """A target and **where it came from**, which is the half that was missing.
+
+    The docstring above has always said this module "falls back and says which
+    fallback it took". It did not: `resolve_target` returned a bare float and
+    the four sources were indistinguishable by the time anything read it. A
+    claim about the code that nobody checked, which is this repo's
+    characteristic bug and was found here by measuring the mix rather than by
+    reading the sentence.
+
+    Measured across the seven samples: of **123 targets, 109 are the peer
+    cohort's median**, 10 come from an authored `target_rule`, 4 from a green
+    alert band, and none from a user override. So the scorecard's "Target"
+    column is, nearly nine times in ten, the benchmark median under a
+    different name — and the same run ships a "Position against the peer
+    cohort median" exhibit quoting that identical figure with nothing on
+    either surface saying they are the same number.
+
+    That is tolerable in a table cell and not tolerable on a chart, which is
+    why this landed with the bullet exhibit rather than before it: a target
+    marker is a commitment claim, and 5.1's rule about plan — a variance
+    against a budget nobody set reads as performance against a promise nobody
+    made — binds exactly as hard here.
+    """
+
+    #: The number, or None when nothing could supply one.
+    value: Optional[float]
+    #: "override" (the user's own figure), "rule" (the record sheet's
+    #: `target_rule`), "benchmark" (the cohort median), "band" (the green
+    #: alert threshold), or None alongside a None value.
+    basis: Optional[str]
 
 #: Everything a target rule may name. Small on purpose: a target is a statement
 #: about this metric against its own history and its cohort, and a rule that
@@ -116,11 +149,12 @@ def validate_rule(rule: str) -> None:
 
 def resolve_target(kpi, current: Optional[float],
                    prior_year: Optional[float] = None,
-                   prior_month: Optional[float] = None) -> Optional[float]:
-    """The target for one KPI, and the order the fallbacks are tried in."""
+                   prior_month: Optional[float] = None) -> Target:
+    """The target for one KPI, the order the fallbacks are tried in, and
+    which one answered."""
     # A target the user typed is not a suggestion to be improved on.
     if kpi.target_override is not None:
-        return float(kpi.target_override)
+        return Target(float(kpi.target_override), "override")
 
     bench = kpi.benchmark
     bands = kpi.alert_bands
@@ -145,10 +179,10 @@ def resolve_target(kpi, current: Optional[float],
             # benchmark, which is what a rule-less KPI gets anyway.
             value = None
         if value is not None:
-            return float(value)
+            return Target(float(value), "rule")
 
     if p50 is not None:
-        return float(p50)
+        return Target(float(p50), "benchmark")
     if bands is not None:
-        return float(bands.green)
-    return None
+        return Target(float(bands.green), "band")
+    return Target(None, None)

@@ -148,8 +148,21 @@ SCENARIO_TOKEN = {"actual": "series_1", "plan": "deemphasis",
 STATUS_GLYPH = {"green": "●", "amber": "▲", "red": "■", "unscored": "◇", "unknown": "○"}
 # "unscored" = we have the number but no threshold to judge it against.
 # "unknown"  = we could not compute the number at all. Keep them distinct.
+#: The RAG chip's words. **One copy**, and that mattered: this map was
+#: restated verbatim in `render/sections.py`, `render/deck.py` and
+#: `web/src/lib/format.ts`, so the correction below would have fixed one
+#: surface in four. The TypeScript copy cannot import from here and is held
+#: in step by a drift test instead, the same arrangement as the design tokens
+#: and the table-to-KPI map.
+#:
+#: `unscored` used to read **"No target"**, and it is wrong: `KPI.status`
+#: returns it when a metric has a value and no *threshold* to judge it
+#: against, which is a statement about alert bands and says nothing about
+#: targets. Invisible until 5.3d made the Target column legible, and then
+#: plainly self-contradicting — Revenue per Employee showed a target of
+#: €165.0K with a chip beside it reading "No target".
 STATUS_LABEL = {"green": "On track", "amber": "Watch", "red": "Off track",
-                "unscored": "No target", "unknown": "No data"}
+                "unscored": "Not scored", "unknown": "No data"}
 
 FONT_STACK = 'system-ui, -apple-system, "Segoe UI", sans-serif'
 

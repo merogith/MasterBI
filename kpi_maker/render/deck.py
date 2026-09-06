@@ -21,7 +21,7 @@ from ..insight.detectors import Finding
 from ..kpi.schema import KPISet
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
-from ..viz.theme import TOKENS
+from ..viz.theme import STATUS_LABEL, TOKENS
 from .sections import SectionContext
 from .sections import build as build_sections
 
@@ -248,8 +248,9 @@ EXHIBIT_PLAN = [
 ]
 EXHIBIT_SECTIONS = ("diagnostic", "deep_dives", "benchmarks")
 
-STATUS_WORD = {"green": "On track", "amber": "Watch", "red": "Off track",
-               "unscored": "No target", "unknown": "No data"}
+#: Named here for the callers that already say `STATUS_WORD`; the map
+#: itself is `viz.theme`'s, so the three renderers cannot drift apart.
+STATUS_WORD = STATUS_LABEL
 
 
 def _scorecard_slide(deck: Deck, results: List[MetricResult], cur: str) -> None:

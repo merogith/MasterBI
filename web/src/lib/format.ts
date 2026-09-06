@@ -11,7 +11,7 @@ const CURRENCY_SYMBOL: Readonly<Record<string, string>> = {
 
 export const STATUS_LABEL: Readonly<Record<string, string>> = {
   green: 'On track', amber: 'Watch', red: 'Off track',
-  unscored: 'No target', unknown: 'No data',
+  unscored: 'Not scored', unknown: 'No data',
 };
 
 export const STATUS_GLYPH: Readonly<Record<string, string>> = {

@@ -13,7 +13,7 @@ Design decisions that follow from the dataviz rules:
 from __future__ import annotations
 
 import html
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 import pandas as pd
 
@@ -121,6 +121,67 @@ def _plan_badge(result: MetricResult) -> str:
             f'Derived</span>')
 
 
+#: The targets that are a *stated* intent, and so worth pointing at. The
+#: cohort median is deliberately absent — see `_target_badge`.
+_TARGET_BADGE = {
+    "override": ("Your target",
+                 "A figure set on this run, not derived from anything"),
+    "rule": ("Record sheet",
+             "From this KPI's own target rule on its record sheet"),
+    "band": ("Green threshold",
+             "This KPI has no target rule and no published benchmark, so the "
+             "target shown is its record sheet's green alert threshold"),
+}
+
+
+def _target_badge(result: MetricResult) -> str:
+    """Point at the targets somebody actually stated, and stay quiet on the rest.
+
+    **The reason this exists is a measurement.** Across the seven samples,
+    **109 of 123 resolved targets are the peer cohort's median** — 10 come
+    from an authored `target_rule`, 4 from a green alert band, none from a
+    figure a user typed. The scorecard prints Target and Cohort Median in
+    adjacent columns, so for nearly nine rows in ten it printed *the same
+    number twice* and called the left-hand one a target, with nothing on the
+    page saying they were one figure. `metrics/targets.py` had claimed since
+    3.6 that it "falls back and says which fallback it took" and never did —
+    it returned a bare float, which is why nothing downstream could say so.
+
+    **Which case is badged went the other way on the first attempt, and
+    looking at the rendered table is what corrected it.** `_basis_badge` and
+    `_plan_badge` both label the *untrustworthy* case and stay quiet on the
+    trustworthy one, so labelling the cohort-median rows looked like the same
+    rule. It is not: those two are quiet in the common case, and here the
+    untrustworthy case *is* the common case — the badge fired on 18 of 19
+    rows and became the loudest thing in the table, which is exactly the
+    "invisible through repetition" failure their own docstrings warn about.
+
+    So the majority is stated once, in the panel's subtitle, where a fact
+    about the whole table belongs; the badge marks the minority, whichever
+    way the run happens to fall.
+    """
+    entry = _TARGET_BADGE.get(result.target_basis or "")
+    if entry is None or is_missing(result.target):
+        return ""
+    label, tip = entry
+    return (f'<span class="basis-badge" title="{html.escape(tip)}">'
+            f'{html.escape(label)}</span>')
+
+
+def _target_note(results: Sequence[MetricResult]) -> str:
+    """The sentence that keeps the badge from having to repeat itself."""
+    stand_in = sum(1 for r in results
+                   if r.computed and not is_missing(r.target)
+                   and r.target_basis == "benchmark")
+    if not stand_in:
+        return ""
+    have = sum(1 for r in results
+               if r.computed and not is_missing(r.target))
+    return (f" {stand_in} of these {have} targets are the peer cohort&rsquo;s "
+            f"median standing in for a target the KPI does not have, which is "
+            f"why those rows show the same figure twice.")
+
+
 def _variance_cell(result: MetricResult, currency: str,
                    locale: Optional[str] = None) -> str:
     """Variance to plan, coloured by whether it is good rather than by sign.
@@ -200,7 +261,12 @@ def _stat_tile(r: MetricResult, currency: str, locale: Optional[str] = None) -> 
 
     target = ""
     if not is_missing(r.target):
-        target = f'<div class="tile-target">Target {fmt_value(r.target, k.unit, currency, locale=locale)}</div>'
+        # The tile has no Benchmark column beside it to give the figure away,
+        # so a headline "Target 42%" that is really the cohort median is more
+        # misleading here than in the scorecard, not less.
+        target = (f'<div class="tile-target">Target '
+                  f'{fmt_value(r.target, k.unit, currency, locale=locale)}'
+                  f'{_target_badge(r)}</div>')
 
     return f"""
       <article class="tile">
@@ -320,7 +386,7 @@ def _scorecard_table(results: List[MetricResult], kpi_set: KPISet,
                 <span class="kpi-timing">{html.escape(k.timing.value)}</span></td>
               <td class="num">{html.escape(fmt_value(r.current, k.unit, currency, locale=locale))}</td>
               <td class="num">{html.escape(fmt_value(r.prior_year, k.unit, currency, locale=locale))}</td>{plan_cells}
-              <td class="num">{html.escape(fmt_value(r.target, k.unit, currency, locale=locale))}</td>
+              <td class="num">{html.escape(fmt_value(r.target, k.unit, currency, locale=locale))}{_target_badge(r)}</td>
               <td class="num">{html.escape(bench)}</td>
               <td>{_status_chip(r.status)}</td>
               <td class="muted-cell">{html.escape(pos)}</td>
@@ -332,7 +398,7 @@ def _scorecard_table(results: List[MetricResult], kpi_set: KPISet,
           <h2>Full scorecard</h2>
           <p class="panel-sub">
             Every selected KPI, grouped by Balanced Scorecard perspective.
-            Leading indicators are {kpi_set.leading_share:.0%} of the set.
+            Leading indicators are {kpi_set.leading_share:.0%} of the set.{_target_note(results)}
           </p>
         </div>
         <div class="table-wrap">

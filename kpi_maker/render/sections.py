@@ -33,11 +33,13 @@ from ..insight.detectors import Finding
 from ..kpi.schema import KPISet, Perspective
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
+from ..viz.theme import STATUS_LABEL
 
 SEVERITY_WORD = {"critical": "Critical", "high": "High", "medium": "Medium",
                  "low": "Low", "positive": "Strength"}
-STATUS_WORD = {"green": "On track", "amber": "Watch", "red": "Off track",
-               "unscored": "No target", "unknown": "No data"}
+#: Named here for the callers that already say `STATUS_WORD`; the map
+#: itself is `viz.theme`'s, so the three renderers cannot drift apart.
+STATUS_WORD = STATUS_LABEL
 
 # Impact and effort are ranked words, not numbers. `None` sorts last so a
 # finding that declined to estimate does not jump the queue.
