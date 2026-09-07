@@ -1,5 +1,6 @@
 import { useState } from 'preact/hooks';
 import { aiApply, aiEstimate, aiPlan, type AiEstimate as Estimate } from '../lib/api';
+import { useOverlay } from '../lib/overlay';
 
 /* Cost first, then the plan.
  *
@@ -81,6 +82,7 @@ export function AiActions({ runId, onApplied }: {
   }
 
   const refused = (changes ?? []).filter((change) => change.ok === false).length;
+  const overlay = useOverlay(() => setChanges(null));
 
   return (
     <>
@@ -112,8 +114,16 @@ export function AiActions({ runId, onApplied }: {
       {changes !== null && (
         <>
           <div class="modal-scrim" id="plan-scrim" onClick={() => setChanges(null)} />
-          <div class="modal" id="plan-modal" role="dialog"
-               aria-label="Proposed changes">
+          {/* **This modal had neither Escape nor focus**, which measuring the
+              overlays found and the plan did not name — it listed the three
+              that already had both and called the trap the only gap. A dialog
+              that never receives focus is worse than one without a trap: a
+              keyboard user's next Tab goes to whatever followed the button
+              they pressed, behind a scrim, with no way back and nothing to
+              press Escape on. */}
+          <div class="modal" id="plan-modal" role="dialog" aria-modal="true"
+               aria-label="Proposed changes" tabIndex={-1}
+               ref={overlay.ref} onKeyDown={overlay.onKeyDown}>
             <div class="modal-head">
               <h2>Proposed changes</h2>
               <button class="ghost" id="plan-close" aria-label="Close"

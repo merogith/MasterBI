@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api, validateFormula, type Spec } from '../lib/api';
+import { useOverlay } from '../lib/overlay';
 import { setPath, titleCase } from '../lib/spec';
 
 /* The three "add something" flows.
@@ -227,10 +228,17 @@ export function AddKpi({ spec, runId, onChange, onClose }: {
     }
   }
 
+  const overlay = useOverlay(onClose);
+
   return (
     <>
       <div class="modal-scrim" id="fx-scrim" onClick={onClose} />
-      <div class="modal" id="fx-modal" role="dialog" aria-label="Add a KPI">
+      {/* Escape, focus and the trap. Like the plan modal, this one had none of
+          the three — a form behind a scrim that a keyboard could tab out of and
+          not back into. */}
+      <div class="modal" id="fx-modal" role="dialog" aria-modal="true"
+           aria-label="Add a KPI" tabIndex={-1}
+           ref={overlay.ref} onKeyDown={overlay.onKeyDown}>
         <div class="modal-head">
           <h2 id="fx-title">Add a KPI</h2>
           <button class="ghost" id="fx-close" aria-label="Close" onClick={onClose}>✕</button>

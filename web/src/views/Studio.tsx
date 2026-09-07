@@ -3,6 +3,7 @@ import {
   getAiStatus, getSpec, listCatalogKpis, listTables, getOptions, putSpec, rerunRun,
   type AiStatus, type CatalogKpi, type CatalogOptions, type PlanReport, type Spec,
 } from '../lib/api';
+import { tabStripKey } from '../lib/overlay';
 import { href, navigate } from '../lib/router';
 import { useIsStatic } from '../lib/useStatic';
 import { Failed, Loading } from '../components/State';
@@ -15,6 +16,9 @@ const STAGES = [
   ['source', 'Source'], ['clean', 'Clean'], ['model', 'Model'], ['kpis', 'KPIs'],
   ['analysis', 'Analysis'], ['design', 'Design'], ['outputs', 'Outputs'], ['ai', 'AI'],
 ] as const;
+
+const STAGE_IDS = STAGES.map(([id]) => id);
+type StageId = (typeof STAGES)[number][0];
 
 /** How long to sit on a keystroke before asking the server what it invalidated.
  *  Short enough to feel live, long enough that typing a colour does not send
@@ -125,16 +129,46 @@ export function Studio({ runId }: { runId: string }) {
       </div>
 
       <div class="studio-body">
-        <aside class="studio-rail" id="studio-rail">
+        {/* A tab strip, said out loud.
+            It looked like one, behaved like one and claimed to be nothing: eight
+            plain buttons in an `<aside>`, so a screen reader announced eight
+            unrelated buttons with no indication that seven of them were closed
+            or that pressing one replaced the region below. `aria-selected` is
+            what carries the state the `.active` class only paints, and arrow
+            keys are what make a strip navigable — the ARIA practices put the
+            whole strip on one tab stop, which is also why the inactive tabs
+            take `tabIndex={-1}`.
+
+            A `<div>` rather than the `<aside>` it was: `role="tablist"` on an
+            aside overrides the complementary landmark, so the element would
+            have been claiming two things and delivering one. */}
+        <div class="studio-rail" id="studio-rail" role="tablist"
+             aria-orientation="vertical" aria-label="Pipeline stages">
           {STAGES.map(([id, label]) => (
             <button class={`rail-btn${stage === id ? ' active' : ''}`}
-                    data-stage={id} key={id} onClick={() => setStage(id)}>
+                    role="tab" id={`rail-tab-${id}`} type="button"
+                    aria-selected={stage === id} aria-controls="studio-panels"
+                    tabIndex={stage === id ? 0 : -1}
+                    data-stage={id} key={id} onClick={() => setStage(id)}
+                    onKeyDown={(event) => {
+                      const next = tabStripKey(event, STAGE_IDS, stage as StageId);
+                      if (next === null) return;
+                      event.preventDefault();
+                      setStage(next);
+                      document.getElementById(`rail-tab-${next}`)?.focus();
+                    }}>
               {label}
             </button>
           ))}
-        </aside>
+        </div>
 
-        <div class="studio-panels">
+        {/* The region the rail controls, named by the tab that is open. It is
+            `tabIndex={0}` because a tab panel has to be reachable from the
+            strip above it — without it, Tab from the selected tab jumps past
+            everything the tab just revealed when the panel's first control is
+            disabled, which is every panel on the hosted demo. */}
+        <div class="studio-panels" id="studio-panels" role="tabpanel"
+             tabIndex={0} aria-labelledby={`rail-tab-${stage}`}>
           {readOnly && (
             <div class="notice" role="status">
               <strong>Read-only.</strong> This is a pre-built run on the hosted

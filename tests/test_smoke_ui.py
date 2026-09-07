@@ -887,10 +887,13 @@ def test_an_overlay_can_be_escaped_from_the_moment_it_is_visible(page):
     # be dismissable, finished loading or not.
     _freeze_effects(page)
     page.click("#btn-history")
-    page.wait_for_selector("#drawer:not([hidden])")
+    page.wait_for_selector("#drawer")
 
     page.keyboard.press("Escape")
-    assert page.locator("#drawer[hidden]").count() == 1, \
+    # Absent rather than `[hidden]`: 7.4b moved the drawer to mounting and
+    # unmounting, because a focus trap has to know when the overlay went away
+    # and `hidden` looks the same as "still here" from a ref callback.
+    assert page.locator("#drawer").count() == 0, \
         "Escape did not close the history drawer"
 
 
@@ -1258,3 +1261,203 @@ def test_no_screen_has_an_axe_violation(page):
         page.goto(base + path)
         _visible(page, view)
         _axe(page, path)
+
+
+# --------------------------------------------------------------------------
+# 7.4b — what a keyboard can reach, and what it must not escape
+# --------------------------------------------------------------------------
+
+def _focus_id(page) -> str:
+    """The id of whatever has focus, or the tag when it has no id."""
+    return page.evaluate(
+        "() => document.activeElement ? "
+        "(document.activeElement.id || document.activeElement.tagName) : 'none'")
+
+
+def test_a_modal_keeps_the_tab_key_inside_it(page):
+    """`aria-modal="true"` was a promise the record sheet did not keep.
+
+    It told a screen reader the rest of the page was inert while Tab walked
+    straight out of the sheet and into the scorecard behind it — a keyboard
+    user tabbing through a dialog ends up somewhere the scrim says does not
+    exist, with no way back and nothing to press Escape on.
+
+    Tabbing to the far end and once more must wrap, not leave. Measured by
+    where focus lands rather than by reading the handler, because the trap is
+    only as good as its list of focusable children — a filter that misses
+    everything inside a `position: fixed` panel would pass a source check and
+    fail here.
+    """
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#tour-dismiss")
+    page.wait_for_selector("#res-scorecard")
+
+    page.locator("#res-scorecard .kpi-open").first.click()
+    page.wait_for_selector("#kpi-sheet")
+
+    inside = page.evaluate(
+        "() => document.querySelectorAll('#kpi-sheet a[href], "
+        "#kpi-sheet button:not([disabled])').length")
+    assert inside > 0, "the record sheet has nothing focusable to trap"
+
+    # One press past the last stop. Without the trap this leaves the dialog.
+    for _ in range(inside + 1):
+        page.keyboard.press("Tab")
+    assert page.evaluate("() => document.getElementById('kpi-sheet')"
+                         ".contains(document.activeElement)"), \
+        f"Tab left the record sheet and landed on {_focus_id(page)}"
+
+    # And backwards off the top, which is the half a naive trap forgets.
+    page.keyboard.press("Shift+Tab")
+    page.keyboard.press("Shift+Tab")
+    assert page.evaluate("() => document.getElementById('kpi-sheet')"
+                         ".contains(document.activeElement)"), \
+        f"Shift+Tab left the record sheet and landed on {_focus_id(page)}"
+
+
+def test_closing_an_overlay_gives_focus_back_to_what_opened_it(page):
+    """Where a keyboard user is left when the panel goes away.
+
+    All five overlays took focus and none gave it back, so dismissing one
+    dropped focus on `<body>` and the next Tab started again from the top of
+    the document. On the results screen that is roughly thirty stops back to
+    the row you were reading.
+
+    The drawer is the case with a definite answer: it is opened by a button
+    that is still on screen afterwards, so "back where it came from" is
+    checkable rather than a matter of taste.
+    """
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#tour-dismiss")
+
+    page.focus("#btn-history")
+    page.keyboard.press("Enter")
+    page.wait_for_selector("#drawer")
+    assert page.evaluate("() => document.getElementById('drawer')"
+                         ".contains(document.activeElement)"), \
+        f"the drawer never took focus; it is on {_focus_id(page)}"
+
+    page.keyboard.press("Escape")
+    page.wait_for_selector("#drawer", state="detached")
+    assert _focus_id(page) == "btn-history", \
+        f"focus was dropped rather than restored; it is on {_focus_id(page)}"
+
+
+def test_the_studio_rail_is_a_tab_strip_a_keyboard_can_drive(page):
+    """Eight buttons that looked like tabs and claimed to be nothing.
+
+    `.active` painted the selection and no attribute carried it, so a screen
+    reader announced eight unrelated buttons with no indication that seven were
+    closed or that pressing one replaced the region below. And eight tab stops
+    for one choice is why the ARIA practices put a strip on a single stop with
+    arrow keys inside it.
+
+    Asserted through the keyboard rather than through the attributes alone: a
+    roving `tabindex` that is never moved reads correctly in the DOM and traps
+    a user on the first tab.
+    """
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#res-adjust")
+    _visible(page, "studio")
+
+    rail = page.locator("#studio-rail")
+    assert rail.get_attribute("role") == "tablist", \
+        "the rail does not say it is a tab strip"
+    assert page.locator('#studio-rail [role="tab"]').count() == 8, \
+        "the rail's buttons are not tabs"
+    assert page.locator('#studio-rail [aria-selected="true"]').count() == 1, \
+        "no tab, or more than one, says it is the selected one"
+
+    # One stop for the whole strip.
+    assert page.locator('#studio-rail [tabindex="0"]').count() == 1, \
+        "every tab is its own tab stop, so the rail costs eight presses to pass"
+
+    page.focus('#studio-rail [data-stage="source"]')
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("ArrowDown")
+    assert _focus_id(page) == "rail-tab-model", \
+        f"arrow keys do not move along the rail; focus is on {_focus_id(page)}"
+    assert page.locator('[data-panel="model"]').count() == 1, \
+        "arrowing to a tab did not open its panel"
+
+    # Wraps rather than stopping dead, at both ends.
+    page.keyboard.press("End")
+    assert _focus_id(page) == "rail-tab-ai", _focus_id(page)
+    page.keyboard.press("ArrowDown")
+    assert _focus_id(page) == "rail-tab-source", \
+        f"the strip does not wrap; focus is on {_focus_id(page)}"
+
+
+def test_the_studio_rail_is_a_column_beside_the_panels(page):
+    """Measured geometry, because a dead CSS selector is silent.
+
+    `styles.css` laid the Studio out as `208px | 1fr` under `.studio`, the 1.1
+    port renamed the element to `.studio-body`, and nothing connected the two —
+    so the rule matched nothing and the rail rendered as eight full-width bars
+    stacked above the panel, 1132px wide, sticky-positioned to no effect. The
+    page rendered, every control worked, and every assertion about the Studio
+    passed for four phases.
+
+    Nothing except a measurement can see this: the failure is a layout that
+    still lays out. Same class as 2.1's severity borders, where the selector
+    never matched, and 4.3b's tile baselines — assert where things land, not
+    that a rule exists.
+    """
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#res-adjust")
+    _visible(page, "studio")
+    page.wait_for_selector("#studio-panels")
+
+    rail = page.locator("#studio-rail").bounding_box()
+    panels = page.locator("#studio-panels").bounding_box()
+    assert rail and panels
+
+    # Beside, not above. The viewport is 1280 wide, well clear of the 820px
+    # breakpoint where stacking is the intended layout.
+    assert rail["width"] < 300, \
+        f"the rail is {rail['width']:.0f}px wide — it is not a rail"
+    assert rail["x"] + rail["width"] <= panels["x"] + 1, \
+        "the rail overlaps the panel it is meant to sit beside"
+    assert abs(rail["y"] - panels["y"]) < 40, \
+        "the rail sits above the panels rather than alongside them"
+
+
+def test_a_toggle_s_hint_is_a_second_line_not_a_run_on(page):
+    """"Plant deliberate eventschurn spike, CAC inflation, margin compression".
+
+    `.toggle-sub` was an inline span immediately after the label text with
+    nothing between them, so the two ran together into one string. Found in the
+    same screenshot as the rail, which is the argument for taking one at all:
+    both are layout, neither raises, and no assertion about either element's
+    presence or text could see it.
+
+    Measured as "the hint starts at the left edge of its own block", not as a
+    source check — a margin, a space or a `<br>` would each be a different way
+    of spelling the same fix, and pinning the spelling pins the wrong thing.
+
+    **The first version of this assertion was green under its own mutation**,
+    the way roughly one in three has been in this program. It compared the
+    hint's top against its parent's, on the reasoning that a second line starts
+    lower — but an inline span at 11.5px inside 13px text also sits a few
+    pixels lower, because it shares a baseline and has a shorter cap height. So
+    the measurement could not tell a line break from a smaller font. The left
+    edge can: text that follows other text on a line does not start at the
+    margin.
+    """
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#res-adjust")
+    _visible(page, "studio")
+
+    sub = page.locator(".toggle .toggle-sub").first
+    sub.wait_for()
+    box = sub.bounding_box()
+    label = sub.locator("xpath=..").bounding_box()
+    assert box and label
+    assert abs(box["x"] - label["x"]) < 2, \
+        (f"the hint starts {box['x'] - label['x']:.0f}px in from its block, so "
+         f"it is running on from the label rather than beginning a line")

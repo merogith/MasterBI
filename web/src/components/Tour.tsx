@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
+import { useOverlay } from '../lib/overlay';
 
 /* Four steps, once, on the screen where there is something to point at.
  *
@@ -65,6 +66,10 @@ export function Tour({ steps, storageKey = SEEN_KEY }: {
     if (open) remember(storageKey);
   }, [open, storageKey]);
 
+  // Before the early return: a hook that runs only on some renders is a hook
+  // that will one day run against the wrong slot.
+  const overlay = useOverlay(() => setOpen(false), false);
+
   if (!open || live.length === 0) return null;
 
   const position = Math.min(index, live.length - 1);
@@ -72,8 +77,8 @@ export function Tour({ steps, storageKey = SEEN_KEY }: {
   const last = position === live.length - 1;
 
   return (
-    // Escape closes it. A modal-ish overlay with no keyboard exit is a trap,
-    // and this one appears unbidden.
+    // Escape closes it. An overlay with no keyboard exit is a trap, and this
+    // one appears unbidden.
     //
     // Handled on the element, with focus taken in a ref callback, rather than
     // by a `keydown` listener registered in an effect. CI caught the effect
@@ -81,9 +86,18 @@ export function Tour({ steps, storageKey = SEEN_KEY }: {
     // clickable while the listener that dismisses it does not exist yet,
     // because Preact defers effects. Something a user can see must already
     // work.
+    //
+    // **`trap: false`, and that is a decision rather than an omission.** The
+    // other four overlays have a scrim; this one is a 340px card in the corner
+    // pointing at live page elements, and the whole point of a step is that the
+    // reader can look at what it names. Trapping focus here would lock a
+    // keyboard user into the annotation while the annotated page stayed usable
+    // for everyone else — a rule borrowed from modals and applied to something
+    // that is not one, which is this repo's recurring mistake in a new place.
+    // Focus *restore* still applies: it took focus unasked, so it owes it back.
     <div class="tour" id="tour" role="dialog" aria-label="Quick tour"
-           aria-live="polite" tabIndex={-1} ref={(node) => node?.focus()}
-           onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }}>
+           aria-live="polite" tabIndex={-1}
+           ref={overlay.ref} onKeyDown={overlay.onKeyDown}>
       <div class="tour-head">
         <strong>{step.title}</strong>
         <span class="tour-count">{position + 1} of {live.length}</span>

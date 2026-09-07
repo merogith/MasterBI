@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { listRuns, rerunRun, type RunRow } from '../lib/api';
+import { useOverlay } from '../lib/overlay';
 import { navigate } from '../lib/router';
 import { Empty, Failed, Loading } from './State';
 
@@ -49,16 +50,30 @@ export function HistoryDrawer({ open, onClose }: {
     navigate(`/runs/${runId}`);
   }
 
+  const overlay = useOverlay(onClose);
+
+  if (!open) return null;
+
   return (
     <>
-      <div class="drawer-scrim" id="drawer-scrim" hidden={!open} onClick={onClose} />
+      <div class="drawer-scrim" id="drawer-scrim" onClick={onClose} />
       {/* Escape on the panel, with focus taken as it opens, rather than a
           listener registered in an effect — the drawer is dismissable from the
           moment it is visible. Same defect the record sheet had, found on CI
-          rather than locally, because Preact flushes effects after paint. */}
-      <aside class="drawer" id="drawer" hidden={!open} aria-label="Recent runs"
-             tabIndex={-1} ref={(node) => { if (open) node?.focus(); }}
-             onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}>
+          rather than locally, because Preact flushes effects after paint.
+
+          **Mounted and unmounted rather than toggled with `hidden`**, which the
+          focus trap needs and the old spelling quietly needed too. Preact
+          re-invokes an inline ref on every render, so `ref={(node) => { if
+          (open) node?.focus(); }}` yanked focus back to the panel whenever
+          anything below re-rendered — the run list arriving did exactly that,
+          so tabbing to a row immediately after opening lost the tab. Unmount is
+          also the only honest signal that focus should go back where it came
+          from; `hidden` looks identical to "still here" from a ref's point of
+          view. */}
+      <aside class="drawer" id="drawer" role="dialog" aria-modal="true"
+             aria-label="Recent runs" tabIndex={-1}
+             ref={overlay.ref} onKeyDown={overlay.onKeyDown}>
         <div class="drawer-head">
           <h2>Recent runs</h2>
           <button class="ghost" id="drawer-close" aria-label="Close" onClick={onClose}>

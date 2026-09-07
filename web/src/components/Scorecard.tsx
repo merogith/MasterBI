@@ -3,6 +3,7 @@ import { useMemo, useState } from 'preact/hooks';
 import { BasisChip, BenchmarkChip } from './Basis';
 import type { Kpi, RecordSheet, Summary } from '../lib/api';
 import { fmtMove, fmtValue, STATUS_GLYPH, STATUS_LABEL } from '../lib/format';
+import { useOverlay } from '../lib/overlay';
 
 /* The scorecard as the semantic layer it already is.
  *
@@ -128,23 +129,21 @@ function Sheet({ sheet, kpi, currency, rationale, nodes, kpis, sheets, onOpen,
     ['Needs', (sheet.requires_data ?? []).join(', ') || 'no data beyond the fact tables'],
   ];
 
-  /* Escape is handled by the dialog, and focus lands on it in a ref callback.
+  /* Escape, focus and the trap all come from `useOverlay`, and the reason they
+   * arrive together is 3.5b's: Escape is handled *on the element*, so a panel
+   * that never receives focus never receives the key. They are one mechanism
+   * and were split across two hand-written lines here.
    *
-   * It was a `keydown` listener registered in `useEffect`, which CI caught and
-   * a local run never did: the sheet was on screen — rendered, painted,
-   * clickable — while the listener that closes it did not exist yet, because
-   * Preact defers effects past paint. On the runner Escape did nothing.
-   *
-   * A ref callback runs during commit, synchronously with the node being
-   * attached, so by the time anyone can see the panel it already has focus and
-   * its own `onKeyDown`. Which is also what a dialog owes a keyboard user:
-   * 7.4 will do the focus trap, and this is the half that cannot wait. */
+   * `aria-modal="true"` was already a promise the code did not keep — it tells
+   * a screen reader the rest of the page is inert while Tab walked straight out
+   * of the sheet into the table behind it. */
+  const overlay = useOverlay(onClose);
+
   return (
     <div class="sheet-backdrop" onClick={onClose}>
       <aside class="record-sheet" id="kpi-sheet" role="dialog" aria-modal="true"
              aria-label={`${sheet.name} record sheet`} tabIndex={-1}
-             ref={(node) => node?.focus()}
-             onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+             ref={overlay.ref} onKeyDown={overlay.onKeyDown}
              onClick={(e) => e.stopPropagation()}>
         <header class="sheet-head">
           <div>

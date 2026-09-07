@@ -763,13 +763,8 @@ def test_no_overlay_registers_its_escape_key_in_an_effect() -> None:
     this check impossible for one of the three — and a rule two thirds enforced
     is how the third one comes back.
     """
-    overlays = {
-        "components/Scorecard.tsx": "the KPI record sheet",
-        "components/Tour.tsx": "the tour",
-        "components/HistoryDrawer.tsx": "the history drawer",
-    }
     offenders = []
-    for path, what in overlays.items():
+    for path, what in OVERLAYS.items():
         source = (ROOT / "web" / "src" / path).read_text(encoding="utf-8")
         if "'keydown'" in source or '"keydown"' in source:
             offenders.append(f"{what} ({path})")
@@ -779,6 +774,73 @@ def test_no_overlay_registers_its_escape_key_in_an_effect() -> None:
     assert not offenders, \
         "an overlay is back to a window listener registered after paint: " \
         + ", ".join(offenders)
+
+
+#: Every overlay in the app, and the list is the point.
+#:
+#: 3.5b wrote "all three overlays" and named the three that already had an
+#: Escape key to fix. Measuring for 7.4b found **five**, and the two nobody had
+#: counted — the AI plan modal and the add-a-KPI modal — were the two with no
+#: keyboard handling at all: no Escape, no focus, nothing. A list of the
+#: surfaces somebody remembered is not a list of the surfaces that exist, which
+#: is the same defect as 5.4a's hand-written exhibit plan and 5.4b's
+#: hand-written KPI-per-chart map.
+OVERLAYS = {
+    "components/Scorecard.tsx": "the KPI record sheet",
+    "components/Tour.tsx": "the tour",
+    "components/HistoryDrawer.tsx": "the history drawer",
+    "studio/AiActions.tsx": "the AI plan modal",
+    "studio/Editors.tsx": "the add-a-KPI modal",
+}
+
+
+def test_every_overlay_takes_focus_and_gives_it_back() -> None:
+    """One helper, not five hand-written ref callbacks.
+
+    Focus-on-open and Escape are the same mechanism — Escape is handled *on the
+    element*, so a panel that never receives focus never receives the key — and
+    they were spelled out separately at three call sites and omitted entirely at
+    the other two. Restoring focus afterwards was missing at all five.
+
+    Asserted at the source rather than only in the browser because the browser
+    check can only reach an overlay a walk can open, and the two Studio modals
+    need an API key and a live planner between them and a screenshot. A rule
+    three fifths enforced is how the other two came to be missing.
+    """
+    missing = []
+    for path, what in OVERLAYS.items():
+        source = (ROOT / "web" / "src" / path).read_text(encoding="utf-8")
+        if "useOverlay(" not in source:
+            missing.append(f"{what} ({path}) does not use the shared helper")
+        if "overlay.ref" not in source:
+            missing.append(f"{what} ({path}) never takes focus")
+
+    assert not missing, "; ".join(missing)
+
+
+def test_the_tour_is_not_focus_trapped() -> None:
+    """The one overlay that must *not* trap, and the reason is what it is.
+
+    A trap is correct for a modal — something with a scrim, where the page
+    behind is not meant to be reachable. The tour is a corner card with no
+    scrim whose every step points at a live element on the page behind it;
+    trapping focus there locks a keyboard user inside the annotation while
+    everyone else can look at the thing being annotated.
+
+    This repo's recurring defect is a rule borrowed for one population and
+    applied to another — the HHI floor, the top-ten share, the cross-sector
+    bands. Applying the modal trap to all five overlays because four of them
+    want it would be the same mistake, so the exception is pinned rather than
+    left to whoever next tidies the call sites.
+    """
+    tour = (ROOT / "web" / "src" / "components" / "Tour.tsx").read_text(
+        encoding="utf-8")
+    assert "useOverlay(() => setOpen(false), false)" in tour, \
+        "the tour is trapping focus, or no longer says it deliberately is not"
+
+    styles = (ROOT / "web" / "src" / "styles.css").read_text(encoding="utf-8")
+    assert "tour-scrim" not in styles, \
+        "the tour grew a scrim, which makes it modal and the exemption wrong"
 
 
 def test_the_studio_asks_for_its_own_run_s_tables() -> None:

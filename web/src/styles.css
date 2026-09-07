@@ -505,7 +505,23 @@ tbody tr:hover { background: var(--accent-soft); }
    mental model of "what a change re-runs" are the same picture.
    ========================================================================== */
 
-.studio {
+/* `.studio-body` and `.studio-panels`, which is what the markup says.
+ *
+ * These rules were written for `.studio` and `.studio-main`, the 1.1 port
+ * renamed both elements, and nothing connected the two — so the selector has
+ * matched **nothing** since the rewrite and the Studio has never had the
+ * two-column layout it was designed with. Eight full-width bars stacked above
+ * the panel, the sticky rail not sticky, and the 820px breakpoint below
+ * switching a column that was never a column back into a row.
+ *
+ * Invisible from every angle this repo usually looks: the page renders, every
+ * control works, every assertion about it passes, and a dead CSS selector is
+ * silent by construction. Found by screenshotting the rail while making it a
+ * tab strip — and it was NOT caused by that change, which is worth stating
+ * because the obvious reading of the screenshot was that swapping `<aside>`
+ * for `<div>` had done it. Rebuilding from HEAD gave a rail 1132px wide too.
+ */
+.studio-body {
   display: grid;
   grid-template-columns: 208px minmax(0, 1fr);
   gap: 22px;
@@ -516,7 +532,7 @@ tbody tr:hover { background: var(--accent-soft); }
 .studio-rail { display: flex; flex-direction: column; gap: 4px; position: sticky; top: 78px; }
 .studio-rail .rail-btn { text-align: left; }
 
-.studio-main { min-width: 0; }
+.studio-panels { min-width: 0; }
 /* Clear the sticky topbar when a control is scrolled into view; without
    this the header sits on top of it and eats the click. */
 .studio-panel, .studio-section, .toggle, .rail-btn, .kpi-table tr { scroll-margin-top: 96px; }
@@ -553,7 +569,12 @@ tbody tr:hover { background: var(--accent-soft); }
 }
 .toggle:hover { border-color: var(--border-strong); }
 .toggle input { accent-color: var(--accent); }
-.toggle .toggle-sub { color: var(--muted); font-size: 11.5px; }
+/* `display: block`, because the sub-label is a second line and an inline span
+   with nothing between it and the label is not one: the anomalies toggle read
+   "Plant deliberate eventschurn spike, CAC inflation, margin compression" —
+   one run-on string. Found in the same screenshot as the rail, which is the
+   argument for taking one. */
+.toggle .toggle-sub { display: block; color: var(--muted); font-size: 11.5px; }
 
 /* KPI catalog ------------------------------------------------------------ */
 
@@ -664,7 +685,7 @@ tbody tr:hover { background: var(--accent-soft); }
 .fx-save-lib { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-secondary); }
 
 @media (max-width: 820px) {
-  .studio { grid-template-columns: 1fr; }
+  .studio-body { grid-template-columns: 1fr; }
   .studio-rail { position: static; flex-direction: row; overflow-x: auto; }
 }
 
