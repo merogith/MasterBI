@@ -28,6 +28,21 @@ COST_HINT = {
 }
 
 
+def reporting_period(values: Dict[str, Any]) -> str:
+    """The window the print deliverables title themselves with.
+
+    One function rather than a property on each of `RunContext` and
+    `RunResult`: they answer the same question from the same dict, and the
+    second spelling is where they would start disagreeing about which month
+    a report covers.
+    """
+    tables = values.get("model") or {}
+    fin = tables.get("monthly_financials")
+    if fin is None or fin.empty:
+        return ""
+    return f"{fin['month'].iloc[0]} to {fin['month'].iloc[-1]}"
+
+
 @dataclass
 class RunContext:
     spec: RunSpec
@@ -69,11 +84,7 @@ class RunContext:
     @property
     def period(self) -> str:
         """Reporting window, as the print deliverables title it."""
-        tables = self.values.get("model") or {}
-        fin = tables.get("monthly_financials")
-        if fin is None or fin.empty:
-            return ""
-        return f"{fin['month'].iloc[0]} to {fin['month'].iloc[-1]}"
+        return reporting_period(self.values)
 
 
 @dataclass
@@ -143,6 +154,19 @@ class RunResult:
     @property
     def seconds(self) -> float:
         return round(sum(self.timings.values()), 3)
+
+    @property
+    def period(self) -> str:
+        """Reporting window, as the print deliverables title it.
+
+        The same property `RunContext` offers, because a caller holding only
+        the result wants it for the same reason — 5.5's page preview renders
+        a real cover, and the cover prints the window. It read
+        "MANUFACTURING · B2B · DE ·" with a trailing separator and nothing
+        after it until this existed, which is a preview visibly disagreeing
+        with the document it previews.
+        """
+        return reporting_period(self.values)
 
 
 class RunCancelled(Exception):

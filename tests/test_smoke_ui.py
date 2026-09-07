@@ -1106,3 +1106,51 @@ def test_a_percentage_move_is_reported_in_points(page):
     assert any(v >= 0.5 for v in values), (
         f"every percentage move rounds to nothing, which is what the missing "
         f"hundred looked like: {points}")
+
+
+def test_the_design_panel_shows_the_artifact_not_only_the_palette(page):
+    """**The best-built thing in the app answered the wrong question.**
+
+    The brand preview measured WCAG ratios and ΔE under two colour-vision
+    models, and showed swatches. That answers "is this colour legible", which
+    is worth answering and is not what somebody opening a Design panel wants
+    to know: they want to see the document they are about to send a board.
+
+    So the real first two pages render here, through `render_report` itself —
+    a preview drawn by a second implementation is a mock, and a mock drifts
+    from the document it claims to show, which is the failure this panel
+    already had one level up.
+
+    The three fields beside it are the ones 0.3 wired into all three renderers
+    and nothing ever offered: the face and the footer print on the summary
+    page, and the number format repunctuates every figure on both.
+
+    Mutations: drop `<ArtifactPreview>`; render it without a run and let it
+    invent a cover; remove any of the three fields; put the logo back to a
+    text box asking for a server-side path.
+    """
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#res-adjust")
+    _visible(page, "studio")
+    page.click('#studio-rail [data-stage="design"]')
+
+    # The three fields that had no control at all.
+    for field in ("#brand-font_stack", "#brand-footer_text", "#design-locale"):
+        assert page.locator(field).count() == 1, f"{field} is not on the panel"
+
+    # A file input, not a text box asking a business user for a server path.
+    logo = page.locator("#brand-logo_file")
+    assert logo.count() == 1, "the logo is still typed rather than uploaded"
+    assert logo.get_attribute("type") == "file"
+
+    # And the artifact itself. The frame is filled asynchronously — the
+    # component debounces, then the server renders — so this waits for it
+    # rather than asserting on the first paint.
+    page.wait_for_selector("#artifact-preview .preview-frame", timeout=20_000)
+    frame = page.locator("#artifact-preview .preview-frame")
+    data = frame.get_attribute("data") or ""
+    assert data.startswith("blob:"), data[:80]
+    # The viewer's own toolbar and thumbnail rail are suppressed: they took
+    # about 40% of the frame and captioned it with the blob's UUID.
+    assert "toolbar=0" in data and "navpanes=0" in data, data[-60:]

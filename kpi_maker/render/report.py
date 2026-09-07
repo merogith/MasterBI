@@ -29,7 +29,12 @@ from ..kpi.schema import KPISet
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
 from ..viz.theme import TOKENS
-from .sections import DIAGNOSTIC_EXHIBITS, SectionContent, SectionContext  # noqa: F401
+from .sections import (  # noqa: F401
+    DIAGNOSTIC_EXHIBITS,
+    REGISTRY,
+    SectionContent,
+    SectionContext,
+)
 from .sections import build as build_sections
 
 # Where a requested font might live. Checked in order; a directory that does
@@ -419,6 +424,12 @@ def _draw_cover(pdf: PDFReport, c: SectionContent) -> None:
 #: one place the PDF needs them.
 BASIS_WORD = {"modelled": "modelled data", "mixed": "part modelled"}
 
+#: Numbered sections below which a contents page costs more than it saves.
+#: `design.sections` is a Studio control, so a short report is something a user
+#: can ask for, and at two sections the contents page was a full page reading
+#: "1. Executive summary ...... 3" — pointing at the page after itself.
+MIN_SECTIONS_FOR_CONTENTS = 3
+
 
 def _draw_bullets(pdf: PDFReport, c: SectionContent) -> None:
     """Exec summary and risks: a bold lead-in, then the sentence."""
@@ -622,8 +633,18 @@ def render_report(path: Path, profile: CompanyProfile, kpi_set: KPISet,
     #
     # After the cover, before the first numbered section, which is where a
     # reader looks for it.
+    #
+    # **Only when there is something to navigate**, which 5.4b did not check
+    # and 5.5 found by measuring: `design.sections` is a Studio control, so a
+    # two-section report is reachable today, and it spent a whole page on
+    # "Contents / 1. Executive summary ...... 3" — one entry, pointing at the
+    # page immediately after it. A contents page that costs a page to save
+    # turning one is the 5.3d failure in another costume: a device that helps
+    # only in the case it is not in. Three is where thumbing starts to beat
+    # reading the headings, and the shipped report has eight.
+    numbered = sum(1 for c in drawn if REGISTRY[c.id].numbered)
     for index, content in enumerate(drawn):
-        if index == 1:
+        if index == 1 and numbered >= MIN_SECTIONS_FOR_CONTENTS:
             # A page of its own first: `insert_toc_placeholder` reserves the
             # rest of whatever page is current, so calling it straight after
             # the cover reserved the cover.

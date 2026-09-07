@@ -7,8 +7,10 @@
  */
 import { useState } from 'preact/hooks';
 import type { CatalogKpi, CatalogOptions, Spec } from '../lib/api';
+import { uploadLogo } from '../lib/api';
 import { getPath, setPath, titleCase, toggleIn } from '../lib/spec';
 import { AdoptUpload } from './AdoptUpload';
+import { ArtifactPreview } from './ArtifactPreview';
 import { AiActions } from './AiActions';
 import { AddCalculatedColumn, AddCleaningStep, AddKpi } from './Editors';
 import { BrandPreview } from './BrandPreview';
@@ -433,8 +435,51 @@ export function AnalysisPanel({ spec, options, onChange }: PanelProps) {
 
 // -- design ----------------------------------------------------------------
 
-export function DesignPanel({ spec, options, onChange }: PanelProps) {
+/* The logo was a text box captioned "path or uploaded filename" — a
+   server-side path, typed by a business user, on the screen whose whole
+   subject is what the artifact looks like, and with no route that would ever
+   have put a file where that path could reach. A file input and one POST.
+
+   The typed field stays underneath rather than being deleted: a CLI or spec
+   author who already has a name in `_uploads` should not have to re-upload
+   it, and it is how you clear the logo. */
+function LogoField({ spec, brand, onChange }: {
+  spec: Spec; brand: Spec; onChange: (spec: Spec) => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const current = String(brand['logo_path'] ?? '');
+
+  const take = (file: File | null | undefined) => {
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    uploadLogo(file)
+      .then((up) => onChange(setPath(spec, 'design.brand.logo_path', up.logo_path)))
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <label class="field">
+      <span>Logo (PNG or JPEG)</span>
+      <input type="file" id="brand-logo_file" accept="image/png,image/jpeg"
+             disabled={busy}
+             onChange={(e) => take(e.currentTarget.files?.[0])} />
+      <input type="text" id="brand-logo_path" placeholder="or a name already uploaded"
+             value={current}
+             onInput={(e) => onChange(setPath(
+               spec, 'design.brand.logo_path',
+               e.currentTarget.value.trim() || null))} />
+      {busy && <span class="hint" role="status">checking the file…</span>}
+      {error && <span class="warn" role="alert">{error}</span>}
+    </label>
+  );
+}
+
+export function DesignPanel({ spec, options, runId, onChange }: PanelProps) {
   const design = (getPath(spec, 'design') ?? {}) as Spec;
+  const brand = (design['brand'] ?? {}) as Spec;
   const all = options.sections;
   const order = (design['sections'] as string[] | null) ?? all.map((s) => s.id);
   const titleOf = Object.fromEntries(all.map((s) => [s.id, s.title]));
@@ -458,24 +503,64 @@ export function DesignPanel({ spec, options, onChange }: PanelProps) {
       <h3 class="studio-sub">Brand</h3>
       <div class="field-row">
         {([['primary', 'Primary colour', '#2a78d6'],
-           ['accent', 'Secondary (optional)', 'leave blank'],
-           ['logo_path', 'Logo (PNG or JPEG)', 'path or uploaded filename']] as const)
+           ['accent', 'Secondary (optional)', 'leave blank']] as const)
           .map(([field, label, placeholder]) => (
             <label class="field" key={field}>
               <span>{label}</span>
               <input type="text" id={`brand-${field}`} placeholder={placeholder}
-                     value={String((design['brand'] as Spec | undefined)?.[field] ?? '')}
+                     value={String(brand[field] ?? '')}
                      onInput={(e) => onChange(setPath(
                        spec, `design.brand.${field}`,
                        e.currentTarget.value.trim() || null))} />
             </label>
           ))}
+        <LogoField spec={spec} brand={brand} onChange={onChange} />
       </div>
 
+      {/* The three fields 0.3 wired into all three renderers and nothing ever
+          offered. They are here rather than under a separate heading because
+          the preview below is where their effect is visible: the face and the
+          footer print on the summary page, and the locale repunctuates every
+          figure on both. */}
+      <div class="field-row">
+        <label class="field">
+          <span>Font stack</span>
+          <input type="text" id="brand-font_stack" placeholder="Segoe UI, Inter"
+                 value={String(brand['font_stack'] ?? '')}
+                 onInput={(e) => onChange(setPath(
+                   spec, 'design.brand.font_stack',
+                   e.currentTarget.value.trim() || null))} />
+        </label>
+        <label class="field">
+          <span>Footer text</span>
+          <input type="text" id="brand-footer_text"
+                 placeholder="Benchmarks are illustrative — see appendix"
+                 value={String(brand['footer_text'] ?? '')}
+                 onInput={(e) => onChange(setPath(
+                   spec, 'design.brand.footer_text',
+                   e.currentTarget.value.trim() || null))} />
+        </label>
+        <label class="field">
+          <span>Number format</span>
+          <input type="text" id="design-locale" placeholder="from the company's country"
+                 value={String(design['locale'] ?? '')}
+                 onInput={(e) => onChange(setPath(
+                   spec, 'design.locale',
+                   e.currentTarget.value.trim() || null))} />
+        </label>
+      </div>
+      <p class="hint">
+        Fonts are tried in order and fall through to one that exists on the
+        machine rendering. A number format like <code>de-DE</code> writes
+        <code> 1.234,50</code>; left blank it follows the company's country.
+      </p>
+
       <BrandPreview
-        primary={(design['brand'] as Spec | undefined)?.['primary'] ?? null}
-        accent={(design['brand'] as Spec | undefined)?.['accent'] ?? null}
-        logoPath={(design['brand'] as Spec | undefined)?.['logo_path'] ?? null} />
+        primary={brand['primary'] ?? null}
+        accent={brand['accent'] ?? null}
+        logoPath={brand['logo_path'] ?? null} />
+
+      <ArtifactPreview runId={runId || null} design={design} />
 
       <h3 class="studio-sub">Sections</h3>
       <p class="hint">Order and inclusion apply to the PDF, the editable report

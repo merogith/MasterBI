@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import tempfile
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -21,10 +22,10 @@ from threading import Event, Lock
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from .. import paths
 from ..cli import load_profile, run_pipeline
@@ -48,7 +49,13 @@ from ..prep.recipe import preview_recipe
 from ..profile.schema import CompanyProfile
 from ..render.sections import REGISTRY as SECTION_REGISTRY
 from ..render.sections import default_order
-from ..spec.schema import ALL_ARTIFACTS, PATCHABLE_SECTIONS, RunSpec, SourceKind
+from ..spec.schema import (
+    ALL_ARTIFACTS,
+    PATCHABLE_SECTIONS,
+    DesignSpec,
+    RunSpec,
+    SourceKind,
+)
 from ..store import COLUMNS as STORE_COLUMNS
 from ..store import store as _open_store
 from ..survey import as_json as survey_json
@@ -1237,19 +1244,121 @@ def _run_inputs(run_id: str, spec: RunSpec) -> Dict[str, Any]:
     result = execute(spec, run_dir, artifacts=["facts_csv", "json_dumps"],
                      uploads_dir=UPLOADS_DIR)
     values = result.values
+    # The real window, not "". It reaches the narrator's section briefs and,
+    # since 5.5, a rendered cover — which printed "MANUFACTURING · B2B · DE ·"
+    # with a trailing separator and nothing after it while this was blank.
+    period = result.period
     ctx = SectionContext(
         profile=values["resolve"], kpi_set=values["select"],
         results=values["metrics"], findings=values["analyse"],
-        period="")
+        period=period)
     wanted = spec.ai.resolve_narrate_sections()
+    # `profile` and `kpi_set` ride along because 5.5's page preview renders
+    # the real cover, whose figure is this run's north star — it needs the
+    # same two objects the narrator estimate already resolved here, and
+    # resolving them twice is how the preview would start disagreeing with
+    # the report.
     return {"results": values["metrics"], "findings": values["analyse"],
-            "contents": build_sections(ctx, wanted), "period": ""}
+            "contents": build_sections(ctx, wanted), "period": period,
+            "profile": values["resolve"], "kpi_set": values["select"]}
 
 
 class BrandRequest(BaseModel):
     primary: Optional[str] = None
     accent: Optional[str] = None
     logo_path: Optional[str] = None
+
+
+def unknown_spec_fields(payload: Any, model: Any, prefix: str = "") -> List[str]:
+    """Dotted paths in `payload` that `model` does not define, nested included.
+
+    **`SpecModel` ignores unknown keys**, which is pydantic's default and is
+    the right default here: 0.7 stores every spec version on disk, so a field
+    removed from the model later must not make an old run unloadable — 4.1's
+    "nothing is removed from the enum, ever", one layer up.
+
+    That is wrong at a *live* boundary, though, and this was found the way
+    these always are: the first preview request written against this endpoint
+    put `footer_text` at the design level, where it belongs to `BrandSpec`,
+    and the preview came back cheerfully rendering the default footer. A user
+    editing a field and watching the preview not change would conclude the
+    feature is broken, which is the failure this whole item exists to remove.
+
+    Walked rather than enforced with `extra="forbid"` because forbidding on
+    the model reaches the stored specs too, and a subclass would only make
+    the top level strict — `brand: {footer_txt: ...}` is exactly the typo
+    that needs catching.
+    """
+    if not isinstance(payload, dict) or not hasattr(model, "model_fields"):
+        return []
+    out: List[str] = []
+    for key, value in payload.items():
+        path = f"{prefix}{key}"
+        field = model.model_fields.get(key)
+        if field is None:
+            out.append(path)
+            continue
+        out.extend(unknown_spec_fields(value, field.annotation, f"{path}."))
+    return out
+
+
+class DesignPreviewRequest(BaseModel):
+    """A run to preview, and the design to preview it under.
+
+    `design` is the whole `DesignSpec` rather than a field list, because a
+    field list is a second copy of that model: every design field 5.5 exposed
+    would have to be added here too, and the one somebody forgets is the one
+    that silently stops previewing. Sending the section means the panel can
+    preview anything the spec can carry, including whatever Phase 7 adds.
+
+    A key `DesignSpec` does not define is refused rather than dropped — see
+    `unknown_spec_fields`, and the misplaced `footer_text` that motivated it.
+    """
+    run_id: str
+    design: Optional[Dict[str, Any]] = None
+
+
+class LogoUpload(BaseModel):
+    """What `POST /api/design/logo` gives back: a name `BrandSpec` accepts."""
+    logo_path: str
+    mime: str
+    bytes: int
+    data_uri: str
+
+
+@app.post("/api/design/logo")
+async def upload_logo(file: UploadFile = File(...)) -> LogoUpload:
+    """Take a logo file and return the name `brand.logo_path` wants.
+
+    The Design panel used to ask for "path or uploaded filename" in a text
+    box — a server-side path, typed by a business user, on the one screen
+    whose whole subject is what the artifact looks like. There was never an
+    upload route for it: `/api/ingest/profile` takes spreadsheets, and the
+    logo loader resolves a bare name inside `UPLOADS_DIR`, so the only way to
+    fill the field was to have already put a file there by other means.
+
+    Validated here rather than at render time, which is the point of doing it
+    on upload: `load_logo` checks magic bytes and size, so a PDF renamed to
+    `.png` is refused now, with a sentence, instead of failing silently in a
+    board pack. The stored name is what goes in the spec — bare, so the run
+    resolves it the same way whoever opens the run next will.
+    """
+    suffix = Path(file.filename or "logo").suffix.lower()
+    stored = UPLOADS_DIR / f"logo-{uuid.uuid4().hex[:8]}{suffix}"
+    stored.write_bytes(await file.read())
+    try:
+        loaded = load_logo(stored.name, UPLOADS_DIR)
+    except LogoError as exc:
+        stored.unlink(missing_ok=True)
+        # `load_logo` names the path it was given, which is right for the CLI
+        # where the path *is* what the user typed. Here it is a name the
+        # server invented inside its own uploads directory, so quoting it
+        # both leaks the install layout and tells the user nothing: they
+        # picked "logo.png", not "…/_uploads/logo-be8d6774.png".
+        raise HTTPException(422, str(exc).replace(
+            str(stored), file.filename or "the file"))
+    return LogoUpload(logo_path=stored.name, mime=loaded.mime,
+                      bytes=stored.stat().st_size, data_uri=loaded.data_uri())
 
 
 @app.post("/api/design/preview")
@@ -1284,6 +1393,95 @@ def preview_design(req: BrandRequest) -> Dict[str, Any]:
     return {"palettes": out, "logo": logo,
             "thresholds": {"text": AA_TEXT, "graphical": GRAPHICAL,
                            "separation": MIN_DELTA_E}}
+
+
+#: The preview's two pages. Both are chart-free, which is what makes this
+#: cheap: `charts_png` is the kaleido stage, and skipping it takes the render
+#: from ~1.5s to ~0.3s. They are also the two that carry every field this
+#: panel edits — the cover shows the logo, the brand colour and the page
+#: size; the summary page shows the body face, the footer and the locale's
+#: own punctuation on real figures.
+PREVIEW_SECTIONS = ["cover", "exec_summary"]
+
+
+@app.post("/api/design/preview/pages")
+def preview_pages(req: DesignPreviewRequest) -> Response:
+    """The first two pages of the actual report, with this design applied.
+
+    **The panel previewed the palette, and the palette is not the artifact.**
+    Swatches and contrast ratios answer "is this colour legible", which is
+    worth answering and is not the question a user opening a Design panel has.
+    They want to know what the thing they are about to send to a board looks
+    like. So this renders it — through `render_report`, the same function the
+    run calls, with `section_order` doing the trimming, because a preview
+    drawn by a second implementation is a mock that drifts from the document
+    it claims to show.
+
+    Two pages rather than the whole report because both are chart-free: the
+    render skips kaleido entirely and comes back in about a third of a second
+    against ~1.5s for a page carrying exhibits.
+
+    A run is required and that is deliberate. The cover's figure is this
+    company's north star and the summary's bullets are this run's findings;
+    inventing either would make the preview a picture of a different document,
+    which is the failure it exists to fix. With no run the panel keeps its
+    swatches and says why — 5.1's "no plan means no variance", applied to a
+    page instead of a chart.
+    """
+    run_dir = RUNS_DIR / req.run_id
+    if not run_dir.exists():
+        raise HTTPException(404, "Run not found")
+    spec = _load_spec(req.run_id)
+    # The design under the cursor, not the one last written to disk: the panel
+    # debounces its PATCH, so reading `spec.json` would preview the edit
+    # before last. Merged through the model so an unknown field is a 422 here
+    # rather than a silently ignored key.
+    if req.design is not None:
+        stray = unknown_spec_fields(req.design, DesignSpec)
+        if stray:
+            raise HTTPException(
+                422, f"design has no field(s): {', '.join(stray)}")
+        try:
+            spec = spec.model_copy(update={"design": DesignSpec.model_validate(
+                req.design)})
+        except ValidationError as exc:
+            raise HTTPException(422, str(exc))
+
+    from ..render.report import render_report
+    try:
+        inputs = _run_inputs(req.run_id, spec)
+        brand = spec.design.brand
+        # `derive_tokens` and `load_logo` directly rather than through
+        # `stages._palettes`/`_logo`: those two add memoisation onto a
+        # RunContext this has none of, and the derivation itself is the same
+        # call. Borrowing the memo would mean faking the context; copying the
+        # derivation would mean a preview whose colours are computed by
+        # different code from the report's.
+        tokens = derive_tokens(brand.primary, "light", brand.accent).tokens
+        logo = load_logo(brand.logo_path, UPLOADS_DIR)
+    except (ColourError, LogoError) as exc:
+        raise HTTPException(400, str(exc))
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = render_report(
+            Path(tmp) / "preview.pdf", inputs["profile"],
+            inputs["kpi_set"], inputs["results"], inputs["findings"],
+            images={}, specs=[], checks=[], anomaly_notes=[],
+            period=inputs["period"], tokens=tokens,
+            section_order=PREVIEW_SECTIONS, logo=logo,
+            page_size=spec.resolve_page_size(),
+            font_stack=spec.resolve_font_stack(),
+            footer_text=spec.resolve_footer_text(),
+            locale=spec.resolve_locale())
+        data = path.read_bytes()
+    # Inline rather than an attachment: the panel shows it, it is not a
+    # download, and a preview that lands in the downloads folder every time a
+    # colour changes would be its own small hostility.
+    return Response(content=data, media_type="application/pdf",
+                    headers={"Content-Disposition": "inline; filename=preview.pdf",
+                             "Cache-Control": "no-store"})
 
 
 @app.get("/api/runs")

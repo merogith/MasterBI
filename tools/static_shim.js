@@ -135,6 +135,19 @@
     if (path.startsWith('/api/ingest/')) {
       return Promise.resolve(fail('Reading a spreadsheet needs pandas. ' + OFFLINE_NOTE));
     }
+
+    // The Design panel's page preview and its logo upload, for the same
+    // reason and with the same shape: one renders a PDF through fpdf2 and the
+    // other writes a file into the uploads directory, and a static host does
+    // neither. Named rather than left to the 404 below, which would put "No
+    // static stand-in for /api/design/preview/pages" in front of a visitor —
+    // a path, an internal noun, and nothing they can act on. The swatches and
+    // contrast ratios above it are pure arithmetic and keep working.
+    if (path.startsWith('/api/design/preview/pages')
+        || path === '/api/design/logo') {
+      return Promise.resolve(fail(
+        'Rendering a page of your report runs the PDF engine. ' + OFFLINE_NOTE));
+    }
     return Promise.resolve(fail(`No static stand-in for ${path}`, 404));
   }
 

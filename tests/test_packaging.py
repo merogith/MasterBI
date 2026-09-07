@@ -937,3 +937,32 @@ def test_the_move_formatter_agrees_across_the_two_languages() -> None:
     out = subprocess.run([node, "-e", script], capture_output=True, text=True,
                          check=True).stdout
     assert json.loads(out) == expected, (json.loads(out), expected)
+
+
+def test_the_demo_names_what_it_cannot_do_rather_than_404ing() -> None:
+    """A hosted-demo visitor should read a sentence, not a path.
+
+    The shim's fallback is `No static stand-in for /api/…` — correct as a
+    last resort and wrong as the thing a visitor sees, because it is a path,
+    an internal noun and nothing they can act on. Every endpoint the Studio
+    fires *on its own*, without the visitor pressing anything, therefore needs
+    a named case: those are the ones whose failure appears unprompted.
+
+    5.5's page preview is the current instance and the reason this exists —
+    it POSTs as soon as the Design panel opens, so on the demo it would have
+    put that path in a red box under the swatches. 1.2b had to go back and
+    fill the same hole for the Studio's four catalog endpoints.
+
+    Mutation: delete the `/api/design/` case from the shim.
+    """
+    shim = (ROOT / "tools" / "static_shim.js").read_text(encoding="utf-8")
+
+    for path in ("/api/design/preview/pages", "/api/design/logo"):
+        assert path in shim, (
+            f"the shim has no named answer for {path}, so the demo shows "
+            f"'No static stand-in for {path}' to a visitor")
+
+    # And the named answer has to be a sentence rather than a re-spelling of
+    # the fallback: the point is what it says, not that the string appears.
+    assert "runs the PDF engine" in shim, \
+        "the design stand-in does not say why it cannot answer"

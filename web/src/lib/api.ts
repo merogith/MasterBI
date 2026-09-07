@@ -545,6 +545,54 @@ export const previewDesign = (body: {
   method: 'POST', body: JSON.stringify(body),
 });
 
+export interface LogoUpload {
+  logo_path: string;
+  mime: string;
+  bytes: number;
+  data_uri: string;
+}
+
+/** Multipart for the same reason `profileUpload` is. Returns the bare name
+ *  `brand.logo_path` wants, so the caller writes the response straight into
+ *  the spec rather than asking the user to retype a path. */
+export async function uploadLogo(file: File): Promise<LogoUpload> {
+  const body = new FormData();
+  body.append('file', file);
+  const response = await fetch('/api/design/logo', { method: 'POST', body });
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      detail = (await response.json()).detail ?? detail;
+    } catch {
+      /* a non-JSON error body is still an error */
+    }
+    throw new ApiError(detail, response.status);
+  }
+  return await response.json();
+}
+
+/** The first two pages of the real report, as a blob URL the caller must
+ *  revoke. Not `api()`: the body is a PDF, not JSON. */
+export async function previewPages(
+  runId: string, design: unknown,
+): Promise<string> {
+  const response = await fetch('/api/design/preview/pages', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ run_id: runId, design }),
+  });
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      detail = (await response.json()).detail ?? detail;
+    } catch {
+      /* a non-JSON error body is still an error */
+    }
+    throw new ApiError(detail, response.status);
+  }
+  return URL.createObjectURL(await response.blob());
+}
+
 export interface AiEstimate {
   worst_case_tokens: number;
   worst_case_cost_usd: number;
