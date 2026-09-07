@@ -608,23 +608,70 @@ def test_the_shipped_palette_meets_its_own_thresholds() -> None:
     It has since been darkened by `ensure_readable` — the same correction a
     user would have got — so every slot can now be asserted, which is what
     makes this test worth having rather than a restatement of the status quo.
+
+    **And this test was itself the instance of the bug it describes.** It
+    asserted AA on `text_primary` and `text_secondary` and stopped — two of
+    the seven roles that carry text — so `muted` sat at 3.41:1 against the
+    page while the test named above it passed. Measured with axe against a
+    live server, that was 183 failing nodes across six screens, 125 on the
+    results screen alone, and `muted` is the most-used colour in the product:
+    62 of its 64 uses in `styles.css` set `color:`.
+
+    The dual-role tokens are checked through their `-text` twin rather than
+    directly, because the raw value is legitimately graphical — `--critical`
+    is a 3px severity rule on one selector and a chip's own text on another,
+    and holding the line to a text threshold would be this repo's recurring
+    trap in reverse.
     """
+    import re
+
     from kpi_maker.design.contrast import (
         AA_TEXT,
+        DUAL_ROLE,
         GRAPHICAL,
         MIN_DELTA_E,
         distinguishable,
         ratio,
+        text_variant,
     )
     from kpi_maker.viz.theme import MAX_CATEGORICAL_SERIES, TOKENS
 
     for mode, tokens in TOKENS.items():
         page, surface = tokens["page"], tokens["surface"]
 
-        assert ratio(tokens["text_primary"], page) >= AA_TEXT, (
-            f"{mode}: body text fails AA against the page")
-        assert ratio(tokens["text_secondary"], page) >= AA_TEXT, (
-            f"{mode}: secondary text fails AA against the page")
+        # Every role that carries text, against both grounds it is drawn on.
+        # A value that clears 4.5:1 on the page and not on a card is a defect
+        # that only shows on some screens.
+        for role in ("text_primary", "text_secondary", "muted"):
+            for ground, name in ((page, "page"), (surface, "surface")):
+                assert ratio(tokens[role], ground) >= AA_TEXT, (
+                    f"{mode}: {role} fails AA against the {name} "
+                    f"({ratio(tokens[role], ground):.2f}:1)")
+
+        for role in DUAL_ROLE:
+            safe = text_variant(tokens[role], page, surface)
+            for ground, name in ((page, "page"), (surface, "surface")):
+                assert ratio(safe, ground) >= AA_TEXT, (
+                    f"{mode}: the text variant of {role} fails AA against the "
+                    f"{name} ({ratio(safe, ground):.2f}:1)")
+
+        # The generated stylesheet has to carry those twins, or the derivation
+        # above is a fact nothing reads — the dead-field pattern in a palette.
+        css = (ROOT / "web" / "src" / "tokens.css").read_text(encoding="utf-8")
+        for role in DUAL_ROLE:
+            token = "accent" if role == "series_1" else role
+            assert f"--{token.replace('_', '-')}-text:" in css, (
+                f"tokens.css has no --{token}-text; run tools/gen_tokens.py")
+
+        # And the app has to *use* them where it sets text colour. A twin that
+        # exists and is never referenced is the same dead field one step later.
+        styles = (ROOT / "web" / "src" / "styles.css").read_text(encoding="utf-8")
+        for role in DUAL_ROLE:
+            token = "accent" if role == "series_1" else role
+            bare = re.findall(rf"(?<![-\w])color:\s*var\(--{token}\)", styles)
+            assert not bare, (
+                f"styles.css sets text in the graphical --{token} "
+                f"({len(bare)} time(s)); use --{token}-text")
 
         series = [tokens[f"series_{i}"] for i in range(1, MAX_CATEGORICAL_SERIES + 1)]
         for index, colour in enumerate(series, start=1):
@@ -966,3 +1013,43 @@ def test_the_demo_names_what_it_cannot_do_rather_than_404ing() -> None:
     # the fallback: the point is what it says, not that the string appears.
     assert "runs the PDF engine" in shim, \
         "the design stand-in does not say why it cannot answer"
+
+
+def test_reduced_motion_reaches_more_than_one_spinner() -> None:
+    """A user who asks the OS for less motion should get it from the app.
+
+    The block existed and named exactly one selector — `.state-spinner` — so
+    the setting was honoured by a loading ring and ignored by the survey's
+    fade-in on every step, the mode cards lifting under the cursor and the
+    progress bar sliding. A media query that covers one element reads, to
+    anyone grepping for it, as support that is present.
+
+    Found while making the axe sweep deterministic: it kept catching
+    `.question-help` mid-fade at 4.18:1, a colour that measures 7.53:1 once
+    the animation lands.
+
+    Asserted as the property rather than the exact declarations, so a rewrite
+    that keeps the guarantee passes: the block has to reach every element,
+    and it has to damp both animation and transition.
+
+    Mutation: shrink the block back to the spinner rule alone.
+    """
+    css = (ROOT / "web" / "src" / "styles.css").read_text(encoding="utf-8")
+
+    start = css.index("@media (prefers-reduced-motion: reduce)")
+    depth, end = 0, start
+    for index in range(css.index("{", start), len(css)):
+        if css[index] == "{":
+            depth += 1
+        elif css[index] == "}":
+            depth -= 1
+            if depth == 0:
+                end = index
+                break
+    block = css[start:end]
+
+    assert "*, *::before, *::after" in block, (
+        "the reduced-motion block names selectors one at a time; it has to "
+        "reach everything that moves")
+    for damped in ("animation-duration", "transition-duration"):
+        assert damped in block, f"reduced motion does not damp {damped}"

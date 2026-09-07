@@ -1154,3 +1154,95 @@ def test_the_design_panel_shows_the_artifact_not_only_the_palette(page):
     # The viewer's own toolbar and thumbnail rail are suppressed: they took
     # about 40% of the frame and captioned it with the blob's UUID.
     assert "toolbar=0" in data and "navpanes=0" in data, data[-60:]
+
+
+#: axe-core, injected into the page under test. A file rather than a CDN tag:
+#: the CI runner has no general egress, and a gate that depends on the network
+#: is a gate that goes quiet on a bad day.
+AXE_JS = ROOT / "web" / "node_modules" / "axe-core" / "axe.min.js"
+
+
+def _axe(page, where: str) -> None:
+    """Assert this screen has no axe violations, and name them if it does."""
+    page.add_script_tag(content=AXE_JS.read_text(encoding="utf-8"))
+    violations = page.evaluate("""async () => {
+        const r = await axe.run(document, {resultTypes: ['violations']});
+        return r.violations.map(v => ({
+            id: v.id, impact: v.impact, n: v.nodes.length,
+            // The reason, not just the selector: "insufficient contrast of
+            // 4.18 (#2a78d6 on #f9f9f7)" is actionable where a CSS path is a
+            // starting point for another half hour.
+            why: v.nodes.slice(0, 3).map(
+                n => n.target.join(' ') + ' -- ' +
+                     ((n.any[0] || n.all[0] || {}).message || '')),
+        }));
+    }""")
+    assert not violations, "\n".join(
+        [f"{where}: {len(violations)} axe rule(s) failing"]
+        + [f"  {v['impact']} {v['id']} x{v['n']}\n      "
+           + "\n      ".join(v["why"]) for v in violations])
+
+
+@pytest.mark.skipif(not AXE_JS.exists(),
+                    reason="axe-core is a devDependency; run `npm install` in web/")
+def test_no_screen_has_an_axe_violation(page):
+    """**The gate, and the reason it exists is what it found.**
+
+    7.4's brief in the plan was written before the Preact rewrite and is
+    stale — it says `grep focus-visible` returns 0 (8), `prefers-reduced-motion`
+    0 (2), and `role="tablist"` with no `role="tab"` (there is no tablist).
+    2.1, 3.5b and the port built most of that in.
+
+    What no one had run is a checker. One pass reported **183 colour-contrast
+    nodes across six screens, 125 on results alone**, because the AA text rule
+    had only ever been applied to the brand colour a *user* supplies and never
+    to the palette the product ships. Plus a heading that skipped a level and
+    an `<aside role="dialog">`, which is a role that element may not carry.
+
+    Asserted per screen rather than once, because a violation is a property of
+    a rendered page: the tokens are shared but which of them carries text is
+    not, and the results screen had two thirds of the failures.
+
+    Every screen a first run passes through, including the two that need a
+    finished run behind them. Mutation: revert any `--*-text` use in
+    `styles.css` to its graphical twin.
+    """
+    # Audited with reduced motion, which does two things at once: it is a
+    # rendering path a real user selects and it therefore deserves the sweep,
+    # and it makes the sweep deterministic. Without it axe caught
+    # `.question-help` mid-fade at 4.18:1 -- a colour that measures 7.53:1
+    # once the animation lands. An audit racing an animation reports the
+    # frame it happened to catch.
+    page.emulate_media(reduced_motion="reduce")
+
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.wait_for_selector("#res-scorecard")
+
+    # Swept with the tour still up, because that is the screen a first-time
+    # user actually gets. Dismissing first left the one overlay every new user
+    # sees out of the audit entirely -- and it was carrying `role="dialog"` on
+    # an `<aside>`, which that element may not have. Found by mutation: the
+    # fix was in place and this test passed without it.
+    page.wait_for_selector("#tour")
+    _axe(page, "results (first run, tour up)")
+
+    page.click("#tour-dismiss")
+    _axe(page, "results")
+
+    page.click("#res-adjust")
+    _visible(page, "studio")
+    page.click('#studio-rail [data-stage="design"]')
+    page.wait_for_timeout(300)
+    _axe(page, "studio")
+
+    # Path -> view id, taken from `web/src/lib/router.ts`. `/data` renders
+    # `view-builder`, not `view-data`, which is the sort of thing a guessed
+    # selector gets wrong and a timeout then reports as an accessibility
+    # failure.
+    base = page.url.split("/runs/")[0]
+    for path, view in (("/", "home"), ("/samples", "samples"),
+                       ("/survey", "survey"), ("/data", "builder")):
+        page.goto(base + path)
+        _visible(page, view)
+        _axe(page, path)

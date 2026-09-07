@@ -81,7 +81,7 @@ export function Tour({ steps, storageKey = SEEN_KEY }: {
     // clickable while the listener that dismisses it does not exist yet,
     // because Preact defers effects. Something a user can see must already
     // work.
-    <aside class="tour" id="tour" role="dialog" aria-label="Quick tour"
+    <div class="tour" id="tour" role="dialog" aria-label="Quick tour"
            aria-live="polite" tabIndex={-1} ref={(node) => node?.focus()}
            onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }}>
       <div class="tour-head">
@@ -105,7 +105,7 @@ export function Tour({ steps, storageKey = SEEN_KEY }: {
           </button>
         </div>
       </div>
-    </aside>
+    </div>
   );
 }
 

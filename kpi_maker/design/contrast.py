@@ -214,5 +214,52 @@ def distinguishable(colours, target: float = MIN_DELTA_E) -> Dict[str, object]:
     return {"ok": not failures, "failures": failures, "target": target}
 
 
+#: Palette roles that carry *text* somewhere as well as being drawn as a mark.
+#: A 2px severity rule and a 10.5px severity chip are the same colour doing two
+#: jobs with two different contrast requirements, and only the first was ever
+#: checked.
+DUAL_ROLE = ("series_1", "good", "warning", "critical", "serious")
+
+
+def composite(colour: str, over: str, alpha: float) -> str:
+    """A translucent wash flattened against what is behind it.
+
+    A wash is a background like any other once it is painted, and text drawn
+    on it has to clear the bar against *that*, not against the page it happens
+    to sit on. `--accent-soft` at 10% over the page composites to `#e4ecf4`,
+    which is darker than the page by enough to fail a colour that clears it —
+    which is exactly how the north-star row's link came back at 4.03:1 after
+    everything on the page around it had been fixed.
+    """
+    fg, bg = parse_hex(colour), parse_hex(over)
+    return to_hex(tuple(  # type: ignore[arg-type]
+        round(alpha * fg[i] + (1 - alpha) * bg[i]) for i in range(3)))
+
+
+def text_variant(colour: str, *backgrounds: str) -> str:
+    """The AA-legible version of `colour` against the worst of `backgrounds`.
+
+    **The rule this applies already existed and was only ever pointed at one
+    colour.** `derive_tokens` runs `ensure_readable(brand, page, AA_TEXT)` on
+    the hex a *user* supplies and on nothing else, so the fifteen the product
+    ships were never checked as text — `muted` does not appear in that module
+    at all. Measured with axe against a live server, that left 183 failing
+    nodes across six screens, 125 on the results screen alone.
+
+    Worst-of rather than one named background because a token is used on both
+    the page and a card, and a value that clears 4.5:1 on one and not the other
+    is a defect that only shows on some screens.
+
+    Graphical values are deliberately *not* run through this. A chart line
+    needs 3:1 under WCAG 1.4.11, and forcing it to a text threshold would be
+    this repo's recurring trap in reverse — a threshold borrowed for one
+    population applied to another, which is how the HHI floor, the top-ten
+    share and the cross-sector bands all went wrong.
+    """
+    worst = min(backgrounds, key=lambda bg: ratio(colour, bg))
+    fixed = ensure_readable(colour, worst, AA_TEXT)
+    return str(fixed["colour"])
+
+
 def _normalise(colour: str) -> str:
     return to_hex(parse_hex(colour))

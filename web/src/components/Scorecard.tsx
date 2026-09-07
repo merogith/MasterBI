@@ -434,7 +434,11 @@ export function Scorecard({ summary }: { summary: Summary }) {
   return (
     <section class="scorecard-surface" id="res-scorecard-surface">
       <div class="scorecard-bar">
-        <h3 class="section-title">The scorecard</h3>
+        {/* h2, not h3: this sits directly under the run's own h1, and a
+            skipped level is how a screen-reader user loses the outline.
+            3.5 moved the scorecard out of the disclosure panel and onto
+            the page without moving its level with it. */}
+        <h2 class="section-title">The scorecard</h2>
         <div class="scorecard-tools">
           <button class="ghost" type="button" id="sc-columns"
                   aria-expanded={chooser} onClick={() => setChooser(!chooser)}>

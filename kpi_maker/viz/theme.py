@@ -36,7 +36,19 @@ TOKENS: Dict[str, Dict[str, str]] = {
         "page": "#f9f9f7",
         "text_primary": "#0b0b0b",
         "text_secondary": "#52514e",
-        "muted": "#898781",
+        # Darkened from #898781, which sat at 3.41:1 against the page and
+        # 3.50:1 against the surface — under the 4.5:1 AA floor for text, and
+        # this is a *text* role: 62 of its 64 uses in the app set `color:`.
+        # It is the most-used token in the product and had never been checked,
+        # because `derive_tokens` runs the AA rule on a user's brand colour
+        # and on nothing the product ships.
+        #
+        # Taken to #6b6a64 rather than the #73726c the page alone asks for:
+        # the app washes highlighted rows in `--accent-soft`, which flattens
+        # to #e4ecf4, and #73726c came back at 4.04:1 there after everything
+        # around it was clean. A wash is a background once it is painted.
+        # 5.15 / 5.28 / 4.55 against page, surface and wash.
+        "muted": "#6b6a64",
         "grid": "#e1e0d9",
         "axis": "#c3c2b7",
         "border": "rgba(11,11,11,0.10)",

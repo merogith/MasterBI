@@ -25,7 +25,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from kpi_maker.design.contrast import parse_hex  # noqa: E402
+from kpi_maker.design.contrast import (  # noqa: E402
+    DUAL_ROLE,
+    composite,
+    parse_hex,
+    text_variant,
+)
 from kpi_maker.viz.theme import FONT_STACK, TOKENS  # noqa: E402
 
 TARGET = ROOT / "web" / "src" / "tokens.css"
@@ -61,11 +66,39 @@ def _block(selector: str, mode: str) -> str:
     for name, value in tokens.items():
         lines.append(f"  --{name.replace('_', '-')}: {value};")
 
-    # Two derived values, so the app does not restate a colour the engine owns.
+    # Derived values, so the app does not restate a colour the engine owns.
     # `--accent` is the first series slot: the app's links and focus rings are
     # the same blue as the first line on every chart, deliberately.
     lines.append(f"  --accent: {tokens['series_1']};")
     lines.append(f"  --accent-soft: {_soft(tokens['series_1'], SOFT_ALPHA[mode])};")
+
+    # **And that sentence above is where 7.4a's defect was written down.** A
+    # series slot is validated at the 3:1 *graphical* floor, which is the right
+    # rule for a 2px line and the wrong one for 13px link text — `--accent`
+    # measured 4.19:1 as text, under the 4.5:1 AA floor, on 18 declarations.
+    # The same is true of every status colour: `--critical` is a 3px severity
+    # rule on one selector and a chip's own text on another.
+    #
+    # So each dual-role token gets a `-text` twin, derived by the same
+    # `ensure_readable` call a user's brand colour goes through. The graphical
+    # value is untouched, which is why no exhibit moves: a chart line that
+    # cleared 3:1 still does, and only the text reads differently.
+    #
+    # The grounds include the accent wash, flattened. `--accent-soft` is a
+    # background wherever a row is highlighted or an option selected, and at
+    # 10% over the page it composites to #e4ecf4 — dark enough that a colour
+    # clearing 4.5:1 on the page comes back at 4.03:1 on the north-star row.
+    # Found by the axe gate after every other node on the screen was clean,
+    # which is the argument for having the gate rather than a list.
+    grounds = (tokens["page"], tokens["surface"],
+               composite(tokens["series_1"], tokens["page"],
+                         float(SOFT_ALPHA[mode])),
+               composite(tokens["series_1"], tokens["surface"],
+                         float(SOFT_ALPHA[mode])))
+    for role in DUAL_ROLE:
+        safe = text_variant(tokens[role], *grounds)
+        name = "accent" if role == "series_1" else role
+        lines.append(f"  --{name.replace('_', '-')}-text: {safe};")
     lines.append(f"  --font: {FONT_STACK};")
     lines.append("}")
     return "\n".join(lines)
