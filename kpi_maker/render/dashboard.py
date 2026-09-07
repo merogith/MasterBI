@@ -17,13 +17,14 @@ from typing import Dict, List, Optional, Sequence
 
 import pandas as pd
 
+from ..design.tokens import css_block
 from ..fmt import fmt_move, fmt_value, is_missing
 from ..insight.detectors import Finding
 from ..kpi.schema import KPISet, Perspective, Tier
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
 from ..viz.charts import ChartSpec, build_all
-from ..viz.theme import FONT_STACK, STATUS_GLYPH, STATUS_LABEL, TOKENS
+from ..viz.theme import STATUS_GLYPH, STATUS_LABEL, TOKENS
 from .sections import finding_for_exhibit
 
 # Every `tab=` value any registered chart declares needs an entry. A missing
@@ -531,14 +532,37 @@ def _chart_html(specs: List[ChartSpec], mode: str,
             <div class="plot">{inner}</div>
             {note}
           </figure>""")
+    # `role="tabpanel"` and a per-mode id, because each panel exists twice — the
+    # light and dark theme sets are two renders of the same charts, not a CSS
+    # filter over one. Only the visible copy is what the tab controls, so the
+    # id carries the mode and `showTab` points `aria-controls` at whichever set
+    # is on. `tabindex="0"` makes the panel itself reachable from the strip: a
+    # panel of Plotly figures has nothing else focusable in it, so without it
+    # Tab from the selected tab jumps straight past everything it revealed.
     return "".join(
-        f'<div class="tab-panel" data-tab="{tab}">{"".join(items)}</div>'
+        f'<div class="tab-panel" role="tabpanel" id="panel-{mode}-{tab}" '
+        f'tabindex="0" data-tab="{tab}" aria-labelledby="tab-{tab}">'
+        f'{"".join(items)}</div>'
         for tab, items in blocks.items()
     )
 
 
-def _css_vars(tokens: Dict[str, str]) -> str:
-    return "\n".join(f"    --{k.replace('_', '-')}: {v};" for k, v in tokens.items())
+def _css_vars(tokens: Dict[str, str], mode: str) -> str:
+    """The palette as custom properties, including the AA-legible `-text` twins.
+
+    This used to emit `TOKENS` verbatim. 7.4a derived a text-safe twin for every
+    dual-role token — a colour validated at the 3:1 graphical floor is right for
+    a 2px chart line and wrong for a 10.5px chip — but derived it inside
+    `tools/gen_tokens.py`, which writes the *app's* stylesheet and nothing else.
+    So the app was fixed and the artifact a board is emailed was not: measured
+    with axe on a rendered dashboard, light `good` 3.18:1 and `serious` 2.50:1,
+    dark `critical` 4.05:1.
+
+    One derivation now, in `design/tokens.py`, and it runs per render rather
+    than per build because a branded run replaces `series_1` with the user's
+    own colour.
+    """
+    return css_block(tokens, mode, indent="    ")
 
 
 def render_dashboard(profile: CompanyProfile, kpi_set: KPISet,
@@ -573,8 +597,24 @@ def render_dashboard(profile: CompanyProfile, kpi_set: KPISet,
         if spec.tab not in tabs_present:
             tabs_present.append(spec.tab)
 
+    # A real tab strip. The bar has carried `role="tablist"` since it was
+    # written and its children were plain buttons, which axe reports as a
+    # *critical* `aria-required-children` — a container claiming a structure it
+    # does not have is worse than one claiming nothing, because a screen reader
+    # announces a tab list and then finds no tabs in it.
+    #
+    # `aria-selected` carries the state the `.active` class only paints, and the
+    # roving `tabindex` puts the whole strip on one stop: five tab stops to walk
+    # past a single choice is why keyboard users stop using a keyboard.
+    #
+    # `aria-controls` is set by the script rather than here, because each panel
+    # exists **twice** — once per theme set — and only the visible copy is the
+    # one this tab controls. See `showTab`.
     tab_buttons = "".join(
-        f'<button class="tab-btn{" active" if i == 0 else ""}" data-tab="{t}">'
+        f'<button class="tab-btn{" active" if i == 0 else ""}" role="tab" '
+        f'id="tab-{t}" type="button" data-tab="{t}" '
+        f'aria-selected="{"true" if i == 0 else "false"}" '
+        f'tabindex="{0 if i == 0 else -1}">'
         f'{html.escape(TAB_LABELS.get(t, t.title()))}</button>'
         for i, t in enumerate(tabs_present)
     )
@@ -604,8 +644,8 @@ def render_dashboard(profile: CompanyProfile, kpi_set: KPISet,
         "font-size: 14px; line-height: 1.65; }"
         "\n.narrative p { margin: 0 0 10px; }"
         "\n.narrative p:last-child { margin-bottom: 0; }")
-    light_css = _css_vars(tokens_light or TOKENS["light"])
-    dark_css = _css_vars(tokens_dark or TOKENS["dark"])
+    light_css = _css_vars(tokens_light or TOKENS["light"], "light")
+    dark_css = _css_vars(tokens_dark or TOKENS["dark"], "dark")
 
     return f"""<!doctype html>
 <html lang="en" data-theme="light">
@@ -617,7 +657,6 @@ def render_dashboard(profile: CompanyProfile, kpi_set: KPISet,
 <style>
 :root {{
 {light_css}
-  --font: {FONT_STACK};
 }}
 :root[data-theme="dark"] {{
 {dark_css}
@@ -674,7 +713,7 @@ header.top h1 {{ margin: 0; font-size: 22px; letter-spacing: -0.01em; }}
 .spark {{ opacity: 0.85; }}
 .delta {{ font-size: 12px; font-variant-numeric: tabular-nums; }}
 .delta-good {{ color: var(--delta-up); }}
-.delta-bad {{ color: var(--critical); }}
+.delta-bad {{ color: var(--critical-text); }}
 /* A `target_band` metric's year-on-year move: shown, not judged. Which way it
    went is a fact and stays on the tile; whether that is good depends on which
    side of the band it started, which a signed change cannot say. */
@@ -686,16 +725,16 @@ header.top h1 {{ margin: 0; font-size: 22px; letter-spacing: -0.01em; }}
    -940 sit at different widths. */
 .variance {{ font-variant-numeric: tabular-nums; }}
 .variance-good {{ color: var(--delta-up); font-variant-numeric: tabular-nums; }}
-.variance-bad {{ color: var(--critical); font-variant-numeric: tabular-nums; }}
+.variance-bad {{ color: var(--critical-text); font-variant-numeric: tabular-nums; }}
 .delta-period {{ color: var(--muted); }}
 
 .chip {{ display: inline-flex; align-items: center; gap: 4px; font-size: 11px;
   padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border);
   color: var(--text-secondary); white-space: nowrap; }}
 .chip-glyph {{ font-size: 9px; line-height: 1; }}
-.chip-green, .chip-good {{ color: var(--good); }}
-.chip-amber, .chip-warning {{ color: var(--serious); }}
-.chip-red, .chip-critical {{ color: var(--critical); }}
+.chip-green, .chip-good {{ color: var(--good-text); }}
+.chip-amber, .chip-warning {{ color: var(--serious-text); }}
+.chip-red, .chip-critical {{ color: var(--critical-text); }}
 .chip-unknown, .chip-muted {{ color: var(--muted); }}
 
 .panel {{ background: var(--surface); border: 1px solid var(--border);
@@ -755,12 +794,68 @@ h3 {{ font-size: 14px; margin: 22px 0 8px; }}
 .kpi-def p {{ margin: 7px 0; color: var(--text-secondary); font-size: 12.5px; max-width: 80ch; }}
 .formula code {{ background: var(--page); padding: 2px 6px; border-radius: 5px;
   font-size: 12px; }}
-.pitfall {{ color: var(--serious) !important; }}
+.pitfall {{ color: var(--serious-text) !important; }}
 code {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }}
 
 .theme-set {{ display: none; }}
 .theme-set.active {{ display: block; }}
-@media (max-width: 900px) {{ .tab-panel.active {{ grid-template-columns: 1fr; }} }}{logo_css}{narrative_css}
+@media (max-width: 900px) {{ .tab-panel.active {{ grid-template-columns: 1fr; }} }}
+
+/* ---- The three queries this file had none of --------------------------- */
+
+/* **Print.** This is the artifact that gets emailed to a board, and somebody
+   prints it. Without a print rule they got the screen: a dark-mode page laid
+   out for 1280px, one tab's exhibits and four tab buttons that do nothing on
+   paper, and cards split across page breaks.
+   Every panel is shown, because a tab is an interaction and paper has none —
+   printing one fifth of the exhibits and hiding the rest behind controls the
+   reader cannot press is the worst of the options. */
+@media print {{
+  :root {{ color-scheme: light; }}
+  /* Paper is white whatever the reader had on screen. Forcing the light
+     palette rather than trusting `data-theme`, which the toggle may have set
+     to dark and localStorage may have remembered from a previous visit. */
+  html[data-theme="dark"] .theme-set[data-mode="dark"] {{ display: none; }}
+  html[data-theme="dark"] .theme-set[data-mode="light"] {{ display: block; }}
+  body {{ background: #ffffff; }}
+  .theme-toggle, .tabs {{ display: none; }}
+  .tab-panel {{ display: grid !important; }}
+  .wrap {{ max-width: none; padding: 0; }}
+  .card, .panel, .tile, .finding, .kpi-def {{
+    break-inside: avoid; page-break-inside: avoid; }}
+  h1, h2, h3 {{ break-after: avoid; page-break-after: avoid; }}
+  /* The triangle is an affordance for a click that paper cannot receive. The
+     *opening* of each disclosure is done in script on `beforeprint`, because
+     CSS cannot open a `<details>` — the closed content is hidden by the user
+     agent, not by a rule this sheet can override. A collapsed record sheet
+     would otherwise print as a heading with its definition silently gone. */
+  details > summary {{ list-style: none; }}
+  details > summary::-webkit-details-marker {{ display: none; }}
+}}
+
+/* **Reduced motion.** Damped rather than `none`, so any animation-end handler
+   still fires — the same choice 7.4a made in the app's stylesheet. */
+@media (prefers-reduced-motion: reduce) {{
+  *, *::before, *::after {{
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }}
+}}
+
+/* **More contrast.** The palette already clears AA; this is for a reader who
+   has asked the OS for more than that. Borders go to the text colour and the
+   secondary/muted greys collapse onto the primary — the greys are what a
+   low-vision reader loses first, and they carry the record sheets. */
+@media (prefers-contrast: more) {{
+  :root {{
+    --border: var(--text-primary);
+    --muted: var(--text-primary);
+    --text-secondary: var(--text-primary);
+  }}
+  .chip, .basis-badge {{ font-weight: 650; }}
+}}{logo_css}{narrative_css}
 </style>
 </head>
 <body>
@@ -786,7 +881,7 @@ code {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 
 
   {_findings_section(findings, (narrative or {}).get("exec_summary"))}
 
-  <div class="tabs" role="tablist">{tab_buttons}</div>
+  <div class="tabs" role="tablist" aria-label="Exhibit groups">{tab_buttons}</div>
   <div class="theme-set active" data-mode="light">{_chart_html(specs_light, "light", findings)}</div>
   <div class="theme-set" data-mode="dark">{_chart_html(specs_dark, "dark", findings)}</div>
 
@@ -803,8 +898,17 @@ code {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 
 
   function showTab(tab) {{
     activeTab = tab;
+    // The visible theme set, so `aria-controls` names the panel that is really
+    // on screen. Each panel exists twice and pointing at the hidden copy would
+    // be a reference a screen reader cannot follow.
+    var mode = root.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
     document.querySelectorAll('.tab-btn').forEach(function (b) {{
-      b.classList.toggle('active', b.dataset.tab === tab);
+      var on = b.dataset.tab === tab;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+      // Roving tabindex: one stop for the whole strip, arrow keys inside it.
+      b.tabIndex = on ? 0 : -1;
+      b.setAttribute('aria-controls', 'panel-' + mode + '-' + b.dataset.tab);
     }});
     document.querySelectorAll('.theme-set').forEach(function (set) {{
       var on = set.classList.contains('active');
@@ -820,8 +924,26 @@ code {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 
     }});
   }}
 
-  document.querySelectorAll('.tab-btn').forEach(function (b) {{
+  var tabButtons = Array.prototype.slice.call(
+      document.querySelectorAll('.tab-btn'));
+
+  tabButtons.forEach(function (b, i) {{
     b.addEventListener('click', function () {{ showTab(b.dataset.tab); }});
+    // Arrow keys along the strip, per the ARIA authoring practices, wrapping at
+    // both ends because a tab strip is a ring and stopping dead at the last
+    // item reads as a broken key. Home and End included: with five groups,
+    // walking one at a time is the reason people stop using the keyboard.
+    b.addEventListener('keydown', function (event) {{
+      var to = null;
+      if (event.key === 'ArrowRight') to = (i + 1) % tabButtons.length;
+      else if (event.key === 'ArrowLeft') to = (i - 1 + tabButtons.length) % tabButtons.length;
+      else if (event.key === 'Home') to = 0;
+      else if (event.key === 'End') to = tabButtons.length - 1;
+      if (to === null) return;
+      event.preventDefault();
+      showTab(tabButtons[to].dataset.tab);
+      tabButtons[to].focus();
+    }});
   }});
 
   function setTheme(mode) {{
@@ -836,6 +958,23 @@ code {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 
 
   toggle.addEventListener('click', function () {{
     setTheme(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+  }});
+
+  // Open every disclosure for printing, and put them back afterwards. CSS
+  // cannot do this — a closed `<details>` hides its content in the user agent
+  // sheet — and a record sheet that prints as a heading with its definition
+  // missing is the appendix silently disappearing from a board pack.
+  window.addEventListener('beforeprint', function () {{
+    document.querySelectorAll('details:not([open])').forEach(function (d) {{
+      d.dataset.reopen = '1';
+      d.open = true;
+    }});
+  }});
+  window.addEventListener('afterprint', function () {{
+    document.querySelectorAll('details[data-reopen]').forEach(function (d) {{
+      d.open = false;
+      delete d.dataset.reopen;
+    }});
   }});
 
   var saved = null;

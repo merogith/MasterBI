@@ -1115,3 +1115,51 @@ def test_reduced_motion_reaches_more_than_one_spinner() -> None:
         "reach everything that moves")
     for damped in ("animation-duration", "transition-duration"):
         assert damped in block, f"reduced motion does not damp {damped}"
+
+
+def test_the_dashboard_defines_every_variable_it_paints_with() -> None:
+    """A `var(--x)` nothing defines is silent, and that is what makes it a bug.
+
+    Found by a mutation that came back green. 7.4c moved the `-text` twins into
+    `design/tokens.py` so the artifact gets them too; the mutation reintroduced
+    the old derivation — tokens emitted verbatim, no twins — and the axe gate
+    stayed clean. Because with `--good-text` undefined, `color: var(--good-text)`
+    is an invalid declaration: the chip falls back to the inherited colour,
+    which is `--text-secondary` and comfortably readable. **The RAG colour
+    disappears from every status chip on the dashboard and no contrast checker
+    can object**, since what is left is a perfectly legible grey.
+
+    So the sweep is necessary and not sufficient, again — the same shape as the
+    token check in `test_dashboard_layout.py`. This is the cheap static half:
+    every custom property the dashboard's CSS reads must be one the renderer
+    emits or the file declares itself. Nothing was wrong when it was written;
+    it is the guard the mutation proved was missing.
+
+    **Asked of `_css_vars`, not of `design/tokens.css_variables`.** The first
+    version asked the derivation what it defines, and the same mutation stayed
+    green a second time: the renderer had stopped calling the derivation and
+    the test was still interviewing the derivation. What matters is what the
+    file emits, so the private function that emits it is the right seam even
+    though it is private.
+    """
+    import re
+
+    from kpi_maker.render.dashboard import _css_vars
+    from kpi_maker.viz.theme import TOKENS
+
+    source = (ROOT / "kpi_maker" / "render" / "dashboard.py").read_text(
+        encoding="utf-8")
+    used = set(re.findall(r"var\(--([a-z0-9-]+)\)", source))
+    assert used, "no `var(--…)` references found — did the parse break?"
+
+    for mode in ("light", "dark"):
+        defined = set(re.findall(r"--([a-z0-9-]+):",
+                                 _css_vars(TOKENS[mode], mode)))
+        # Anything the template declares in its own `:root`, on top of the
+        # derived set — chrome-only values the engine has no opinion about.
+        defined |= set(re.findall(r"^\s*--([a-z0-9-]+):", source, re.M))
+        missing = sorted(used - defined)
+        assert not missing, (
+            f"the dashboard paints with custom properties nothing defines in "
+            f"{mode} mode, so those declarations are dropped silently: "
+            + ", ".join(f"--{name}" for name in missing))
