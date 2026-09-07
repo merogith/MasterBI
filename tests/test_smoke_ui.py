@@ -1183,8 +1183,6 @@ def _axe(page, where: str) -> None:
            + "\n      ".join(v["why"]) for v in violations])
 
 
-@pytest.mark.skipif(not AXE_JS.exists(),
-                    reason="axe-core is a devDependency; run `npm install` in web/")
 def test_no_screen_has_an_axe_violation(page):
     """**The gate, and the reason it exists is what it found.**
 
@@ -1214,6 +1212,20 @@ def test_no_screen_has_an_axe_violation(page):
     # once the animation lands. An audit racing an animation reports the
     # frame it happened to catch.
     page.emulate_media(reduced_motion="reduce")
+
+    # **Not a `skipif`.** The obvious spelling was to skip when axe-core is
+    # missing, and that makes the gate able to disappear without saying so:
+    # `npm ci` stops installing devDependencies, the sweep quietly stops
+    # running, and the next contrast regression ships green. A gate that can
+    # silently skip is not a gate. The suite already skips as a whole when the
+    # bundle is absent -- the honest condition, since the Python tests must not
+    # require Node -- and anyone who has a bundle built it with `npm ci`, which
+    # installs devDependencies. So reaching here without axe is a broken
+    # install, not a valid configuration.
+    assert AXE_JS.exists(), (
+        f"{AXE_JS.relative_to(ROOT)} is missing while a built bundle is "
+        f"present, so the accessibility gate would not have run. "
+        f"Run `npm --prefix web ci`.")
 
     _start_first_sample(page)
     page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
