@@ -175,7 +175,21 @@ jobs:
         # Skipped rather than failed anywhere playwright or the bundle is
         # absent, which is what keeps the three-OS `test` matrix from needing
         # either a browser or Node.
-        run: python -m pytest tests/test_smoke_ui.py -q -p no:cacheprovider
+        # **Every browser module, not just the smoke walk.** The three-OS `test`
+        # matrix installs no playwright, so any module that `importorskip`s it
+        # is skipped there — which means a browser module runs in CI only if a
+        # job names it. `test_dashboard_layout.py` was named by nothing and had
+        # therefore never run in CI at all, including the four accessibility
+        # gates 7.4c added to it: the run was green because 49 tests silently
+        # did not execute (696 in CI against 745 locally).
+        #
+        # That is 7.4a's own defect one level up — a gate that can disappear
+        # without saying so — with the `skipif` moved from a decorator into the
+        # job list. `test_packaging.py` now asserts this list covers every such
+        # module, so the next one cannot fall through the same hole.
+        run: |
+          python -m pytest tests/test_smoke_ui.py tests/test_dashboard_layout.py \
+            -q -p no:cacheprovider
 
   image:
     # The deploy path, built rather than assumed. `render.yaml` points at this

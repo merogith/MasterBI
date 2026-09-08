@@ -73,6 +73,8 @@ def test_a_wrapped_tile_label_does_not_drag_its_number_out_of_line(tmp_path):
         browser = pw.chromium.launch(
             **({"executable_path": executable} if executable else {}))
         page = browser.new_page(viewport={"width": 1500, "height": 900})
+        # The consultancy, not the shared retailer fixture: this test is about
+        # the `project` pack's longer tile labels, which is why 4.3b found it.
         page.goto((out / "dashboard.html").as_uri())
         page.wait_for_selector(".tile-value")
         tops = page.eval_on_selector_all(
@@ -91,6 +93,24 @@ def test_a_wrapped_tile_label_does_not_drag_its_number_out_of_line(tmp_path):
 # --------------------------------------------------------------------------
 # 7.4c — the artifact's own accessibility
 # --------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def retail_dashboard(tmp_path_factory):
+    """One rendered dashboard for every check that reads one.
+
+    Three tests here render `kestrel_retail`, and a full pipeline run is about
+    twenty seconds — sixty seconds of doing the same thing to get the same
+    bytes. Module-scoped because none of them writes to the file, and because
+    this module is about to start running in CI, where three redundant renders
+    is three redundant minutes on a job with a fifteen-minute cap.
+    """
+    from kpi_maker.cli import load_profile, run_pipeline
+
+    out = tmp_path_factory.mktemp("dash") / "run"
+    run_pipeline(load_profile(ROOT / "samples" / "kestrel_retail.json"),
+                 out, quiet=True)
+    return out / "dashboard.html"
+
 
 AXE_JS = ROOT / "web" / "node_modules" / "axe-core" / "axe.min.js"
 
@@ -141,7 +161,7 @@ def _axe(page, where: str) -> None:
         f"in {where}:\n  " + "\n  ".join(problems[:12]))
 
 
-def test_the_dashboard_a_board_is_emailed_has_no_axe_violation(tmp_path):
+def test_the_dashboard_a_board_is_emailed_has_no_axe_violation(retail_dashboard):
     """The one artifact with no gate on it, and it is the one that gets sent.
 
     7.4a put the app under an axe sweep and fixed 183 nodes. It did not reach
@@ -163,15 +183,9 @@ def test_the_dashboard_a_board_is_emailed_has_no_axe_violation(tmp_path):
     those tests establish an asyncio loop in the same thread. This one needs no
     server — it renders a dashboard and opens the file.
     """
-    from kpi_maker.cli import load_profile, run_pipeline
-
     assert AXE_JS.exists(), (
         f"{AXE_JS.relative_to(ROOT)} is missing, so the artifact's "
         f"accessibility gate would not have run. Run `npm --prefix web ci`.")
-
-    out = tmp_path / "run"
-    run_pipeline(load_profile(ROOT / "samples" / "kestrel_retail.json"),
-                 out, quiet=True)
 
     executable = _chromium_executable()
     with sync_playwright() as pw:
@@ -182,7 +196,7 @@ def test_the_dashboard_a_board_is_emailed_has_no_axe_violation(tmp_path):
         # real user's rendering path, and it stops the audit racing a fade and
         # reporting the frame it happened to catch.
         page.emulate_media(reduced_motion="reduce")
-        page.goto((out / "dashboard.html").as_uri())
+        page.goto(retail_dashboard.as_uri())
         page.wait_for_selector(".tab-btn")
         _axe(page, "light mode")
 
@@ -192,7 +206,7 @@ def test_the_dashboard_a_board_is_emailed_has_no_axe_violation(tmp_path):
         browser.close()
 
 
-def test_every_colour_the_dashboard_paints_as_text_clears_aa(tmp_path):
+def test_every_colour_the_dashboard_paints_as_text_clears_aa():
     """The half a rendered sweep cannot see, and the gap is measurable.
 
     axe grades the elements one company's dashboard happened to draw, so a
@@ -255,7 +269,7 @@ def test_every_colour_the_dashboard_paints_as_text_clears_aa(tmp_path):
         + "\n  ".join(failures))
 
 
-def test_the_dashboard_prints_and_respects_the_reader_s_settings(tmp_path):
+def test_the_dashboard_prints_and_respects_the_reader_s_settings(retail_dashboard):
     """Three media queries, checked by emulating them rather than by grepping.
 
     `render/dashboard.py` had **zero** `@media print`, `prefers-reduced-motion`
@@ -276,18 +290,12 @@ def test_the_dashboard_prints_and_respects_the_reader_s_settings(tmp_path):
     with no observable geometry in a headless browser, so it is left to the
     stylesheet rather than asserted through it.
     """
-    from kpi_maker.cli import load_profile, run_pipeline
-
-    out = tmp_path / "run"
-    run_pipeline(load_profile(ROOT / "samples" / "kestrel_retail.json"),
-                 out, quiet=True)
-
     executable = _chromium_executable()
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
             **({"executable_path": executable} if executable else {}))
         page = browser.new_page(viewport={"width": 1280, "height": 900})
-        page.goto((out / "dashboard.html").as_uri())
+        page.goto(retail_dashboard.as_uri())
         page.wait_for_selector(".tab-btn")
 
         on_screen = page.eval_on_selector_all(
@@ -323,7 +331,7 @@ def test_the_dashboard_prints_and_respects_the_reader_s_settings(tmp_path):
         browser.close()
 
 
-def test_the_record_sheets_are_open_when_the_dashboard_prints(tmp_path):
+def test_the_record_sheets_are_open_when_the_dashboard_prints(retail_dashboard):
     """The appendix must not print as twenty headings with nothing under them.
 
     Every KPI definition on the dashboard is a collapsed `<details>`, which is
@@ -344,18 +352,12 @@ def test_the_record_sheets_are_open_when_the_dashboard_prints(tmp_path):
     test that could not fail — and, read the other way, the 14-page PDF this
     item produced while checking its own work understates what a reader gets.
     """
-    from kpi_maker.cli import load_profile, run_pipeline
-
-    out = tmp_path / "run"
-    run_pipeline(load_profile(ROOT / "samples" / "kestrel_retail.json"),
-                 out, quiet=True)
-
     executable = _chromium_executable()
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
             **({"executable_path": executable} if executable else {}))
         page = browser.new_page()
-        page.goto((out / "dashboard.html").as_uri())
+        page.goto(retail_dashboard.as_uri())
         page.wait_for_selector(".kpi-def")
 
         total = page.evaluate("() => document.querySelectorAll('details').length")

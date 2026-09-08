@@ -1163,3 +1163,76 @@ def test_the_dashboard_defines_every_variable_it_paints_with() -> None:
             f"the dashboard paints with custom properties nothing defines in "
             f"{mode} mode, so those declarations are dropped silently: "
             + ", ".join(f"--{name}" for name in missing))
+
+
+def test_every_browser_test_module_runs_somewhere_in_ci() -> None:
+    """A test file no workflow names does not run, and nothing says so.
+
+    The three-OS `test` matrix installs no playwright, so every module guarded
+    by `pytest.importorskip("playwright.sync_api")` is skipped there. A browser
+    module therefore runs in CI **only if some job names it on a command line**
+    — and `tests/test_dashboard_layout.py` was named by nothing. It had never
+    run in CI: not 4.3b's tile-baseline check, and not the four accessibility
+    gates 7.4c added to it. The run was green because **49 tests silently did
+    not execute** — 696 in CI against 745 locally, a difference nobody would
+    notice without subtracting.
+
+    This is 7.4a's own defect one level up. That item removed a `skipif` on the
+    grounds that a gate which can silently skip is not a gate; the same hole
+    was sitting in the job list the whole time, in a shape a decorator search
+    could not find.
+
+    Asserted as the property rather than as a list of the files that exist
+    today: any module that reaches for a browser has to be named by a workflow.
+
+    **And named on a command line, not anywhere in the file.** The first
+    version searched the raw workflow text and passed under its own mutation —
+    because the comment explaining *why* the file must be listed contains the
+    filename. A test that a comment can satisfy is checking prose. Comments are
+    stripped and continuations joined, so only what actually runs counts.
+    """
+    import ast
+
+    def asks_for_a_browser(source: str) -> bool:
+        """A real `pytest.importorskip("playwright…")` call, not the words.
+
+        Parsed rather than grepped because the first version searched for the
+        two strings and matched **this file**, whose docstring above quotes the
+        very call it is looking for. A detector that its own explanation
+        satisfies is checking prose — the same failure as searching the
+        workflow text, one paragraph later.
+        """
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Attribute)
+                    and func.attr == "importorskip"):
+                continue
+            first = node.args[0] if node.args else None
+            if isinstance(first, ast.Constant) and \
+                    str(first.value).startswith("playwright"):
+                return True
+        return False
+
+    guarded = sorted(
+        path.name for path in (ROOT / "tests").glob("test_*.py")
+        if asks_for_a_browser(path.read_text(encoding="utf-8")))
+    assert guarded, "no browser test modules found — did the guard change shape?"
+
+    commands = []
+    for path in (ROOT / ".github" / "workflows").glob("*.yml"):
+        stripped = "\n".join(
+            line.split("#", 1)[0] for line in path.read_text(
+                encoding="utf-8").splitlines())
+        # A shell continuation is one command wearing two lines.
+        for line in stripped.replace("\\\n", " ").splitlines():
+            if "pytest" in line:
+                commands.append(line)
+    assert commands, "no pytest invocation found in any workflow"
+    invoked = "\n".join(commands)
+
+    orphans = [name for name in guarded if name not in invoked]
+    assert not orphans, (
+        "these browser test modules are run by no workflow command, so they "
+        "are skipped in the matrix and run nowhere else: " + ", ".join(orphans))
