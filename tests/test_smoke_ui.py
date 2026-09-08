@@ -1461,3 +1461,133 @@ def test_a_toggle_s_hint_is_a_second_line_not_a_run_on(page):
     assert abs(box["x"] - label["x"]) < 2, \
         (f"the hint starts {box['x'] - label['x']:.0f}px in from its block, so "
          f"it is running on from the label rather than beginning a line")
+
+
+# --------------------------------------------------------------------------
+# 7.4d — printing the app, and the reader's own settings
+# --------------------------------------------------------------------------
+
+def test_printing_the_results_screen_drops_what_paper_cannot_offer(page):
+    """Measured on the real screen before any rule was written.
+
+    `web/src/styles.css` had **no `@media print` at all**, so Ctrl+P on the
+    results screen gave you the app: the sticky topbar with Home / Recent runs
+    / Dark, then "Adjust in Studio", "Open dashboard", "Columns (6)" and
+    "Export CSV" — six controls a reader holding paper cannot press — over the
+    off-white `--page` rather than white.
+
+    The scorecard is the part people print, since 3.5 made it the surface
+    carrying every metric's definition, so it stays and the chrome goes.
+
+    Emulated rather than grepped for the at-rule: a `@media print` block whose
+    selectors match nothing would pass a source check and change nothing on
+    paper. `.sc-tools` was exactly that on the first attempt — the wrapper is
+    `.scorecard-tools`, and only printing the page showed the two buttons
+    still there.
+    """
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#tour-dismiss")
+    page.wait_for_selector("#res-scorecard")
+
+    on_screen = page.eval_on_selector(
+        ".topbar", "e => getComputedStyle(e).display")
+    assert on_screen != "none", "the topbar is hidden on screen, so this proves nothing"
+
+    page.emulate_media(media="print")
+    for selector, what in ((".topbar", "the app's top bar"),
+                           (".res-actions", "the run's action buttons"),
+                           (".scorecard-tools", "the column and export controls")):
+        assert page.eval_on_selector(
+            selector, "e => getComputedStyle(e).display") == "none", \
+            f"{what} ({selector}) is printed, and paper cannot offer it"
+
+    assert page.evaluate(
+        "() => getComputedStyle(document.body).backgroundColor") \
+        == "rgb(255, 255, 255)", "the page prints on the screen's off-white ground"
+
+    # The table itself must survive: hiding the chrome is worthless if the
+    # thing worth printing goes with it.
+    assert page.eval_on_selector(
+        "#res-scorecard", "e => getComputedStyle(e).display") != "none", \
+        "the scorecard is hidden when printing, which is the only reason to print"
+
+
+def test_no_control_is_smaller_than_a_pointer_can_hit(page):
+    """WCAG 2.5.8: 24x24 CSS px, measured rather than assumed.
+
+    **Measuring the wrong thing first is what makes this worth a docstring.**
+    A sweep of `input, button, a[href]` at phone width reported 14 failures on
+    the survey — every option's radio at 13x13. They are not failures: each is
+    wrapped in a `label.option` measuring **312x46**, and the label is what a
+    finger hits. Reporting them would have padded fourteen controls that were
+    already the size of a card.
+
+    The real ones were on the desktop scorecard and there were three: the
+    column sort buttons, the worst at **19x18** for "KPI" — the smallest thing
+    in the app and the only genuine breach. The 24 KPI-name links at 22px were
+    a genuine judgement call rather than a false positive: 2.5.8's inline
+    exception covers a target "constrained by the line-height of non-target
+    text", and each of these is the entire content of its cell, so nothing
+    constrained it and the exemption did not apply.
+
+    Asserted over the effective target — the nearest label wrapping an input,
+    the element itself otherwise — because that is what the criterion is about.
+    """
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#tour-dismiss")
+    page.wait_for_selector("#res-scorecard")
+
+    small = page.evaluate("""() => {
+      const out = [];
+      for (const el of document.querySelectorAll(
+          'button, a[href], input, select, [role="tab"], summary')) {
+        // An input inside a label is hit by tapping the label.
+        const target = el.closest('label') || el;
+        const r = target.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) continue;
+        if (Math.min(r.width, r.height) >= 24) continue;
+        out.push((el.id || el.className || el.tagName)
+                 + ' ' + Math.round(r.width) + 'x' + Math.round(r.height));
+      }
+      return out;
+    }""")
+    assert not small, (
+        f"{len(small)} control(s) below the 24x24 floor: " + ", ".join(small[:10]))
+
+
+def test_asking_the_os_for_more_contrast_changes_something(page):
+    """`prefers-contrast: more` had no rule in the app at all.
+
+    The palette clears AA everywhere after 7.4a, so this is not about a
+    failure — it is about a reader who has told the operating system that AA
+    is not enough for them. The greys are what they lose first, and in this app
+    the greys carry every record-sheet field label, every basis chip and every
+    hint under a control.
+
+    Measured on a computed colour rather than by grepping for the at-rule.
+    7.4a's `prefers-reduced-motion` block existed and named exactly one
+    selector, which read as support that was present; a query that matches
+    nothing passes any source check.
+    """
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#tour-dismiss")
+
+    read = ("() => getComputedStyle(document.documentElement)"
+            ".getPropertyValue('--muted').trim()")
+    primary = ("() => getComputedStyle(document.documentElement)"
+               ".getPropertyValue('--text-primary').trim()")
+
+    page.emulate_media(contrast="no-preference")
+    ordinary = page.evaluate(read)
+    page.emulate_media(contrast="more")
+    raised = page.evaluate(read)
+
+    assert ordinary != raised, (
+        f"--muted is {ordinary} whether or not the reader asked for more "
+        f"contrast, so the query matches nothing")
+    assert raised == page.evaluate(primary), (
+        f"--muted became {raised} under more-contrast rather than collapsing "
+        f"onto the primary text colour")

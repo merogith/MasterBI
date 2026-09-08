@@ -93,6 +93,16 @@ button, input, select { font: inherit; }
   cursor: pointer; font-size: inherit; text-decoration: underline;
 }
 
+/* The KPI name in a scorecard row, which opens its record sheet. 22px tall
+   from the row's own line-height, so under WCAG 2.5.8's 24x24 floor.
+   **2.5.8's inline exception was available and does not apply**: it exempts a
+   target whose size "is constrained by the line-height of non-target text",
+   and this link is the cell's entire content — there is no surrounding text
+   constraining it, and growing it costs two pixels a row. Claiming an
+   exemption whose reason does not hold is the shape of mistake this repo
+   keeps finding in the other direction. */
+.kpi-open { min-height: 24px; display: inline-flex; align-items: center; }
+
 /* ---------------- views ---------------- */
 .view { max-width: var(--maxw); margin: 0 auto; padding: 40px 24px 96px; }
 .view[hidden] { display: none; }
@@ -1029,7 +1039,13 @@ tbody tr:hover { background: var(--accent-soft); }
 
 /* A header that sorts has to look like it does. Inherits the header's own
    type so the control is the label rather than a control beside it. */
-.th-sort { background: none; border: 0; padding: 0; cursor: pointer;
+/* `min-height` because measurement said so: the three sort controls were the
+   only genuine target-size failures in the whole app, at 19x18 for "KPI" —
+   under WCAG 2.5.8's 24x24 floor, and the smallest thing anyone is asked to
+   hit. Padding rather than a taller row so the header keeps its height. */
+.th-sort { background: none; border: 0; padding: 4px 0; cursor: pointer;
+  min-height: 24px; min-width: 24px;
+  display: inline-flex; align-items: center;
   font: inherit; color: inherit; letter-spacing: inherit;
   text-transform: inherit; }
 .th-sort:hover { color: var(--text-primary); }
@@ -1111,3 +1127,45 @@ th[aria-sort="descending"] .th-sort { color: var(--text-primary); }
   outline-offset: 1px; }
 .option-code { display: block; width: 100%; margin-top: 4px; font-size: 11.5px;
   color: var(--muted); }
+
+/* ---------------- print, and the reader's own settings ---------------- */
+
+/* **Print.** The app's real deliverables are downloads, so this is not a print
+   design — it is the removal of everything paper cannot offer. Measured on the
+   results screen before writing it: the sticky topbar printed with its Home /
+   Recent runs / Dark controls, so did "Adjust in Studio", "Open dashboard ↗",
+   "Columns (6)" and "Export CSV", and the page came out on the off-white
+   `--page` rather than white. Six controls a reader cannot press, and a grey
+   wash over every sheet.
+
+   The scorecard is what people actually print — 3.5 made it the surface
+   carrying every metric's definition — so it keeps its rows intact and loses
+   the chrome around it. */
+@media print {
+  .topbar, .res-actions, .scorecard-tools, .column-chooser,
+  .drawer, .drawer-scrim, .tour, .modal, .modal-scrim, .sheet-backdrop,
+  .studio-bar, .studio-rail { display: none !important; }
+  body { background: #ffffff; }
+  .view { padding: 0; max-width: none; }
+  /* A row split across a page break loses the KPI its numbers belong to. */
+  tr, .tile, .finding, .card { break-inside: avoid; page-break-inside: avoid; }
+  thead { display: table-header-group; }
+  h1, h2, h3 { break-after: avoid; page-break-after: avoid; }
+  a[href]::after { content: ""; }
+}
+
+/* **More contrast.** The palette already clears AA everywhere after 7.4a;
+   this is for a reader who has asked the operating system for more than that.
+   Same three moves as the dashboard's block, and the same reasoning: the greys
+   are what a low-vision reader loses first, and in this app they carry the
+   record-sheet field labels, the basis chips and every hint under a control. */
+@media (prefers-contrast: more) {
+  :root, :root[data-theme="dark"] {
+    --border: var(--text-primary);
+    --muted: var(--text-primary);
+    --text-secondary: var(--text-primary);
+  }
+  .chip, .basis-badge, .option-note { font-weight: 650; }
+  /* An outline that was a hint becomes a boundary. */
+  .tile, .card, .option, .panel { border-width: 2px; }
+}

@@ -579,6 +579,19 @@ def test_the_stylesheet_does_not_redefine_engine_tokens() -> None:
     A `--critical` redefined in `styles.css` would win by import order and put
     the app back to disagreeing with the PDF — the exact failure the generator
     exists to prevent, reintroduced one line at a time.
+
+    **An accessibility preference override is not that, and 7.4d had to draw
+    the line.** `@media (prefers-contrast: more)` deliberately collapses the
+    greys onto the primary text colour for a reader who has told the operating
+    system that AA is not enough — remapping the token rather than hunting the
+    62 selectors that use it, which is what tokens are for. It does not make
+    the app disagree with the artifacts: `render/dashboard.py` carries the same
+    block for the same reason, so under that preference the two still agree.
+
+    So the exemption is exactly the two accessibility queries and nothing
+    wider. A `max-width` breakpoint redefining a colour token is still caught,
+    and it should be — a token that changes with the viewport is the drift this
+    guard is named for, wearing a media query.
     """
     from kpi_maker.viz.theme import TOKENS
 
@@ -586,7 +599,33 @@ def test_the_stylesheet_does_not_redefine_engine_tokens() -> None:
     owned |= {"--accent", "--accent-soft", "--font"}
 
     styles = (ROOT / "web" / "src" / "styles.css").read_text(encoding="utf-8")
-    declared = set(re.findall(r"^\s+(--[a-z0-9-]+):", styles, re.MULTILINE))
+
+    def without_preference_overrides(text: str) -> str:
+        """Drop `prefers-contrast` / `forced-colors` blocks, brace-matched."""
+        out, i = [], 0
+        while i < len(text):
+            match = re.compile(
+                r"@media[^{]*\((?:prefers-contrast|forced-colors)[^{]*\{"
+            ).search(text, i)
+            if not match:
+                out.append(text[i:])
+                break
+            out.append(text[i:match.start()])
+            depth, j = 1, match.end()
+            while j < len(text) and depth:
+                depth += (text[j] == "{") - (text[j] == "}")
+                j += 1
+            i = j
+        return "".join(out)
+
+    # Not anchored to the line start. The original pattern was `^\s+(--x):`,
+    # which cannot see a one-line `:root { --critical: #f00; }` — found while
+    # checking that the exemption above had not opened a hole, by writing the
+    # mutation in that form and watching it pass. A declaration is a token
+    # followed by a colon wherever it sits; `var(--token)` has no colon after
+    # the name, so reading it as a declaration is not a risk.
+    declared = set(re.findall(r"(--[a-z0-9-]+)\s*:",
+                              without_preference_overrides(styles)))
 
     clash = sorted(declared & owned)
     assert not clash, (
