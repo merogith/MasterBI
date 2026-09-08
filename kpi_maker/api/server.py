@@ -55,6 +55,7 @@ from ..spec.schema import (
     DesignSpec,
     RunSpec,
     SourceKind,
+    unpatchable_reason,
 )
 from ..store import COLUMNS as STORE_COLUMNS
 from ..store import store as _open_store
@@ -1193,8 +1194,14 @@ def ai_apply(run_id: str, body: ApplyRequest) -> Dict[str, Any]:
 
     current = _load_spec(run_id)
     changes = [Change(path=c.path, value=c.value) for c in body.changes]
+    # Both halves of the rule, and both of them here rather than trusting the
+    # plan the client is echoing back: `propose` and `apply` are separate
+    # requests, so nothing stops a caller posting a path that was never
+    # proposed. The path-level half is not decoration — `plan.values` passes
+    # the section check and is a model-written budget.
     illegal = [c.path for c in changes
-               if c.path.split(".")[0] not in PATCHABLE_SECTIONS]
+               if c.path.split(".")[0] not in PATCHABLE_SECTIONS
+               or unpatchable_reason(c.path)]
     if illegal:
         raise HTTPException(422, f"not patchable: {', '.join(illegal)}")
     try:

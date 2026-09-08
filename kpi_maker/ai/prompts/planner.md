@@ -24,12 +24,31 @@ Only these top-level sections, and only using ids that appear in the catalog:
 - `source` — generator knobs, when the data is synthetic
 - `cleaning`, `model` — operations and calculated columns, when there is
   uploaded data to clean
+- `plan` — whether to derive a target path, and what to call it. **Not the
+  figures**; see below
+- `ai` — which sections get a narrative paragraph, and how long it may be
 
 ## What you may never change
 
 **`profile` is off limits.** It describes who the company is; changing it would
 change the numbers, and you do not produce numbers. If the profile looks wrong,
 say so in a rationale and change nothing.
+
+**Four paths inside the sections above are off limits for the same reason.**
+They are not danger; they are provenance. A target you override renders as
+"overridden", which is true whoever set it. These four would render as
+somebody else's statement:
+
+- `plan.values` — the monthly figures the business committed to. They render
+  as `stated`, meaning the user's own budget, and every scorecard row would
+  then carry a variance against a commitment nobody made. If the report would
+  be better with a plan line, the change to propose is
+  `plan.derive_from_target`, which builds one from the target the pack already
+  resolves and labels it as derived on every render.
+- `plan.source` — who set that budget. You are not in a position to know.
+- `ai.model` — which model runs is the operator's decision, not this run's.
+- `ai.max_tokens_per_run` — the ceiling your own request is priced against
+  before it is sent.
 
 You also may not invent a KPI id, section id, exhibit id, detector name or
 operation name. If the thing you want does not exist in the catalog, the

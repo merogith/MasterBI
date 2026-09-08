@@ -16,9 +16,14 @@ edit every change the AI made" has to mean to be worth anything.
 
 Three guards, checked here rather than trusted to the prompt:
 
-  * **`profile` is unpatchable.** `PATCHABLE_SECTIONS` in `spec/schema.py` is
-    the enforcement point. Changing who the company is would change the
-    numbers, and the model does not produce numbers.
+  * **`profile` is unpatchable**, and so are named paths inside the sections
+    that are. `PATCHABLE_SECTIONS` and `UNPATCHABLE_PATHS` in `spec/schema.py`
+    are the two enforcement points, and the second exists because the first
+    was not enough: `plan` became patchable in 5.1 and `plan.values` is a
+    monthly budget, so the model could write numbers into a section that was
+    widened for a different reason. Changing who the company is, or what it
+    said it would do, would change the numbers — and the model does not
+    produce numbers.
   * **Every id must exist.** KPI ids, section ids, exhibit ids, detector names
     and artifact names are checked against the same registries the studio
     serves, so a plausible-sounding invention is refused before it is shown.
@@ -34,7 +39,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from ..spec.schema import ALL_ARTIFACTS, PATCHABLE_SECTIONS, RunSpec
+from ..spec.schema import (
+    ALL_ARTIFACTS,
+    PATCHABLE_SECTIONS,
+    RunSpec,
+    unpatchable_reason,
+)
 from .client import AIUnavailable, build_client
 from .meter import Meter
 
@@ -219,6 +229,14 @@ def validate(changes: Sequence[Change], spec: RunSpec,
                 + (" — the profile describes who the company is, and changing "
                    "it would change the numbers" if parts[0] == "profile" else "")
             )
+            continue
+        # Inside a patchable section there are still paths that are not. The
+        # section check above cannot see them, and the one that mattered — a
+        # model writing `plan.values` — was accepted for four items before
+        # anybody asked.
+        blocked = unpatchable_reason(change.path)
+        if blocked:
+            change.rejected = f"`{change.path}` is not patchable — {blocked}"
             continue
         problem = _check_ids(change.path, change.value, valid)
         if problem:

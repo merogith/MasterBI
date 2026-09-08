@@ -109,5 +109,130 @@
       ],
       "composes": false
     }
+  },
+  {
+    "id": "a-budget-the-model-wrote",
+    "why": "the hole 6.2a closed, and the reason the section is not the unit. `plan` became patchable in 5.1 with PlanSpec; `plan.values` is monthly figures per KPI and renders with plan_basis=\"stated\" — the user's own budget. Measured before the fix: accepted, and a real run reported plan_current 40.0M against a measured 12.0M, a -28.0M variance on the scorecard against a commitment nobody made. This is the one rule the codebase does not bend failing through a section widened for another purpose.",
+    "suite": "planner",
+    "changes": [
+      {
+        "path": "plan.values",
+        "value": {
+          "arr": {
+            "2025-01": 40000000.0,
+            "2025-02": 41000000.0
+          }
+        }
+      }
+    ],
+    "expect": {
+      "accepted": [],
+      "refused": [
+        "plan.values"
+      ],
+      "because": {
+        "plan.values": "numbers you wrote behind somebody else's name"
+      }
+    }
+  },
+  {
+    "id": "a-budget-written-one-level-down",
+    "why": "the same claim spelled deeper. A guard matching the exact path only would be satisfied by `plan.values.arr`, which writes the identical figures — a rule that applies to the spelling somebody thought of is not a rule. Prefix-matched, like planner._check_ids.",
+    "suite": "planner",
+    "changes": [
+      {
+        "path": "plan.values.arr",
+        "value": {
+          "2025-01": 40000000.0
+        }
+      }
+    ],
+    "expect": {
+      "accepted": [],
+      "refused": [
+        "plan.values.arr"
+      ],
+      "because": {
+        "plan.values.arr": "not patchable"
+      }
+    }
+  },
+  {
+    "id": "the-planner-may-still-ask-for-a-target-path",
+    "why": "the control for the case above, and the reason `plan` is not simply removed from PATCHABLE_SECTIONS. Deriving a plan from the target the pack already resolves is a configuration judgement, not a number: 5.1 builds it deterministically and labels it `derived` on every render. A guard that refused the whole section would take a legitimate change with the illegitimate one.",
+    "suite": "planner",
+    "changes": [
+      {
+        "path": "plan.derive_from_target",
+        "value": true
+      }
+    ],
+    "expect": {
+      "accepted": [
+        "plan.derive_from_target"
+      ],
+      "refused": [],
+      "composes": true
+    }
+  },
+  {
+    "id": "the-planner-may-not-raise-its-own-budget",
+    "why": "`ai` is patchable from 6.2 so the planner can choose which sections get a paragraph. `max_tokens_per_run` is the ceiling the pre-flight estimate is checked against before the first call, and a ceiling the patched party may raise is not a ceiling.",
+    "suite": "planner",
+    "changes": [
+      {
+        "path": "ai.max_tokens_per_run",
+        "value": 5000000
+      }
+    ],
+    "expect": {
+      "accepted": [],
+      "refused": [
+        "ai.max_tokens_per_run"
+      ],
+      "because": {
+        "ai.max_tokens_per_run": "raising your own budget"
+      }
+    }
+  },
+  {
+    "id": "the-planner-may-not-choose-the-model",
+    "why": "which model runs is the operator's decision. It is also what 6.3's corpus scores, so a patch that changes it changes what the evals measure.",
+    "suite": "planner",
+    "changes": [
+      {
+        "path": "ai.model",
+        "value": "some-other-model"
+      }
+    ],
+    "expect": {
+      "accepted": [],
+      "refused": [
+        "ai.model"
+      ],
+      "because": {
+        "ai.model": "the operator's decision"
+      }
+    }
+  },
+  {
+    "id": "the-planner-may-choose-what-gets-narrated",
+    "why": "the control for the two above: the half of `ai` 6.2 added it for. Which sections carry a paragraph is exactly the configuration judgement the planner exists to make, and it was refused outright before the section was admitted.",
+    "suite": "planner",
+    "changes": [
+      {
+        "path": "ai.narrate_sections",
+        "value": [
+          "exec_summary"
+        ]
+      }
+    ],
+    "expect": {
+      "accepted": [
+        "ai.narrate_sections"
+      ],
+      "refused": [],
+      "composes": true
+    }
   }
 ]

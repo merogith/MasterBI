@@ -355,6 +355,38 @@ def test_an_accepted_plan_is_recorded_as_the_planners(api, spec_run):
     assert versions[0]["spec"]["design"]["theme"] == "dark"
 
 
+def test_apply_enforces_the_guard_rather_than_trusting_the_plan(api, spec_run):
+    """The second enforcement point, and a rule can be covered while its use is not.
+
+    6.3's corpus scores `planner.validate`, so a mutation deleting the same
+    check from `ai_apply` leaves every eval green — 4.3a's lesson, which found
+    a rule tested and its call site not. `propose` and `apply` are separate
+    requests and nothing makes the client echo back what it was offered, so the
+    endpoint has to ask for itself.
+
+    Housed here because this is where the endpoint's fixture lives; the guard
+    itself is `spec/schema.py::unpatchable_reason` and the rate half is in
+    `evals/cases/planner/patch_guards.json`.
+    """
+    import pytest as _pytest
+    from fastapi import HTTPException
+
+    before = json.loads((api.RUNS_DIR / spec_run / "spec.json")
+                        .read_text(encoding="utf-8"))
+
+    with _pytest.raises(HTTPException) as raised:
+        api.ai_apply(spec_run, api.ApplyRequest(changes=[
+            {"path": "plan.values", "value": {"arr": {"2025-01": 4.0e7}}}]))
+    assert raised.value.status_code == 422
+    assert "plan.values" in str(raised.value.detail)
+
+    after = json.loads((api.RUNS_DIR / spec_run / "spec.json")
+                       .read_text(encoding="utf-8"))
+    assert after == before, "a refused patch reached spec.json anyway"
+    assert api._store().versions(spec_run) == [], \
+        "a refused patch was recorded as a version the planner authored"
+
+
 def test_versions_are_reachable_over_the_api(api, spec_run):
     """A table nothing can read is the pattern this phase exists to stop."""
     api.rerun(spec_run)

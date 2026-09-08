@@ -509,5 +509,72 @@ class RunSpec(SpecModel):
 # the duller reason that a schema migration is not a suggestion.
 PATCHABLE_SECTIONS = frozenset({
     "source", "cleaning", "model", "metrics", "plan", "analysis", "design",
-    "outputs",
+    "outputs", "ai",
 })
+
+
+# --------------------------------------------------------------------------
+# ...and the paths inside them that it still may not touch
+# --------------------------------------------------------------------------
+
+# **The section is not always the right unit, and measuring is what said so.**
+#
+# `design` is uniformly safe: every field in it is a presentation choice a
+# reviewer can judge by reading it. Two sections are not, and both were reached
+# by asking the guard rather than by reading it:
+#
+#   * `plan` entered `PATCHABLE_SECTIONS` in 5.1 along with `PlanSpec`, and
+#     `PlanSpec.values` is **monthly figures per KPI**. So a proposed change to
+#     `plan.values` was accepted, and a real run built from it reported
+#     `plan_current` 40.0M against a measured 12.0M with
+#     `plan_basis="stated"` — the basis whose own docstring reads "the user
+#     gave these figures". A model-written budget, labelled as the board's,
+#     with a 28.0M variance on every scorecard row against a commitment
+#     nobody made. That is the one rule this codebase does not bend ("the
+#     model never produces a number") failing through a section that was
+#     widened for another purpose.
+#   * `ai` is added here by 6.2 because `narrate_sections` and
+#     `max_paragraphs` are genuine configuration. `model` and
+#     `max_tokens_per_run` are not: the second is the run's spend ceiling,
+#     "checked against the pre-flight estimate before the first call" — and a
+#     ceiling the patched party may raise is not a ceiling.
+#
+# The distinction that decides membership is provenance, not danger.
+# `metrics.overrides.<kpi>.target` stays reachable although it is also a
+# number, because 5.3d gives it `target_basis="override"`, which is true
+# whoever set it. `plan.values` claims *who*, and `plan.source` is that claim
+# in words. A field whose rendering would become a false statement about
+# provenance is out; a goal a reviewer ticks is in.
+UNPATCHABLE_PATHS = {
+    "plan.values": (
+        "a plan is monthly figures the business committed to, and it renders "
+        "as `stated` — the user's own budget. Proposing one would put numbers "
+        "you wrote behind somebody else's name"
+    ),
+    "plan.source": (
+        "this says who set the budget, and you are not in a position to know"
+    ),
+    "ai.model": (
+        "which model runs is the operator's decision, not this run's"
+    ),
+    "ai.max_tokens_per_run": (
+        "this is the ceiling your own request is checked against before it is "
+        "sent, so raising it here would be raising your own budget"
+    ),
+}
+
+
+def unpatchable_reason(path: str) -> Optional[str]:
+    """Why an automated patch may not write `path`, or None if it may.
+
+    Matched on the longest prefix, so `plan.values.arr.2025-01` is refused for
+    the same reason `plan.values` is. Checking only the exact path would leave
+    the guard satisfied by a deeper one, which is how a rule ends up applying
+    to the spelling somebody thought of.
+    """
+    parts = [p for p in path.split(".") if p]
+    for depth in range(len(parts), 0, -1):
+        reason = UNPATCHABLE_PATHS.get(".".join(parts[:depth]))
+        if reason is not None:
+            return reason
+    return None

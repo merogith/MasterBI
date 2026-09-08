@@ -235,7 +235,7 @@ not seven, because the phases before it absorbed the other five.
 |---|---|---|
 | **Intake** | Sonnet → `CompanyProfile` | **deterministic** — the survey, plus `ingest/derive.py` reading revenue, customer count, currency and date range straight off the upload. A conversational front door is still open (see below). |
 | **Mapper** | Sonnet → `mapping.json` | **deterministic** — `ingest/mapping.py` scores name similarity, dtype compatibility and value distribution, and reports confidence per field. No model needed. |
-| **Planner** | Opus → `plan.json` | **`ai/planner.py`** → a **RunSpec patch**, not a new format. Reviewed hunk by hunk in the studio. `profile` is unpatchable. |
+| **Planner** | Opus → `plan.json` | **`ai/planner.py`** → a **RunSpec patch**, not a new format. Reviewed hunk by hunk in the studio. `profile` is unpatchable, and so are four paths inside the sections that are — `plan.values` and `plan.source` are the budget the business committed to, and `ai.model` and `ai.max_tokens_per_run` are the run's own controls. |
 | **Executor** | code, not a model | the P0 stage graph. |
 | **Transform** | Sonnet → sandboxed pandas | **P1's formula engine.** Users write the formula; no subprocess, no generated code. |
 | **Narrator** | Opus → prose | **`ai/narrator.py`**, a cacheable pipeline stage. Sees `facts_table()` and the findings; never a data row. |

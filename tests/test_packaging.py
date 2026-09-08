@@ -1275,3 +1275,65 @@ def test_every_browser_test_module_runs_somewhere_in_ci() -> None:
     assert not orphans, (
         "these browser test modules are run by no workflow command, so they "
         "are skipped in the matrix and run nowhere else: " + ", ".join(orphans))
+
+
+def test_the_planner_prompt_lists_the_sections_the_guard_allows() -> None:
+    """`planner.md` restates `PATCHABLE_SECTIONS`, and it had already drifted.
+
+    Two copies of one fact, which is this repo's characteristic bug. The guard
+    gained `plan` in 5.1 (`41d4c56`, alongside `PlanSpec`); the prompt has not
+    been touched since the AI layer was written (`436d420`). So for the whole
+    of Phase 5 the planner was permitted to write a section it had never been
+    told about — and the drift ran in the dangerous direction, because
+    `plan.values` is a monthly budget.
+
+    Checked both ways. A section the guard allows and the prompt omits is a
+    capability nobody documented; a section the prompt offers and the guard
+    refuses is a suggestion that will be rejected in front of the user, which
+    4.3a's rule about false positives says is worse than not offering it.
+    """
+    from kpi_maker.spec.schema import PATCHABLE_SECTIONS, UNPATCHABLE_PATHS
+
+    prompt = (ROOT / "kpi_maker" / "ai" / "prompts" / "planner.md").read_text(
+        encoding="utf-8")
+
+    def section(heading: str) -> str:
+        body = prompt.split(f"## {heading}", 1)
+        assert len(body) == 2, f"planner.md has no '{heading}' section"
+        return body[1].split("\n## ", 1)[0]
+
+    # Only what a bullet *leads* with. The prose inside a bullet legitimately
+    # names other paths — the never-change list points at
+    # `plan.derive_from_target` as the thing to propose instead — and counting
+    # those would make the test fail on its own advice.
+    def headers(body: str) -> set[str]:
+        """What each bullet leads with, before its em-dash gloss.
+
+        One bullet legitimately names two sections (`cleaning`, `model`), so
+        the head of the line is read rather than only its first backtick.
+        """
+        found: set[str] = set()
+        for line in body.splitlines():
+            if line.startswith("- "):
+                found |= set(re.findall(r"`([a-z_.]+)`", line.split("—")[0]))
+        return found
+
+    allowed = headers(section("What you may change"))
+
+    assert allowed == set(PATCHABLE_SECTIONS), (
+        "planner.md and PATCHABLE_SECTIONS disagree about what the planner may "
+        f"change — only in the prompt: {sorted(allowed - PATCHABLE_SECTIONS)}; "
+        f"only in the guard: {sorted(set(PATCHABLE_SECTIONS) - allowed)}")
+
+    never = section("What you may never change")
+    assert "profile" in never, "the prompt no longer says the profile is off limits"
+    missing = [path for path in UNPATCHABLE_PATHS if f"`{path}`" not in never]
+    assert not missing, (
+        "these paths are refused by the guard and the prompt never mentions "
+        f"them, so the planner will propose them and be told no: {missing}")
+
+    stale = [path for path in headers(never)
+             if "." in path and path not in UNPATCHABLE_PATHS]
+    assert not stale, (
+        "the prompt forbids paths the guard allows, so the planner is being "
+        f"talked out of legal changes: {stale}")
