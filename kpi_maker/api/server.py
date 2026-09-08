@@ -1217,6 +1217,35 @@ def ai_plan(run_id: str, body: Optional[PlanRequest] = None) -> Dict[str, Any]:
         raise HTTPException(503, str(exc))
 
 
+@app.post("/api/ai/validate/{run_id}")
+def ai_validate(run_id: str, body: ApplyRequest) -> Dict[str, Any]:
+    """Grade a patch without applying it. Runs no model and spends nothing.
+
+    6.2c made the proposed values editable, and an edited value needs the same
+    answer the planner's own values got: legal or not, and if not, why, beside
+    the change rather than as a 422 on the whole patch after the reviewer has
+    pressed Apply. That is the surface's existing argument — "a suggestion that
+    silently disappears is indistinguishable from one that was never made" —
+    applied to the reviewer's own typing.
+
+    It calls `planner.validate`, which is the function `apply` enforces and
+    6.3's corpus scores, so an edit is graded by exactly the gate that will
+    decide it. A second implementation here would be a review screen that
+    disagrees with the thing it is reviewing for.
+
+    Deliberately not under `AIUnavailable`: there is no client and no key
+    involved, so this answers on a machine with the AI layer switched off,
+    which is also what lets it be tested here.
+    """
+    from ..ai.planner import Change, catalog, validate
+
+    spec = _load_spec(run_id)
+    changes = [Change(path=c.path, value=c.value) for c in body.changes]
+    graded, merged = validate(changes, spec, catalog(spec.profile))
+    return {"changes": [c.as_dict() for c in graded],
+            "composes": merged is not None}
+
+
 @app.post("/api/ai/apply/{run_id}")
 def ai_apply(run_id: str, body: ApplyRequest) -> Dict[str, Any]:
     """Write the hunks the user accepted, and report what a re-run would rebuild.

@@ -443,6 +443,49 @@ def test_the_plan_endpoint_takes_a_goal_and_bounds_it(api, spec_run):
         "the endpoint accepted a goal and never sent it"
 
 
+def test_an_edited_value_is_graded_by_the_gate_that_will_decide_it(api, spec_run):
+    """6.2c made the proposed values editable, so an edit needs an answer.
+
+    Without this the reviewer's typing was only judged by `apply`, as a 422 on
+    the whole patch after they had pressed the button — which is the surface's
+    own argument ("a suggestion that silently disappears is indistinguishable
+    from one that was never made") failing for the reviewer rather than for the
+    planner.
+
+    It runs no model and constructs no client, which is why it answers on this
+    machine at all, and why it can be called on every keystroke.
+    """
+    legal = api.ai_validate(spec_run, api.ApplyRequest(changes=[
+        {"path": "design.theme", "value": "dark"}]))
+    assert legal["changes"][0]["ok"] is True
+    assert legal["composes"] is True
+    assert legal["changes"][0]["before"] == "light", \
+        "the verdict does not carry what the value is replacing"
+
+    # An edit that names an id the run does not have. Refused per change, with
+    # the reason beside it, rather than as one message about the whole patch.
+    invented = api.ai_validate(spec_run, api.ApplyRequest(changes=[
+        {"path": "design.theme", "value": "dark"},
+        {"path": "metrics.excluded", "value": ["not_a_kpi"]}]))
+    assert invented["changes"][0]["ok"] is True, \
+        "one bad edit took a good change down with it"
+    assert invented["changes"][1]["ok"] is False
+    assert "not_a_kpi" in invented["changes"][1]["rejected"]
+
+    # And the guard 6.2a added is the same guard here: nothing about editing
+    # widens what a patch may reach.
+    budget = api.ai_validate(spec_run, api.ApplyRequest(changes=[
+        {"path": "plan.values", "value": {"arr": {"2025-01": 4.0e7}}}]))
+    assert budget["changes"][0]["ok"] is False
+    assert "not patchable" in budget["changes"][0]["rejected"]
+
+    # A set that does not compose is reported as such, so the modal can say the
+    # patch is unusable rather than letting Apply discover it.
+    broken = api.ai_validate(spec_run, api.ApplyRequest(changes=[
+        {"path": "design.page_size", "value": "billboard"}]))
+    assert broken["composes"] is False
+
+
 def test_the_estimate_prices_the_goal_it_will_send(api, spec_run):
     """The estimate's own docstring is what makes this a requirement.
 

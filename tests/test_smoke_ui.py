@@ -1771,3 +1771,167 @@ def test_a_run_over_its_ceiling_is_told_before_it_spends(page):
     assert styles["rule"] >= 2, (
         f"the caution has no rule beside it ({styles['rule']}px), so it reads "
         f"as another sentence rather than as an aside")
+
+
+def _a_plan(page, changes):
+    """Answer `POST /api/ai/plan` with a patch, so the review modal has one.
+
+    Routed for the reason `_configured_ai` gives — the agent is unreachable
+    here and on every runner. What is under test is the review surface, and the
+    **validation behind it is not routed**: `/api/ai/validate` runs no model,
+    so the real endpoint answers, and an edit made below is graded by the same
+    `planner.validate` that `apply` enforces and 6.3's corpus scores.
+    """
+    page.route("**/api/ai/plan/**", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"summary": "Tightened for a board audience.",
+                         "changes": changes})))
+
+
+def _open_the_plan(page, changes):
+    _configured_ai(page)
+    _a_plan(page, changes)
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#res-adjust")
+    _visible(page, "studio")
+    page.click('#studio-rail [data-stage="ai"]')
+    page.click("#ai-plan-btn")
+    page.wait_for_selector("#plan-modal")
+
+
+def test_a_proposed_value_can_be_edited_rather_than_only_refused(page):
+    """The reviewer could accept or reject a change and nothing else.
+
+    So somebody who agreed with the reasoning and not with the value had one
+    move: reject it and pay for another request. "The user sees and can edit
+    every change the AI made" was half true.
+
+    Typed on the **proposed** value, never on the current one: measured across
+    a real spec, 17 of 51 patchable paths currently hold `null`, which is why
+    the diff has a `plan-unset` class at all. Typing off `before` would leave a
+    third of the surface uneditable, and the third a planner most often fills
+    in.
+
+    Mutations: render the value read-only again; type the editor off `before`;
+    drop the chip's remove button; drop the edited badge.
+    """
+    _open_the_plan(page, [
+        {"path": "design.theme", "value": "dark", "before": "light",
+         "rationale": "A board reads this printed.", "ok": True, "rejected": ""},
+        {"path": "design.sections",
+         "value": ["cover", "exec_summary", "appendix"], "before": None,
+         "rationale": "Three sections, not nine.", "ok": True, "rejected": ""},
+    ])
+
+    # A string is a text box, not a JSON blob: 1.1 names "a Studio that asks
+    # business users to type raw JSON" as a defect of the old app, and the one
+    # screen where somebody decides whether to trust a model is the worst place
+    # to bring it back.
+    theme = page.locator('[data-plan-value="0"]')
+    assert theme.count() == 1, "the proposed value is still read-only"
+    assert theme.get_attribute("type") == "text", \
+        f"a string value is edited as {theme.get_attribute('type')!r}"
+
+    # A list is chips, and the edit a reviewer actually makes is dropping one.
+    chips = page.locator('[data-plan-value="1"] .plan-chip')
+    assert chips.count() == 3, f"expected three ids, found {chips.count()}"
+    page.click('[data-plan-drop="1:2"]')
+    page.wait_for_selector('[data-plan-edited="1"]')
+    assert page.locator('[data-plan-value="1"] .plan-chip').count() == 2
+
+    # And the edit is marked, with the planner's own value still on screen —
+    # applying a value the model did not propose under the model's rationale,
+    # with nothing saying so, is the provenance mistake 6.2a found in
+    # `plan_basis`.
+    said = page.text_content('[data-plan-edited="1"]') or ""
+    assert "appendix" in said, f"the planner's own value is lost: {said!r}"
+
+    # **And the modal gets 7.4d's target-size sweep, which never reached it.**
+    # That item measured home, samples, the survey, the upload funnel and the
+    # results screen and found three breaches on the scorecard. It could not
+    # open this screen: the review modal needs a plan, and a plan needs a key.
+    # Measured here rather than assumed — the row checkboxes were 688x20.
+    small = page.evaluate("""() => {
+      const out = [];
+      for (const el of document.querySelectorAll(
+          '#plan-modal button, #plan-modal input, #plan-modal a[href]')) {
+        const target = el.closest('label') || el;
+        const box = target.getBoundingClientRect();
+        if (box.width === 0 || box.height === 0) continue;
+        if (Math.min(box.width, box.height) >= 24) continue;
+        out.push((el.id || el.className || el.tagName)
+                 + ' ' + Math.round(box.width) + 'x' + Math.round(box.height));
+      }
+      return out;
+    }""")
+    assert not small, (
+        f"{len(small)} control(s) in the review modal below the 24x24 floor: "
+        + ", ".join(small[:10]))
+
+
+def test_an_edit_is_graded_by_the_gate_that_will_decide_it(page):
+    """An illegal edit is refused beside itself, not as a 422 on Apply.
+
+    `/api/ai/validate` is deliberately not routed here: it runs no model, so
+    the real endpoint answers and the verdict below is `planner.validate`'s —
+    the same function `apply` enforces. A review screen graded by a second
+    implementation would be one that disagrees with what it is reviewing for.
+
+    Mutations: never re-validate; keep an illegal change ticked; ignore the
+    server's verdict and keep the local one.
+
+    **The first version of this test could not fail.** It proposed
+    `metrics.excluded: ["arr"]` and removed the chip — but an empty list is
+    perfectly legal, so the edit it called illegal was not one. Measured
+    against the real guard rather than assumed, which is the same premise
+    failure 5.3c hit twice on a minimum it could not reach from the samples.
+    """
+    _open_the_plan(page, [
+        {"path": "design.theme", "value": "dark", "before": "light",
+         "rationale": "A board reads this printed.", "ok": True, "rejected": ""},
+    ])
+
+    assert page.locator("#plan-count").inner_text().startswith("1 of 1"), \
+        "a legal change should arrive ticked"
+
+    # A theme the schema does not define. Individually well-formed, and the
+    # whole-spec parse is what catches it — the second of `validate`'s two
+    # passes, run over the reviewer's typing rather than only the planner's.
+    page.fill('[data-plan-value="0"]', "chartreuse")
+    page.wait_for_selector(".plan-refused", timeout=10_000)
+    refusal = page.text_content(".plan-reject") or ""
+    assert refusal, "the edit was refused with no reason beside it"
+
+    # And it is no longer counted, because it can no longer be applied.
+    assert page.locator("#plan-count").inner_text().startswith("0 of 1"), \
+        "an edit that made the change illegal left it ticked"
+    assert page.locator("#plan-apply").is_disabled(), \
+        "Apply is offering to send a patch the server has already refused"
+
+
+def test_the_run_shows_what_has_already_been_applied(page):
+    """0.7 recorded every spec a run built from; nothing read them.
+
+    A table with no consumer is the pattern that phase existed to stop, and it
+    shipped with one of its own — the same "computed and rendered nowhere" gap
+    5.3a-c closed three times in the exhibits.
+
+    Mutations: drop the list; drop the author, so a planner change and a hand
+    edit look alike.
+    """
+    _configured_ai(page)
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#res-adjust")
+    _visible(page, "studio")
+    page.click('#studio-rail [data-stage="ai"]')
+
+    page.wait_for_selector("#plan-history li")
+    rows = page.locator("#plan-history li")
+    assert rows.count() >= 1, "the run has built from at least one spec"
+    first = rows.first.inner_text()
+    assert "user" in first.lower(), \
+        f"the row does not say who made this version: {first!r}"
+    assert "sample" in first.lower(), \
+        f"the row does not say what it was: {first!r}"

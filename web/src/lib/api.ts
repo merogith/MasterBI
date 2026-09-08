@@ -610,11 +610,21 @@ export interface AiEstimate {
  * same number for callers that are not this box. */
 export const GOAL_MAX_CHARS = 2000;
 
+/* One reviewable hunk, as `planner.Change.as_dict()` actually sends it.
+ *
+ * **This declared `reason` and `current` and the server has never sent
+ * either** — the fields are `rationale` and `before`. Nothing caught it
+ * because `AiActions` quietly declared its own correct copy and used that, so
+ * the shared type described a payload nobody produces and nobody consumed.
+ * Found by 6.2c needing to read `ok` off it and being told it does not exist.
+ * A type that is never used is a comment with a compiler that ignores it. */
 export interface PlanChange {
   path: string;
   value: unknown;
-  reason?: string;
-  current?: unknown;
+  before?: unknown;
+  rationale?: string;
+  ok?: boolean;
+  rejected?: string;
 }
 
 export interface AiPlan {
@@ -640,6 +650,33 @@ export const aiApply = (runId: string, changes: { path: string; value: unknown }
   api<PlanReport>(`/api/ai/apply/${runId}`, {
     method: 'POST', body: JSON.stringify({ changes }),
   });
+
+export interface PlanVerdicts {
+  changes: PlanChange[];
+  composes: boolean;
+}
+
+/* Grades an edited patch through the same `planner.validate` that `apply`
+ * enforces. Runs no model and spends nothing, which is why the review screen
+ * can call it on every keystroke. */
+export const aiValidate = (runId: string,
+                           changes: { path: string; value: unknown }[]) =>
+  api<PlanVerdicts>(`/api/ai/validate/${runId}`, {
+    method: 'POST', body: JSON.stringify({ changes }),
+  });
+
+export interface SpecVersion {
+  seq: number;
+  author: string;
+  message: string;
+  created_at: string;
+}
+
+/* 0.7 has recorded these since the run store landed — every spec a run has
+ * actually built from, with the planner's own rows marked as its. Nothing has
+ * ever read them. */
+export const specVersions = (runId: string) =>
+  api<SpecVersion[]>(`/api/runs/${runId}/spec/versions`);
 
 export interface FormulaCheck {
   ok: boolean;

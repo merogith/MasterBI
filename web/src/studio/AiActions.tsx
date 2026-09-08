@@ -1,9 +1,10 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import {
-  aiApply, aiEstimate, aiPlan, GOAL_MAX_CHARS,
-  type AiEstimate as Estimate,
+  aiApply, aiEstimate, aiPlan, aiValidate, GOAL_MAX_CHARS, specVersions,
+  type AiEstimate as Estimate, type PlanChange, type SpecVersion,
 } from '../lib/api';
 import { useOverlay } from '../lib/overlay';
+import { PlanValue, showValue } from './PlanValue';
 
 /* Cost first, then the plan.
  *
@@ -12,18 +13,18 @@ import { useOverlay } from '../lib/overlay';
  * ticks rows and presses Apply — the planner writes configuration, never a
  * number, and the reviewer sees each path before it lands.
  */
-interface Change {
-  path: string;
-  value: unknown;
-  before?: unknown;
-  rationale?: string;
-  ok?: boolean;
-  rejected?: string;
+/* The wire shape plus the one field only this screen has. Extending rather
+ * than redeclaring, because the local copy is how `PlanChange` drifted:
+ * `reason` and `current` sat in the shared type for the whole life of the port
+ * while the server sent `rationale` and `before`, and nothing noticed because
+ * nothing read it. */
+interface Change extends PlanChange {
+  /* What the planner itself proposed, kept when the reviewer edits the value.
+   * Applying an edited value under the model's rationale, with nothing saying
+   * so, would misattribute it — the same provenance mistake 6.2a found in
+   * `plan_basis`, where a model-written budget rendered as the user's own. */
+  proposed?: unknown;
 }
-
-const showValue = (value: unknown): string =>
-  value === undefined || value === null
-    ? '—' : typeof value === 'string' ? value : JSON.stringify(value);
 
 export function AiActions({ runId, onApplied }: {
   runId: string;
@@ -41,6 +42,51 @@ export function AiActions({ runId, onApplied }: {
   // to reject a patch and pay for another one.
   const [goal, setGoal] = useState('');
   const [estimatedFor, setEstimatedFor] = useState('');
+  const [history, setHistory] = useState<SpecVersion[]>([]);
+
+  // 0.7 has recorded every spec a run built from since the store landed, with
+  // the planner's own rows marked `author="planner"`, and nothing has ever
+  // read them — the "computed and rendered nowhere" gap 5.3a-c closed three
+  // times in the exhibits. Fetched in an effect because it is asynchronous and
+  // nothing on screen depends on it having arrived, which is exactly the
+  // distinction 3.5b drew: an effect is right for fetching and wrong for
+  // completing something the user can already see.
+  useEffect(() => {
+    let live = true;
+    void specVersions(runId)
+      .then((rows) => { if (live) setHistory(rows); })
+      .catch(() => { /* a run with no store yet simply has no history */ });
+    return () => { live = false; };
+  }, [runId, changes]);
+
+  /* Re-grade an edited patch through the gate that will decide it.
+   *
+   * `planner.validate` is the same function `apply` enforces and 6.3's corpus
+   * scores, so an edit gets the answer its own value earns rather than a 422
+   * on the whole patch after Apply. The verdicts come back positionally, and
+   * the rationale is kept from the local row: the endpoint is told paths and
+   * values, so it has no idea why the planner wanted any of it.
+   */
+  async function regrade(next: Change[]) {
+    setChanges(next);
+    try {
+      const graded = await aiValidate(
+        runId, next.map((change) => ({ path: change.path, value: change.value })));
+      setChanges(next.map((change, index) => ({
+        ...change,
+        ok: graded.changes[index]?.ok,
+        rejected: graded.changes[index]?.rejected,
+        before: graded.changes[index]?.before ?? change.before,
+      })));
+      // A change the edit made illegal must not stay ticked. Leaving it would
+      // put the reviewer's count and the server's answer out of step, and the
+      // first they would hear of it is the patch being refused whole.
+      setChosen((picked) => new Set([...picked].filter(
+        (index) => graded.changes[index]?.ok !== false)));
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
 
   async function runEstimate() {
     setEstimating(true);
@@ -60,7 +106,12 @@ export function AiActions({ runId, onApplied }: {
     setError(null);
     try {
       const result = await aiPlan(runId, goal);
-      const proposed = (result.changes ?? []) as Change[];
+      // `proposed` is stamped on arrival rather than on the first edit, so
+      // "what the planner asked for" is recorded before anything can have
+      // touched it. Seeding it later would mean trusting whatever the value
+      // happened to be at the moment somebody typed.
+      const proposed = (result.changes ?? []).map(
+        (change) => ({ ...change, proposed: change.value })) as Change[];
       setChanges(proposed);
       setSummary(result.summary ?? '');
       // Pre-tick the legal ones: the common case is accepting most of a good
@@ -160,13 +211,35 @@ export function AiActions({ runId, onApplied }: {
       <h3 class="studio-sub">Let the AI configure this run</h3>
       <p class="hint">Proposes changes to the KPIs, sections, exhibits,
          detectors and outputs — never to the profile, and never the plan
-         figures. You accept or reject each one before anything is written.</p>
+         figures. You accept, edit or reject each one before anything is
+         written.</p>
       <button class="ghost" id="ai-plan-btn" disabled={thinking}
               onClick={() => void requestPlan()}>
         {thinking ? 'Thinking…' : 'Suggest changes'}
       </button>
 
       {error && <p class="warn">{error}</p>}
+
+      {/* Every spec this run has actually built from. Recorded since 0.7 and
+          read by nothing until now — a table with no consumer is the pattern
+          that phase existed to stop, and it had one of its own. Shown here
+          rather than filtered to the planner's rows, because a planner change
+          followed by a hand edit is the story, and hiding half of it would
+          describe a spec that no longer exists. Comparing two of them, and
+          undoing one, is 7.1's. */}
+      {history.length > 0 && (
+        <>
+          <h3 class="studio-sub">Applied so far</h3>
+          <ol class="plan-history" id="plan-history">
+            {history.map((version) => (
+              <li key={version.seq} class={`plan-history-${version.author}`}>
+                <span class="plan-history-who">{version.author}</span>
+                <span class="plan-history-what">{version.message}</span>
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
 
       {changes !== null && (
         <>
@@ -213,8 +286,22 @@ export function AiActions({ runId, onApplied }: {
                         {showValue(change.before)}
                       </span>
                       <span class="plan-arrow">→</span>
-                      <span class="plan-after">{showValue(change.value)}</span>
+                      <span class="plan-after">
+                        <PlanValue value={change.value} index={index}
+                                   onChange={(next) => void regrade(changes.map(
+                                     (row, at) =>
+                                       at === index ? { ...row, value: next } : row))} />
+                      </span>
                     </div>
+                    {/* An edited value must not go out wearing the planner's
+                        rationale with nothing saying so. The original stays on
+                        screen, which is also the only way back to it. */}
+                    {JSON.stringify(change.proposed) !== JSON.stringify(change.value) && (
+                      <p class="plan-edited" data-plan-edited={index}>
+                        Edited — the planner proposed
+                        {' '}<code>{showValue(change.proposed)}</code>
+                      </p>
+                    )}
                     <p class="plan-why">{change.rationale ?? ''}</p>
                     {change.ok === false && (
                       <p class="plan-reject">Refused — {change.rejected}</p>

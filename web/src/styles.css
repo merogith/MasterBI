@@ -810,7 +810,15 @@ tbody tr:hover { background: var(--accent-soft); }
 /* A refused change is shown, not hidden: a suggestion that silently vanishes
    is indistinguishable from one that was never made. */
 .plan-refused { opacity: 0.62; }
-.plan-pick { display: flex; align-items: center; gap: 9px; cursor: pointer; }
+/* 24px, and it was 20 until 6.2c measured it. 7.4d swept the app for targets
+   under 2.5.8's floor and found three on the scorecard; **it never saw this
+   one**, because reaching the review modal needs a plan, which needs a key
+   this environment does not have. A sweep grades the screens it can open —
+   7.4c's "a green run is not evidence that a test ran", arriving as a screen
+   no walk could get to rather than a file no job named. The walk that routes
+   the plan now measures the modal too. */
+.plan-pick { display: flex; align-items: center; gap: 9px; cursor: pointer;
+  min-height: 24px; }
 .plan-pick code { font-size: 12.5px; }
 .plan-diff { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
   margin: 8px 0 0 25px; font-size: 12.5px;
@@ -827,6 +835,52 @@ tbody tr:hover { background: var(--accent-soft); }
 .plan-why { margin: 7px 0 0 25px; font-size: 13px; color: var(--text-secondary);
   line-height: 1.55; }
 .plan-reject { margin: 6px 0 0 25px; font-size: 12.5px; color: var(--serious-text); }
+
+/* The editable half of the diff. Sized and coloured like the read-only value
+   it replaced, so a proposed change still reads as a value rather than as a
+   form: the reviewer's job is to judge it, and editing is the exception. */
+.plan-edit {
+  font: inherit; font-weight: 600; color: var(--text-primary);
+  background: var(--raised); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 2px 7px; min-width: 60px;
+}
+.plan-edit:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.plan-edit-bool { display: inline-flex; align-items: center; gap: 6px;
+  min-height: 24px; padding: 2px 8px; }
+.plan-edit-list { display: inline-flex; flex-wrap: wrap; gap: 5px;
+  padding: 3px 5px; }
+.plan-chip {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 24px;
+  padding: 1px 3px 1px 8px; border-radius: 999px;
+  background: var(--accent-soft); font-size: 12.5px; font-weight: 560;
+}
+/* 24x24 because 2.5.8's inline exception does not apply: a chip's ✕ is the
+   whole target, not a word inside a line of prose — the same reading 7.4d
+   took of the scorecard's KPI links. */
+.plan-chip-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 24px; min-height: 24px; padding: 0; border: 0; border-radius: 999px;
+  background: none; color: var(--text-secondary); font-size: 11px; cursor: pointer;
+}
+.plan-chip-x:hover { color: var(--critical-text); }
+.plan-edit-opaque { font-weight: 600; background: none; border: 0; padding: 0; }
+.plan-opaque-note { margin-left: 8px; font-size: 11.5px; font-weight: 400;
+  color: var(--muted); }
+.plan-edited { margin: 6px 0 0 25px; font-size: 12.5px; color: var(--warning-text); }
+.plan-edited code { font-size: 12px; }
+
+/* Every spec this run has built from. Recorded since 0.7, read by nothing
+   until 6.2c. */
+.plan-history { margin: 4px 0 14px; padding: 0; list-style: none;
+  display: flex; flex-direction: column; gap: 5px; }
+.plan-history li { display: flex; gap: 9px; align-items: baseline;
+  font-size: 12.5px; color: var(--text-secondary); }
+.plan-history-who {
+  flex: none; min-width: 56px; font-size: 11px; font-weight: 620;
+  letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted);
+}
+.plan-history-planner .plan-history-who { color: var(--accent-text); }
+.plan-history-what { overflow-wrap: anywhere; }
 
 .brand-preview { margin: 12px 0 4px; }
 .swatch-row { display: flex; flex-wrap: wrap; gap: 18px; margin-bottom: 10px; }
