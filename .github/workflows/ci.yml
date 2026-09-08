@@ -94,18 +94,23 @@ jobs:
     #
     # Slowest Test step of each pair, measured from the run timestamps:
     #
-    #   run 56   Windows 9m40s   Ubuntu 5m55s   <- 81% of the old 12
-    #   run 60   Windows 10m55s  Ubuntu 6m41s
-    #   run 61   Windows 10m50s  Ubuntu 7m22s   <- 54% of this 22
+    #   run 67   Windows 11m21s  Ubuntu 7m22s
+    #   run 68   Windows 11m08s  Ubuntu 7m57s
+    #   run 69   Windows 11m18s  Ubuntu 7m17s   <- 49% of this 23
     #
-    # Run 56 is kept rather than the two runs either side of it, because the
-    # informative thing is the growth: 706 tests to 720 moved the slowest
-    # Windows step 9m40s to 10m55s. Re-derived here rather than trusted, which
-    # is the whole point of the rule -- 2x the slowest observed is 21m50s, so
-    # the cap follows the measurement upward instead of the measurement being
-    # quietly left behind. That is exactly how the old 12 outlived its own
-    # justification.
-    timeout-minutes: 22
+    # Re-derived here rather than trusted, which is the whole point of the
+    # rule: 2x the slowest observed is 22m42s, so 22 had just slipped under
+    # its own justification and the cap follows the measurement upward. That
+    # is exactly how the old 12 outlived its 9m40s, one iteration later and
+    # caught by maintenance rather than by a red job.
+    #
+    # **Windows varies far more than the growth does, and that is the argument
+    # for "twice" rather than a tighter multiple.** Within these three runs the
+    # 3.11 job took 10m12s, then 7m14s, then 11m07s -- the same suite, 54%
+    # apart, on runners that differ by luck. A cap set from one reading would
+    # be calibrated to whichever runner happened to answer that day; the
+    # slowest of several is the only figure that survives the variance.
+    timeout-minutes: 23
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
