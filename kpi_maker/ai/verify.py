@@ -133,12 +133,28 @@ def _render(value: Any, unit: str, currency: str,
         parsed = _parse(token)
         if parsed is not None:
             keys.add(parsed)
-    # The unformatted value, and the percentage read as a whole number, which
-    # is how a percentage is spoken.
     keys.add(_key(raw, ""))
     if unit == "pct":
         keys.add(_key(raw * 100.0, "%"))
-        keys.add(_key(raw * 100.0, ""))
+        # **A bare `72` for a 72% margin used to be allowed here**, on the
+        # reasoning that a whole number "is how a percentage is spoken". It
+        # went, because the module's opening contract says the opposite — "a
+        # percentage is never conflated with a bare number... `34.5` and
+        # `34.5%` and `34.5M` are three different claims about the business" —
+        # and because in practice the allowance was *arbitrary* rather than
+        # lenient.
+        #
+        # Measured by 6.3's corpus on a real run: of eleven percentages in the
+        # facts block, **four admitted their bare form and seven did not**. The
+        # four were the ones whose stored value is exactly representable
+        # (`0.30`, `1.05`, `0.72`, `-0.03` — mostly targets), because this key
+        # was built from the unrounded `raw * 100` while the figure the reader
+        # sees is rounded for display. So "gross margin of 72" passed and
+        # "quick ratio of 72.9" did not, for no reason anybody could act on.
+        #
+        # Removing it costs the narrator nothing: the prompt tells it to copy
+        # the formatted column verbatim, so it writes `72.0%`, and the honest
+        # raw form `0.72` is still admitted by `_key(raw, "")` above.
     if unit == "currency":
         for scale, mark in ((1e9, "b"), (1e6, "m"), (1e3, "k")):
             if abs(raw) >= scale:

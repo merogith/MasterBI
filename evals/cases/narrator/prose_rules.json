@@ -1,0 +1,122 @@
+[
+  {
+    "id": "counting-claim-is-allowed",
+    "why": "the prompt permits dimensionless counting \u2014 'three of the eight risks'. A gate that refused it would push the narrator toward vaguer prose than it needs.",
+    "suite": "narrator",
+    "output": {
+      "exec_summary": [
+        "Three of the eight risks concern retention."
+      ]
+    },
+    "expect": {
+      "verdict": "clean"
+    }
+  },
+  {
+    "id": "counting-claim-with-a-unit-is-not",
+    "why": "the same sentence with a unit attached is a measurement, not a count. verify.py's docstring draws exactly this line: anything carrying a unit or a magnitude suffix is out.",
+    "suite": "narrator",
+    "output": {
+      "exec_summary": [
+        "Three of the eight risks cost 8%."
+      ]
+    },
+    "expect": {
+      "verdict": "refused",
+      "tokens": [
+        "8%"
+      ]
+    }
+  },
+  {
+    "id": "banned-phrases-from-the-prompt",
+    "why": "the prompt forbids these by name. Scored separately from the number gate because prose can be perfectly sourced and still be the writing the instruction rules out.",
+    "suite": "narrator",
+    "output": {
+      "exec_summary": [
+        "In conclusion, we should delve into the competitive landscape."
+      ]
+    },
+    "expect": {
+      "verdict": "clean",
+      "banned": [
+        "in conclusion",
+        "delve",
+        "landscape"
+      ]
+    }
+  },
+  {
+    "id": "clean-prose-carries-no-banned-phrase",
+    "why": "the control for the banned-phrase scorer. Without it a scorer that always reported a hit would look identical.",
+    "suite": "narrator",
+    "output": {
+      "exec_summary": [
+        "Growth is holding, but it is being bought rather than earned."
+      ]
+    },
+    "expect": {
+      "verdict": "clean",
+      "banned": []
+    }
+  },
+  {
+    "id": "empty-section-is-clean",
+    "why": "the prompt tells the model to return no paragraphs where nothing stands out. A gate that objected would penalise the behaviour the prompt asks for.",
+    "suite": "narrator",
+    "output": {
+      "exec_summary": []
+    },
+    "expect": {
+      "verdict": "clean"
+    }
+  },
+  {
+    "id": "one-bad-figure-among-good-ones",
+    "why": "the realistic shape of a failure: a paragraph mostly sourced, with one invented number. The tokens field pins which one, so the case cannot pass because the gate objected to a different figure.",
+    "suite": "narrator",
+    "output": {
+      "exec_summary": [
+        "ARR stands at $12.0M against a plan of $8.0M, a gap of $3.7M."
+      ]
+    },
+    "expect": {
+      "verdict": "refused",
+      "tokens": [
+        "$3.7M"
+      ]
+    }
+  },
+  {
+    "id": "a-large-bare-number-is-refused",
+    "why": "the counting allowance is bounded by the run's own KPI and finding counts. Unbounded, every integer in the language becomes quotable, and 'we lost 480000 customers' would pass. Hand-authored because the generated mutants all carry a unit or a suffix, so none of them reaches this rule \u2014 the mutation sweep found the gap.",
+    "suite": "narrator",
+    "output": {
+      "exec_summary": [
+        "We lost 480000 customers this quarter."
+      ]
+    },
+    "expect": {
+      "verdict": "refused",
+      "tokens": [
+        "480000"
+      ]
+    }
+  },
+  {
+    "id": "a-percentage-is-not-a-bare-number",
+    "why": "verify.py's contract: '34.5 and 34.5% and 34.5M are three different claims about the business.' Gross margin is 72.0% in this run and writing a bare 72.0 is a different claim. Hand-authored on purpose: the generated mutants are checked against the allowed set, so loosening the gate would quietly make this mutant invalid and drop it rather than fail. A generated corpus adapts to the code; an authored case pins it.",
+    "suite": "narrator",
+    "output": {
+      "exec_summary": [
+        "Gross margin reached 72.0 this period."
+      ]
+    },
+    "expect": {
+      "verdict": "refused",
+      "tokens": [
+        "72.0"
+      ]
+    }
+  }
+]

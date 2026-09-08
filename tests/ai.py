@@ -251,9 +251,29 @@ def test_gate(spine) -> None:
     ceiling = max(len(results), len(findings), 12)
     check("a large bare number is refused",
           verify.check_prose(f"{ceiling + 5000} customers churned.", allowed) != [])
-    check("a count-shaped number with a unit is refused",
-          verify.check_prose("Margin fell to 5%.", allowed) != []
-          or any(r.kpi.unit == "pct" and r.current == 0.05 for r in results))
+    # The percentage is *chosen by measurement*, not written down. Hardcoding
+    # `5%` made this check depend on the calendar: a finding legitimately
+    # quotes "fell by 5.0% over the last 6", the gate rightly allows a figure
+    # the detectors wrote, and whether that sentence exists depends on where
+    # the generated history stops. It passed only because `conftest.py` pins
+    # the month — so `python -m tests.ai`, the entry point this module's own
+    # docstring documents, failed standalone. The escape hatch beside it
+    # (`any(r.current == 0.05)`) looked like it covered this and did not: it
+    # checked one of seven result fields and knew nothing about findings.
+    #
+    # Grading the samples rather than the rule, in the AI harness. Found by
+    # 6.3's corpus, which runs this pipeline without pytest's conftest.
+    spare = next((n for n in range(1, ceiling + 1)
+                  if verify._parse(f"{n}%") not in allowed), None)
+    check("a percentage the table does not contain is refused",
+          spare is not None
+          and verify.check_prose(f"Margin fell to {spare}%.", allowed) != [],
+          "no small percentage outside the allowed set to test with"
+          if spare is None else f"{spare}% was allowed")
+    check("the same digits without the unit are allowed as a count",
+          spare is None or verify.check_prose(
+              f"{spare} of the risks are financial.", allowed) == [],
+          f"{spare} bare was refused, so counting claims are broken")
 
 
 def test_retry_and_drop(spine) -> None:

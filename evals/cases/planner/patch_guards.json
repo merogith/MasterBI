@@ -1,0 +1,113 @@
+[
+  {
+    "id": "profile-is-unpatchable",
+    "why": "the structural bound the whole AI layer rests on. spec/schema.py::PATCHABLE_SECTIONS excludes profile because changing who the company is changes the numbers, and the refusal has to say so rather than reading as a bug.",
+    "suite": "planner",
+    "changes": [
+      {
+        "path": "profile.identity.name",
+        "value": "Acme"
+      }
+    ],
+    "expect": {
+      "accepted": [],
+      "refused": [
+        "profile.identity.name"
+      ],
+      "because": {
+        "profile.identity.name": "not a section the planner may change"
+      }
+    }
+  },
+  {
+    "id": "an-unknown-top-level-section",
+    "why": "a path that is not a section at all. Refused for the same reason and with the same wording, so a user sees one rule rather than two behaviours.",
+    "suite": "planner",
+    "changes": [
+      {
+        "path": "billing.plan",
+        "value": "enterprise"
+      }
+    ],
+    "expect": {
+      "accepted": [],
+      "refused": [
+        "billing.plan"
+      ],
+      "because": {
+        "billing.plan": "not a section the planner may change"
+      }
+    }
+  },
+  {
+    "id": "an-empty-path",
+    "why": "the degenerate input. A planner that emits one should be refused rather than crashing the review screen.",
+    "suite": "planner",
+    "changes": [
+      {
+        "path": "",
+        "value": 1
+      }
+    ],
+    "expect": {
+      "accepted": [],
+      "refused": [
+        ""
+      ]
+    }
+  },
+  {
+    "id": "a-legal-design-change",
+    "why": "the control. A guard that refused everything would score full marks on the adversarial cases alone, which is the trap 5.3e found in the concentration detector.",
+    "suite": "planner",
+    "changes": [
+      {
+        "path": "design.theme",
+        "value": "dark"
+      }
+    ],
+    "expect": {
+      "accepted": [
+        "design.theme"
+      ],
+      "refused": [],
+      "composes": true
+    }
+  },
+  {
+    "id": "a-no-op-change",
+    "why": "legal, composes, and changes nothing. Measured rather than failed: a planner proposing them wastes the reviewer's attention, which is bad in quantity rather than in kind.",
+    "suite": "planner",
+    "changes": [
+      {
+        "path": "design.theme",
+        "value": "light"
+      }
+    ],
+    "expect": {
+      "accepted": [
+        "design.theme"
+      ],
+      "refused": [],
+      "composes": true
+    }
+  },
+  {
+    "id": "a-value-that-does-not-compose",
+    "why": "each change individually shaped right, the result not a valid RunSpec. planner.validate refuses the lot rather than half-applying, because a partially applied patch nobody chose is worse than no patch. The refusal must also be marked on the change: the sweep showed a mutation that stopped marking them left this case green, because it only asserted that no spec came back.",
+    "suite": "planner",
+    "changes": [
+      {
+        "path": "design.page_size",
+        "value": "billboard"
+      }
+    ],
+    "expect": {
+      "accepted": [],
+      "refused": [
+        "design.page_size"
+      ],
+      "composes": false
+    }
+  }
+]

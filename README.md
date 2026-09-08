@@ -387,6 +387,19 @@ not a gate. Its central assertions are that with AI off no client is ever
 back once, and then costs that section its paragraph while the rest of the
 report stands.
 
+`evals/` scores the same gates over a corpus rather than asserting single
+behaviours, so a regression shows up as a rate that moved rather than as one
+red assertion. `python -m evals` reports a pass rate per agent against a floor
+of 100%, because every scorer in it is a correctness gate and a threshold set
+below one is a record of the last regression rather than a bar.
+
+Its scope is deliberately narrower than the phrase suggests, and the package
+docstring says so first: with no API key there are no recorded model
+transcripts, so the corpus is authored and derived, and a green run means
+"`verify.py` catches an invented figure" — never "the narrator does not invent
+figures". Most of it is generated from a real run's own facts table, which is
+what keeps it from going stale when a formatter changes.
+
 `tests/spine.py` asks a different question from `stress.py`: not "does the
 product lie?" but "does adjusting the pipeline do exactly what it says, and
 nothing else?" It asserts that an empty spec is neutral, that editing one
