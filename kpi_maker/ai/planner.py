@@ -54,6 +54,18 @@ PROMPTS = Path(__file__).parent / "prompts"
 # changes; this is the backstop for when it does not listen.
 MAX_CHANGES = 12
 
+# What the reviewer may say they want, in characters.
+#
+# **Bounded because every other part of this request is bounded by the run's own
+# data**, and a free-text box is the first input to the AI layer that is not.
+# `AISpec.max_tokens_per_run` is the backstop, and 6.2b had to wire it before
+# adding this box precisely because the box is what makes a ceiling matter —
+# but a limit felt at the point of typing is better than one discovered when
+# the narrative goes missing. 2,000 characters is roughly 500 tokens against a
+# request that runs to several thousand: room for a paragraph of intent, not
+# for a pasted document.
+GOAL_MAX_CHARS = 2000
+
 
 def _prompt(name: str) -> str:
     return (PROMPTS / f"{name}.md").read_text(encoding="utf-8")
@@ -296,8 +308,22 @@ SCHEMA = {
 }
 
 
-def build_request(spec: RunSpec, cat: Dict[str, Any]) -> Dict[str, str]:
-    """The system and user text, separated so it can be priced before it is sent."""
+def build_request(spec: RunSpec, cat: Dict[str, Any],
+                  goal: str = "") -> Dict[str, str]:
+    """The system and user text, separated so it can be priced before it is sent.
+
+    `goal` is what the reviewer typed into the box beside the button. Before
+    6.2b there was no box: "Suggest changes" took no user input at all, so the
+    planner was asked to guess what this particular person wanted from a
+    profile and a catalog, and its output could not be steered except by
+    rejecting it afterwards.
+
+    Trimmed to `GOAL_MAX_CHARS` here as well as at the API boundary. The
+    boundary is where a user gets a 422 they can act on; this is what protects
+    the CLI and anything else that calls the agent directly, and the two agree
+    because they read one constant.
+    """
+    goal = (goal or "").strip()[:GOAL_MAX_CHARS]
     profile = spec.profile
     current = spec.model_dump(mode="json")
     current.pop("profile", None)              # shown separately, and unpatchable
@@ -308,7 +334,16 @@ def build_request(spec: RunSpec, cat: Dict[str, Any]) -> Dict[str, str]:
     section_lines = "\n".join(f"- `{s['id']}` {s['title']}"
                               for s in cat["sections"])
 
-    user = f"""# The company
+    # Placed first, before the company and the catalog. A reader who is told
+    # what is wanted and then shown the material reads the material for it; the
+    # other order is a briefing that arrives after the work.
+    asked = f"""# What the reviewer asked for
+
+{goal}
+
+""" if goal else ""
+
+    user = f"""{asked}# The company
 
 {profile.identity.name} · {profile.business_model.type.value} · \
 {profile.business_model.customer_type.value} · {profile.identity.country}
@@ -375,7 +410,7 @@ def _parse_changes(payload: Dict[str, Any]) -> List[Change]:
     return out
 
 
-def propose(spec: RunSpec, *, meter: Optional[Meter] = None,
+def propose(spec: RunSpec, *, goal: str = "", meter: Optional[Meter] = None,
             client: Optional[Any] = None) -> Plan:
     """Ask for a patch. Never apply one.
 
@@ -386,9 +421,15 @@ def propose(spec: RunSpec, *, meter: Optional[Meter] = None,
     """
     ai = spec.ai
     meter = meter or Meter()
+    meter.ceiling = int(ai.max_tokens_per_run or 0)
     cat = catalog(spec.profile)
-    request = build_request(spec, cat)
+    request = build_request(spec, cat, goal)
     client = client or build_client(ai.model)
+
+    stop = meter.refuses("Planning")
+    if stop:
+        meter.note(stop)
+        return Plan(changes=[], summary="", meter=meter)
 
     try:
         payload = client.json(system=request["system"], user=request["user"],

@@ -249,6 +249,13 @@ def narrate(profile: Any, results: Sequence[Any], findings: Sequence[Any],
     renderers have always known how to draw.
     """
     meter = meter or Meter()
+    # Set here rather than where the meter is constructed, and that is the
+    # whole reason it is one line. `pipeline/stages.py` builds a `Meter()` and
+    # hands it over; so does the CLI; so does every test. Applying the ceiling
+    # at each of those would be four copies of one fact, which is the drift
+    # this repo keeps removing. The agent that spends is the one holding the
+    # spec, so it is the one that reads the limit off it.
+    meter.ceiling = int(getattr(spec, "max_tokens_per_run", 0) or 0)
     wanted = [c.id for c in contents]
     if not wanted:
         return {}, meter
@@ -271,6 +278,15 @@ def narrate(profile: Any, results: Sequence[Any], findings: Sequence[Any],
     problems: Dict[str, List[Any]] = {}
 
     for attempt in (1, 2):
+        # The ceiling binds here, not in the estimate the user pressed a button
+        # for. A retry is the call most likely to cross it — the first attempt
+        # has already been paid for — and stopping before one leaves the
+        # sections that passed rather than losing the lot.
+        stop = meter.refuses(f"The narrative retry for {len(problems)} section(s)"
+                             if attempt == 2 else "Narration")
+        if stop:
+            meter.note(stop)
+            return accepted, meter
         try:
             payload = client.json(system=request["system"], user=user,
                                   schema=SCHEMA, purpose=f"narrate:{attempt}")

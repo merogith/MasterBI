@@ -325,8 +325,23 @@ class AISpec(SpecModel):
     # narrator.
     narrate_sections: Optional[List[str]] = None
     max_paragraphs: int = Field(default=1, ge=1, le=3)
-    # A hard ceiling on what one run may spend, checked against the pre-flight
-    # estimate before the first call rather than discovered afterwards.
+    # A ceiling on what one run may spend.
+    #
+    # **This said "checked against the pre-flight estimate before the first
+    # call rather than discovered afterwards" and nothing checked it.** Asked
+    # rather than read, in 6.2b: set to its floor of 1,000, a narrate spent
+    # 1,200 with nothing raised, noted or stopped. A dead spec field of the
+    # kind 0.3 was spent removing, sitting in the one block whose subject is
+    # spending, describing a check that did not exist.
+    #
+    # It binds now, in two places and neither of them where the sentence said.
+    # `estimate()` reports `within_ceiling` against the worst case, which is
+    # what a user reads before committing; `Meter.refuses` stops the next call
+    # once the run has crossed it, which is what binds when they do. The second
+    # is checked on what has already been spent, so **a run may cross this by
+    # at most one call** — stated here because the alternative is a
+    # `count_tokens` round trip before every request, to tighten a number whose
+    # job is to stop a runaway rather than to bill anybody.
     max_tokens_per_run: int = Field(default=150_000, ge=1_000)
 
     def resolve_narrate_sections(self) -> List[str]:
@@ -535,9 +550,13 @@ PATCHABLE_SECTIONS = frozenset({
 #     widened for another purpose.
 #   * `ai` is added here by 6.2 because `narrate_sections` and
 #     `max_paragraphs` are genuine configuration. `model` and
-#     `max_tokens_per_run` are not: the second is the run's spend ceiling,
-#     "checked against the pre-flight estimate before the first call" — and a
-#     ceiling the patched party may raise is not a ceiling.
+#     `max_tokens_per_run` are not: the second is the run's spend ceiling, and
+#     a ceiling the patched party may raise is not a ceiling. (When 6.2a wrote
+#     that line it quoted the field's own docstring as though the check
+#     existed. It did not — 6.2b measured it and wired it. The refusal was
+#     right and its justification was borrowed from a sentence nobody had
+#     tested, which is the failure this repo keeps finding in prose rather
+#     than in code.)
 #
 # The distinction that decides membership is provenance, not danger.
 # `metrics.overrides.<kpi>.target` stays reachable although it is also a

@@ -589,6 +589,88 @@ def test_degradation(tmp: Path, spine) -> None:
 
 
 # --------------------------------------------------------------------------
+# 5b. Steering, and the ceiling that stops it
+# --------------------------------------------------------------------------
+
+def test_steering(spine) -> None:
+    """The goal box reaches the model, and the ceiling stops the spending.
+
+    Two halves of one item and they belong together: the goal is the first
+    input to this layer that is not bounded by the run's own data, which is
+    what turned `max_tokens_per_run` from a field nobody read into one that
+    has to work.
+    """
+    print("\nsteering")
+
+    profile = load_profile(SAAS)
+    spec = RunSpec.for_profile(profile)
+    cat = planner.catalog(profile)
+
+    HEADING = "# What the reviewer asked for"
+    bare = planner.build_request(spec, cat)
+    check("with no goal the prompt has no goal section",
+          HEADING not in bare["user"])
+
+    goal = "This goes to the board and the question is the cash runway."
+    steered = planner.build_request(spec, cat, goal)
+    check("the goal reaches the prompt", goal in steered["user"])
+    check("under its own heading", HEADING in steered["user"])
+    check("ahead of the company, so the material is read for it",
+          steered["user"].index(HEADING) < steered["user"].index("# The company"))
+    check("and nothing else about the request changed",
+          steered["user"].replace(HEADING + "\n\n" + goal + "\n\n", "") ==
+          bare["user"])
+
+    # Trimmed here as well as at the API boundary, so the CLI and any other
+    # direct caller get the same limit rather than the one the browser happens
+    # to enforce.
+    huge = planner.build_request(spec, cat, "x" * (planner.GOAL_MAX_CHARS * 3))
+    # Counted inside the goal's own section, not across the prompt: the
+    # catalog and the profile carry plenty of letters of their own, and the
+    # first version of this check measured 2,019 and blamed the trim.
+    planted = huge["user"].split(HEADING, 1)[1].split("# The company", 1)[0]
+    check("an over-long goal is trimmed to the one constant",
+          planted.count("x") == planner.GOAL_MAX_CHARS, str(planted.count("x")))
+
+    # -- the ceiling, in the two places that spend --------------------------
+    spec.ai.max_tokens_per_run = 1_000
+
+    spent = Meter()
+    spent.record(Call("narrate:1", "m", Usage(input_tokens=1_200)))
+    exhausted = FakeClient([{"summary": "s", "changes": []}])
+    plan = planner.propose(spec, meter=spent, client=exhausted)
+    check("the planner does not call once the ceiling is crossed",
+          len(exhausted.prompts) == 0, str(len(exhausted.prompts)))
+    check("and it proposes nothing rather than pretending", plan.changes == [])
+    check("and says why, so the appendix can report it",
+          any("ceiling" in note for note in plan.meter.notes),
+          str(plan.meter.notes))
+
+    # The narrator's retry is the call most likely to cross: the first attempt
+    # has already been paid for. Stopping before it keeps the sections that
+    # passed rather than losing the lot.
+    contents = spine["contents"]
+    bad = reply({c.id: ["Revenue reached 999,999,999 this period."]
+                 for c in contents})
+    good = reply({contents[0].id: ["Growth is holding."]})
+    twice = FakeClient([bad, good])
+    narrated, meter = narrator.narrate(
+        spine["profile"], spine["results"], spine["findings"], contents, "",
+        spec=spec.ai, client=twice)
+    check("the narrator stops before the retry it cannot afford",
+          len(twice.prompts) == 1, str(len(twice.prompts)))
+    check("and the ceiling is what it says, not the number gate",
+          any("ceiling" in note for note in meter.notes), str(meter.notes))
+
+    spec.ai.max_tokens_per_run = 150_000
+    roomy = FakeClient([bad, good])
+    narrator.narrate(spine["profile"], spine["results"], spine["findings"],
+                     contents, "", spec=spec.ai, client=roomy)
+    check("with room, the same transcript does retry",
+          len(roomy.prompts) == 2, str(len(roomy.prompts)))
+
+
+# --------------------------------------------------------------------------
 # 6. Metering
 # --------------------------------------------------------------------------
 
@@ -639,6 +721,35 @@ def test_metering(tmp: Path) -> None:
           priced["assumed_output_tokens"] > 0)
     check("an estimate carries a dollar figure",
           priced["worst_case_cost_usd"] > 0)
+
+    # -- the ceiling, which was declared and enforced by nothing -------------
+    #
+    # `AISpec.max_tokens_per_run` shipped with the AI layer and its docstring
+    # said it was "checked against the pre-flight estimate before the first
+    # call". Measured in 6.2b: set to its floor of 1,000, a narrate spent
+    # 1,200 with nothing raised, noted or stopped.
+    check("no ceiling means no refusal", Meter(ceiling=0).refuses("x") == "")
+    under = Meter(ceiling=10_000)
+    under.record(Call("narrate:1", "m", Usage(input_tokens=1_000)))
+    check("a run under its ceiling keeps going", under.refuses("x") == "")
+    over = Meter(ceiling=1_000)
+    over.record(Call("narrate:1", "m", Usage(input_tokens=1_200)))
+    check("a run over its ceiling refuses the next call",
+          over.refuses("Planning").startswith("Planning was skipped"),
+          over.refuses("Planning"))
+    check("and the refusal quotes both numbers",
+          "1,200" in over.refuses("x") and "1,000" in over.refuses("x"))
+
+    tight = estimate(FakeClient([]), {"plan": {"system": "a" * 400,
+                                               "user": "b" * 800}},
+                     "claude-opus-5", ceiling=1_000)
+    check("the estimate reports the ceiling", tight["ceiling"] == 1_000)
+    check("and judges the worst case against it, not the input alone",
+          tight["within_ceiling"] is False and tight["input_tokens"] < 1_000,
+          f"{tight['input_tokens']} in, {tight['worst_case_tokens']} worst case")
+    check("a run with room to spare says so",
+          estimate(FakeClient([]), {"plan": {"system": "a", "user": "b"}},
+                   "claude-opus-5", ceiling=10 ** 9)["within_ceiling"] is True)
 
 
 # --------------------------------------------------------------------------
@@ -720,6 +831,7 @@ def run() -> int:
             lambda: test_retry_and_drop(spine),
             lambda: test_prompt_carries_no_rows(spine),
             test_patch_guards,
+            lambda: test_steering(spine),
             lambda: test_injection(spine),
             lambda: test_degradation(tmp, spine),
             lambda: test_metering(tmp),

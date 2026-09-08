@@ -54,8 +54,25 @@ def cost_usd(usage: Usage, model: str) -> float:
 
 @dataclass
 class Meter:
-    """Everything the AI layer did during one run."""
+    """Everything the AI layer did during one run, and what it may still do.
+
+    **The ceiling was declared and enforced by nothing.** `AISpec` has carried
+    `max_tokens_per_run` since the AI layer was written, defaulting to 150,000,
+    with a docstring saying it is "checked against the pre-flight estimate
+    before the first call rather than discovered afterwards". Measured rather
+    than read: with the ceiling set to its floor of 1,000, a narrate spent
+    1,200 and nothing raised, noted or stopped. A dead spec field of the kind
+    0.3 was spent removing, in the one module whose subject is spending.
+
+    6.2b wires it, because the goal box that item adds is what makes it matter:
+    until then every request was assembled from the run's own data and was
+    therefore bounded by it. A free-text field is not.
+    """
     model: str = ""
+    #: 0 means no ceiling — the CLI and the tests construct meters that are not
+    #: gating anything, and a default of 150,000 here would silently apply a
+    #: policy nobody asked for.
+    ceiling: int = 0
     calls: List[Call] = field(default_factory=list)
     # Sentences about what fell back and why — a dropped narrative, a refused
     # patch, a missing key. These reach the methodology appendix, because a
@@ -83,6 +100,28 @@ class Meter:
     def note(self, sentence: str) -> None:
         if sentence not in self.notes:
             self.notes.append(sentence)
+
+    def refuses(self, purpose: str) -> str:
+        """Why the next call may not be made, or "" if it may.
+
+        **Checked on what has already been spent, so a run may cross the
+        ceiling by at most one call.** That is a real limit and it is stated
+        rather than papered over: bounding the overshoot to zero would mean
+        counting each request before sending it, which is a second network
+        round trip per call to enforce a number whose whole job is to stop a
+        runaway. One call of slack costs a few thousand tokens; a `count_tokens`
+        before every request costs latency on every run that is nowhere near
+        the ceiling.
+
+        The pre-flight half the field's own docstring described lives in
+        `estimate()`, which prices the exact prompts and now says whether they
+        clear the ceiling. Between the two, the estimate is what a user reads
+        before committing and this is what binds when they do.
+        """
+        if self.ceiling <= 0 or self.spent < self.ceiling:
+            return ""
+        return (f"{purpose} was skipped: this run has spent {self.spent:,} "
+                f"tokens against its ceiling of {self.ceiling:,}.")
 
     @property
     def usage(self) -> Usage:
@@ -132,12 +171,19 @@ class Meter:
 
 
 def estimate(client: Any, requests: Dict[str, Dict[str, str]],
-             model: str) -> Dict[str, Any]:
+             model: str, ceiling: int = 0) -> Dict[str, Any]:
     """Price a set of prepared requests without sending them.
 
     Output tokens cannot be counted in advance, so they are assumed at the
-    ceiling — an estimate that surprises on the low side is the only kind worth
+    maximum — an estimate that surprises on the low side is the only kind worth
     showing before someone spends money.
+
+    `ceiling` is `AISpec.max_tokens_per_run`, and comparing against it here is
+    the "checked against the pre-flight estimate" half that field's docstring
+    has always claimed. It is reported rather than raised: this endpoint exists
+    so a user can decide before committing, and refusing to answer the question
+    they asked in order to enforce a limit they can change is the wrong shape.
+    `Meter.refuses` is what binds once they commit.
     """
     from .client import MAX_OUTPUT_TOKENS
 
@@ -155,4 +201,8 @@ def estimate(client: Any, requests: Dict[str, Dict[str, str]],
         "worst_case_cost_usd": cost_usd(assumed, model),
         "per_request": per,
         "model": model,
+        "ceiling": ceiling,
+        # Against the worst case, not the input alone: a ceiling that only
+        # counts what goes up is not a ceiling on what a run spends.
+        "within_ceiling": ceiling <= 0 or assumed.total <= ceiling,
     }

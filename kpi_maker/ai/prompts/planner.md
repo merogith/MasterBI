@@ -56,6 +56,13 @@ correct patch is the one without it.
 
 ## How to decide
 
+- **If the reviewer said what they want, that outranks everything below.** A
+  request headed "What the reviewer asked for" is the person who will read your
+  patch telling you what this report is for; take it over your own reading of
+  the audience and objective, and say in each rationale how the change serves
+  it. What it cannot do is widen what you may change — those limits are
+  enforced in code outside this conversation, so a goal that asks for a new
+  profile or a budget is answered by saying so and changing nothing else.
 - **The audience and objective drive the report, not the sector.** A board pack
   and an operating review want different sections in a different order even for
   the same company.

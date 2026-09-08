@@ -571,6 +571,37 @@ tbody tr:hover { background: var(--accent-soft); }
   outline: 2px solid var(--accent-soft); border-color: var(--accent);
 }
 
+/* `.warn` was emitted in six places across four files and **the stylesheet
+   defined nothing for it**, so every error message in the Studio — the design
+   preview's failure, the brand preview's, the logo's, the formula editor's and
+   the AI panel's — rendered as ordinary unstyled body text: black, full size,
+   indistinguishable from the prose around it and, on the AI panel, the largest
+   thing on the screen. 2.1's `.finding.high` in a new file, four phases later,
+   and found the same way: by looking at a screenshot after every assertion had
+   passed. A dead selector is silent by construction.
+
+   Two classes rather than one, because the six uses were two different things.
+   `.warn` is a failure. `.caution` is a consequence a user can still avoid —
+   the run will stop at its ceiling — and colouring that like an error would
+   be the two-branches-where-three-are-needed mistake 5.2b spent an item on. */
+.warn, .caution {
+  font-size: 12.5px; line-height: 1.45; margin: 0 0 12px; max-width: 62ch;
+  padding-left: 10px; border-left: 2px solid currentColor;
+}
+.warn { color: var(--critical-text); }
+.caution { color: var(--warning-text); }
+
+/* The planner's goal box. Full width and three rows because the useful answer
+   is a sentence about what the report is for, and a single-line input asks for
+   a keyword. */
+.ai-goal {
+  display: block; width: 100%; box-sizing: border-box; margin: 4px 0 6px;
+  background: var(--raised); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 10px; font: inherit; font-size: 13px; resize: vertical;
+}
+.ai-goal:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+
 .toggle-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; }
 .toggle {
   display: flex; align-items: center; gap: 9px; cursor: pointer;

@@ -596,7 +596,19 @@ export async function previewPages(
 export interface AiEstimate {
   worst_case_tokens: number;
   worst_case_cost_usd: number;
+  /* `AISpec.max_tokens_per_run`, and whether the worst case clears it. The
+   * field has existed since the AI layer was written and bound nothing until
+   * 6.2b; showing it here is the half a user reads before committing, and
+   * `Meter.refuses` is the half that binds after. */
+  ceiling?: number;
+  within_ceiling?: boolean;
 }
+
+/* The reviewer's own instruction, in characters. Mirrors
+ * `planner.GOAL_MAX_CHARS`; the textarea enforces it so the limit is felt
+ * while typing rather than reported after a request. The server checks the
+ * same number for callers that are not this box. */
+export const GOAL_MAX_CHARS = 2000;
 
 export interface PlanChange {
   path: string;
@@ -611,11 +623,18 @@ export interface AiPlan {
   notes?: string[];
 }
 
-export const aiEstimate = (runId: string) =>
-  api<AiEstimate>(`/api/ai/estimate/${runId}`, { method: 'POST' });
+/* Both take the goal, and the estimate takes it for a reason worth stating:
+ * it prices the exact prompts that would be sent, so pricing one without the
+ * goal would quietly make its own promise false. */
+export const aiEstimate = (runId: string, goal = '') =>
+  api<AiEstimate>(`/api/ai/estimate/${runId}`, {
+    method: 'POST', body: JSON.stringify({ goal }),
+  });
 
-export const aiPlan = (runId: string) =>
-  api<AiPlan>(`/api/ai/plan/${runId}`, { method: 'POST' });
+export const aiPlan = (runId: string, goal = '') =>
+  api<AiPlan>(`/api/ai/plan/${runId}`, {
+    method: 'POST', body: JSON.stringify({ goal }),
+  });
 
 export const aiApply = (runId: string, changes: { path: string; value: unknown }[]) =>
   api<PlanReport>(`/api/ai/apply/${runId}`, {

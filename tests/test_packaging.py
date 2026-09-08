@@ -1337,3 +1337,32 @@ def test_the_planner_prompt_lists_the_sections_the_guard_allows() -> None:
     assert not stale, (
         "the prompt forbids paths the guard allows, so the planner is being "
         f"talked out of legal changes: {stale}")
+
+
+def test_the_goal_limit_agrees_across_the_two_languages() -> None:
+    """`GOAL_MAX_CHARS` is stated in Python and again in TypeScript.
+
+    Two copies, deliberately, for the reason `STATUS_LABEL` and the design
+    tokens have two: the textarea has to enforce the limit while someone is
+    typing, and a browser cannot import a Python constant. What stops that
+    being drift is this — the same arrangement, not a different one.
+
+    The direction that fails silently is the browser's being *larger*: the
+    server would then refuse a goal the box happily accepted, which is the
+    "rejected in front of the user" failure 4.3a calls worse than not offering
+    it. The direction that fails loudly is a smaller box, so both are checked.
+    """
+    from kpi_maker.ai.planner import GOAL_MAX_CHARS
+
+    source = (ROOT / "web" / "src" / "lib" / "api.ts").read_text(encoding="utf-8")
+    found = re.search(r"export const GOAL_MAX_CHARS = (\d+)", source)
+    assert found, "web/src/lib/api.ts no longer exports GOAL_MAX_CHARS"
+    assert int(found.group(1)) == GOAL_MAX_CHARS, (
+        f"the box allows {found.group(1)} characters and the server allows "
+        f"{GOAL_MAX_CHARS}")
+
+    panel = (ROOT / "web" / "src" / "studio" / "AiActions.tsx").read_text(
+        encoding="utf-8")
+    assert "maxLength={GOAL_MAX_CHARS}" in panel, (
+        "the goal textarea does not enforce the limit, so the first a user "
+        "hears of it is a 422 after they have written a page")

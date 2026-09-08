@@ -17,6 +17,7 @@ place a front-end error is reported at all.
 """
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
@@ -1591,3 +1592,182 @@ def test_asking_the_os_for_more_contrast_changes_something(page):
     assert raised == page.evaluate(primary), (
         f"--muted became {raised} under more-contrast rather than collapsing "
         f"onto the primary text colour")
+
+
+def _configured_ai(page):
+    """Answer `GET /api/ai/status` as a machine with the AI layer installed.
+
+    **The panel cannot render otherwise, and that is a property of the
+    environment rather than of the code.** `availability()` is false unless the
+    `anthropic` package is importable *and* a key is in the environment;
+    neither is true here, nor on any CI runner — `requirements-ai.txt` is not
+    installed by the matrix, deliberately, because the pipeline must never need
+    it. So the AI panel renders its setup instructions instead of its controls,
+    and every walk through it fails on a selector that is correctly absent.
+
+    Routing the status endpoint is the honest way through: it makes the real
+    component render with the real code, and it fakes nothing about the agent.
+    No request that would reach a model is made below — those are covered in
+    `tests/ai.py` against the transcript player and in `tests/test_store.py`
+    against the endpoints. This is 3.1's deferral answered rather than
+    repeated: that item left the AI payload untested because "there is no way
+    to assert it in this suite", and for the *panel* there is one.
+    """
+    page.route("**/api/ai/status", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"available": True, "reason": "",
+                         "default_model": "claude-opus-5",
+                         "narratable_sections": ["exec_summary"]})))
+
+
+def test_the_planner_can_be_told_what_the_report_is_for(page):
+    """"Suggest changes" took no user input at all.
+
+    `POST /api/ai/plan/{id}` had no body and `propose()` no goal, so the
+    planner inferred what this reader wanted from the profile and the catalog,
+    and the only way to steer it was to reject a patch and pay for another
+    request. Verified against the code before it was built rather than taken
+    from the plan.
+
+    Mutations: drop the textarea; drop its `maxLength`; drop the label; drop
+    the character count.
+    """
+    _configured_ai(page)
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#res-adjust")
+    _visible(page, "studio")
+    page.click('#studio-rail [data-stage="ai"]')
+
+    box = page.locator("#ai-goal")
+    assert box.count() == 1, "there is still no way to say what the report is for"
+    assert box.get_attribute("maxlength") == "2000", (
+        "the box does not bound what it will send, so the first a user hears "
+        "of the limit is a 422 after they have written a page")
+    # Named for a screen reader. Labelled by the visible heading rather than by
+    # a hidden `<label>`: a `.visually-hidden` class would have been the very
+    # defect this item's screenshot turned up, a class emitted with no rule
+    # behind it. Asserted through the accessibility tree, so it holds however
+    # the name is supplied.
+    assert page.get_by_label("What is this report for?").count() == 1, \
+        "the one free-text field in the panel has no accessible name"
+
+    # The count is what makes the bound visible while typing rather than after.
+    empty = page.text_content("#ai-goal-count")
+    box.fill("This goes to the board and the question is the cash runway.")
+    filled = page.text_content("#ai-goal-count")
+    assert filled != empty and "2,000" in (filled or ""), (
+        f"the character count did not respond to typing: {filled!r}")
+    assert "59 of" in filled, f"the count is not counting: {filled!r}"
+
+
+def test_an_estimate_priced_before_the_goal_says_it_is_stale(page):
+    """The estimate prices the exact prompts, so it prices the goal too.
+
+    Its docstring promises "the number in the studio is the number that will be
+    spent rather than a guess at it". Once a goal exists, an estimate taken
+    before it was typed answers a different question — the same drift this item
+    found in the endpoint, arriving one layer up as a stale number rather than
+    a wrong one.
+
+    The estimate itself is routed, for the reason `_configured_ai` gives: the
+    real endpoint needs a model to count tokens with. What is being asserted is
+    the panel's own state machine — priced, then edited, then noticed.
+
+    Mutations: drop the notice; compare against the wrong thing so it never
+    fires; forget to record what the estimate was priced for so it fires
+    always.
+    """
+    _configured_ai(page)
+    page.route("**/api/ai/estimate/**", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"worst_case_tokens": 24000,
+                         "worst_case_cost_usd": 0.62,
+                         "ceiling": 150000, "within_ceiling": True})))
+
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#res-adjust")
+    _visible(page, "studio")
+    page.click('#studio-rail [data-stage="ai"]')
+
+    assert page.locator("#ai-estimate-stale").count() == 0, \
+        "the panel called the estimate stale before anything had been priced"
+
+    page.fill("#ai-goal", "for the board")
+    assert page.locator("#ai-estimate-stale").count() == 0, \
+        "typing a goal with nothing priced yet should say nothing"
+
+    page.click("#ai-estimate-btn")
+    page.wait_for_selector("#ai-estimate strong")
+    assert page.locator("#ai-estimate-stale").count() == 0, (
+        "an estimate priced with the goal that is on screen is not stale")
+
+    # The control for the ceiling notice, and the mutation sweep is what asked
+    # for it: this run has a ceiling and is comfortably inside it. Without this
+    # line, a panel that warned whenever a ceiling *existed* passed every
+    # check — the over-ceiling walk only ever sees the case where both are
+    # true. 5.3e's detector that could not say no, in a paragraph of copy.
+    assert page.locator("#ai-over-ceiling").count() == 0, (
+        "the panel warns about a ceiling this run is nowhere near, which is "
+        "how a warning becomes invisible through repetition")
+
+    page.fill("#ai-goal", "for the operating team, weekly")
+    page.wait_for_selector("#ai-estimate-stale")
+    assert "Estimate again" in (page.text_content("#ai-estimate-stale") or ""), (
+        "the panel shows a price for a request nobody is going to send")
+
+
+def test_a_run_over_its_ceiling_is_told_before_it_spends(page):
+    """`max_tokens_per_run` bound nothing at all before this item.
+
+    It shipped with the AI layer, defaulting to 150,000, with a docstring
+    saying it was "checked against the pre-flight estimate before the first
+    call". Measured: set to its floor of 1,000, a narrate spent 1,200 and
+    nothing raised, noted or stopped.
+
+    Said out loud only when the worst case would cross it. A limit reported on
+    every run that is nowhere near it is the "invisible through repetition"
+    failure 5.3d found in the basis badge and moved into a subtitle.
+
+    Mutations: drop the warning; show it unconditionally; read `ceiling`
+    instead of `within_ceiling` so it fires whenever a ceiling exists.
+    """
+    _configured_ai(page)
+    page.route("**/api/ai/estimate/**", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"worst_case_tokens": 240000,
+                         "worst_case_cost_usd": 6.20,
+                         "ceiling": 150000, "within_ceiling": False})))
+
+    _start_first_sample(page)
+    page.wait_for_selector("#view-results:not([hidden])", timeout=RUN_TIMEOUT_MS)
+    page.click("#res-adjust")
+    _visible(page, "studio")
+    page.click('#studio-rail [data-stage="ai"]')
+
+    assert page.locator("#ai-over-ceiling").count() == 0, \
+        "the panel warned about a ceiling before pricing anything"
+    page.click("#ai-estimate-btn")
+    page.wait_for_selector("#ai-over-ceiling")
+    warning = page.text_content("#ai-over-ceiling") or ""
+    assert "150,000" in warning, f"the warning does not name the ceiling: {warning!r}"
+
+    # **And it has to look like a caution.** `.warn` was emitted in six places
+    # across four files and the stylesheet defined nothing for it, so every
+    # error message in the Studio rendered as ordinary body text — 2.1's
+    # `.finding.high` in a new file, found the same way and invisible to every
+    # assertion above. Measured as a computed colour, per 2.1: a rule that
+    # matches nothing passes any source check.
+    styles = page.evaluate("""() => {
+      const note = getComputedStyle(document.querySelector('#ai-over-ceiling'));
+      const body = getComputedStyle(document.querySelector('#ai-estimate'));
+      return {noteColor: note.color, bodyColor: body.color,
+              rule: parseFloat(note.borderLeftWidth)};
+    }""")
+    assert styles["noteColor"] != styles["bodyColor"], (
+        f"the caution is the same colour as the paragraph above it "
+        f"({styles['noteColor']}), so nothing marks it as one")
+    assert styles["rule"] >= 2, (
+        f"the caution has no rule beside it ({styles['rule']}px), so it reads "
+        f"as another sentence rather than as an aside")

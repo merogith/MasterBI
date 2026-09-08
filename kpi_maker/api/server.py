@@ -1100,6 +1100,21 @@ class ApplyRequest(BaseModel):
     changes: List[ChangeRequest]
 
 
+class PlanRequest(BaseModel):
+    """What the reviewer wants out of this report, in their own words.
+
+    Optional, and the body as a whole is optional, so a client that predates
+    the goal box still gets a plan rather than a 422.
+
+    The length bound is checked in the endpoint rather than declared here, so
+    it can read `planner.GOAL_MAX_CHARS` through this module's own convention
+    of importing the AI package inside the function that needs it. One
+    constant, quoted in the message, and `build_request` trims to the same one
+    — two limits would disagree the first time either moved.
+    """
+    goal: str = ""
+
+
 @app.get("/api/ai/status")
 def ai_status() -> Dict[str, Any]:
     """Whether a model could run, and what it would cost per million tokens.
@@ -1120,13 +1135,21 @@ def ai_status() -> Dict[str, Any]:
 
 
 @app.post("/api/ai/estimate/{run_id}")
-def ai_estimate(run_id: str) -> Dict[str, Any]:
+def ai_estimate(run_id: str,
+                body: Optional[PlanRequest] = None) -> Dict[str, Any]:
     """Price the two requests before either is sent.
 
     ROADMAP M7 asks for metering "surfaced to the user before they commit", and
     a receipt after the fact is not that. This builds the exact prompts the
     narrator and the planner would send and counts them, so the number in the
     studio is the number that will be spent rather than a guess at it.
+
+    **That sentence is why this endpoint takes the goal too.** 6.2b gave the
+    planner a free-text box; an estimate built without it prices a request
+    nobody is going to send, and the claim above quietly stops being true — the
+    drift Phase 0.4 was spent removing, arriving through a feature added beside
+    it rather than through an edit. The goal is a few hundred tokens against
+    several thousand, which is exactly why it would never have been noticed.
     """
     from ..ai.client import AIUnavailable, build_client
     from ..ai.meter import estimate
@@ -1150,32 +1173,46 @@ def ai_estimate(run_id: str) -> Dict[str, Any]:
         raise HTTPException(409, str(exc))
 
     requests = {
-        "plan": planner_request(spec, catalog(spec.profile)),
+        "plan": planner_request(spec, catalog(spec.profile),
+                                (body.goal if body else "")),
         "narrate": narrator_request(
             spec.profile, payload["results"], payload["findings"],
             payload["contents"], payload["period"],
             max_paragraphs=spec.ai.max_paragraphs),
     }
     try:
-        return estimate(client, requests, spec.ai.model)
+        return estimate(client, requests, spec.ai.model,
+                        ceiling=spec.ai.max_tokens_per_run)
     except AIUnavailable as exc:
         raise HTTPException(503, str(exc))
 
 
 @app.post("/api/ai/plan/{run_id}")
-def ai_plan(run_id: str) -> Dict[str, Any]:
-    """Ask for a RunSpec patch. Nothing is applied.
+def ai_plan(run_id: str, body: Optional[PlanRequest] = None) -> Dict[str, Any]:
+    """Ask for a RunSpec patch, optionally for a stated reason. Nothing is applied.
 
     The response carries rejected changes alongside accepted ones so the studio
     can show what the planner wanted and why it was refused — a suggestion that
     silently disappears is indistinguishable from one that was never made.
+
+    **The body is new in 6.2b and the endpoint took none before it.** "Suggest
+    changes" was a button with no input, so the planner had to infer what this
+    reader wanted from the profile and the catalog, and the only way to steer
+    it was to reject a patch and press it again — which costs another request.
     """
     from ..ai.client import AIUnavailable
-    from ..ai.planner import propose
+    from ..ai.planner import GOAL_MAX_CHARS, propose
+
+    goal = (body.goal if body else "").strip()
+    if len(goal) > GOAL_MAX_CHARS:
+        raise HTTPException(
+            422, f"the goal is {len(goal):,} characters and the limit is "
+                 f"{GOAL_MAX_CHARS:,} — say what the report is for, rather "
+                 f"than pasting the material it should cover")
 
     spec = _load_spec(run_id)
     try:
-        return propose(spec).as_dict()
+        return propose(spec, goal=goal).as_dict()
     except AIUnavailable as exc:
         raise HTTPException(503, str(exc))
 

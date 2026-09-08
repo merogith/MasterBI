@@ -387,6 +387,107 @@ def test_apply_enforces_the_guard_rather_than_trusting_the_plan(api, spec_run):
         "a refused patch was recorded as a version the planner authored"
 
 
+def test_the_plan_endpoint_takes_a_goal_and_bounds_it(api, spec_run):
+    """The button took no user input at all before 6.2b.
+
+    Two things asserted here rather than in `tests/ai.py`, because both are
+    properties of the boundary and not of the agent: an absent body still
+    works, so a client that predates the box is not broken by it; and a goal
+    past the limit is a 422 that says what to do, rather than being silently
+    truncated into a request the user did not write.
+    """
+    import pytest as _pytest
+    from fastapi import HTTPException
+
+    from kpi_maker.ai.planner import GOAL_MAX_CHARS
+
+    with _pytest.raises(HTTPException) as raised:
+        api.ai_plan(spec_run, api.PlanRequest(goal="x" * (GOAL_MAX_CHARS + 1)))
+    assert raised.value.status_code == 422
+    assert str(GOAL_MAX_CHARS) in str(raised.value.detail).replace(",", "")
+
+    # No key in this environment, so the agent itself is unreachable and the
+    # endpoint answers 503. That is the right outcome and it is *after* the
+    # bound above, which is what says the two are ordered correctly: a
+    # too-long goal must be rejected on its own terms rather than disappearing
+    # behind "the AI is not configured".
+    with _pytest.raises(HTTPException) as reached:
+        api.ai_plan(spec_run, None)
+    assert reached.value.status_code == 503, \
+        "an absent goal should reach the agent, not be refused here"
+
+    # And the goal reaches the prompt, which is the whole point of the body.
+    # Driven through the transcript player rather than asserted structurally:
+    # the endpoint could accept a goal, validate it, and drop it on the floor,
+    # and every check above would still pass.
+    from kpi_maker.ai import client as ai_client
+
+    class Recording:
+        model = "fake-model"
+        calls: list = []
+
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        def json(self, *, system, user, schema, purpose, max_tokens=8000):
+            self.prompts.append(user)
+            return {"summary": "", "changes": []}
+
+    recorder = Recording()
+    previous = ai_client.use_factory(lambda model: recorder)
+    try:
+        api.ai_plan(spec_run, api.PlanRequest(goal="the cash runway question"))
+    finally:
+        ai_client.use_factory(previous)
+    assert any("the cash runway question" in prompt for prompt in recorder.prompts), \
+        "the endpoint accepted a goal and never sent it"
+
+
+def test_the_estimate_prices_the_goal_it_will_send(api, spec_run):
+    """The estimate's own docstring is what makes this a requirement.
+
+    It promises "the number in the studio is the number that will be spent
+    rather than a guess at it". 6.2b gave the planner a free-text box; an
+    estimate built without it prices a request nobody is going to send, and
+    that sentence quietly stops being true — drift arriving through a feature
+    added beside a claim rather than through an edit to it.
+
+    Driven through the real endpoint with the transcript player in
+    `CLIENT_FACTORY`, which is the seam the whole AI suite runs on, because the
+    thing being asserted is the wiring rather than the arithmetic.
+    """
+    from kpi_maker.ai import client as ai_client
+
+    class Counting:
+        """Counts characters and records what it was asked to price."""
+
+        def __init__(self) -> None:
+            self.seen: list[str] = []
+
+        def count(self, *, system: str, user: str) -> int:
+            self.seen.append(user)
+            return (len(system) + len(user)) // 4
+
+    counter = Counting()
+    previous = ai_client.use_factory(lambda model: counter)
+    try:
+        bare = api.ai_estimate(spec_run, None)
+        goal = "This goes to the board and the question is the cash runway."
+        priced = api.ai_estimate(spec_run, api.PlanRequest(goal=goal))
+    finally:
+        ai_client.use_factory(previous)
+
+    assert any(goal in seen for seen in counter.seen), \
+        "the goal never reached the prompt that was counted"
+    assert priced["input_tokens"] > bare["input_tokens"], \
+        "a longer request priced the same, so the goal was not counted"
+
+    # The ceiling reaches the payload too — it is what the panel shows when the
+    # worst case would cross it, and it bound nothing at all before 6.2b.
+    assert priced["ceiling"] == 150_000
+    assert priced["within_ceiling"] is True
+
+
 def test_versions_are_reachable_over_the_api(api, spec_run):
     """A table nothing can read is the pattern this phase exists to stop."""
     api.rerun(spec_run)
