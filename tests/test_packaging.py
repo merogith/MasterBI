@@ -91,7 +91,14 @@ def test_sample_count_is_stated_correctly() -> None:
     gallery = json.loads(
         (ROOT / "samples" / "gallery.json").read_text(encoding="utf-8"))
     n = len(gallery)
-    words = {3: "three", 4: "four", 5: "five", 6: "six"}
+    # `NUMBER_WORDS`, not a local dict stopping at six. This function had one,
+    # and the gallery reached seven — so `words.get(7)` was `None` and the
+    # comparison could only ever be false, which is the failure the module's
+    # own note on `NUMBER_WORDS` describes ("both went quiet the moment a count
+    # moved past the last key they happened to list"). Here it would have
+    # failed loudly rather than silently, but it is the same defect and the
+    # shared table already exists.
+    words = NUMBER_WORDS
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     # Both phrasings the README has used: "4 curated companies" in the mode
@@ -100,10 +107,39 @@ def test_sample_count_is_stated_correctly() -> None:
     for stated in re.findall(r"(\d+) (?:curated )?(?:sample )?companies", readme):
         assert int(stated) == n, f"README says {stated} samples; gallery has {n}"
 
-    builder = (ROOT / "tools" / "build_pages.py").read_text(encoding="utf-8")
-    for stated in re.findall(r"The (\w+) companies below", builder):
-        assert stated.lower() == words.get(n, str(n)), (
-            f"build_pages.py says '{stated}'; gallery has {n}")
+    # **This half of the check had stopped checking anything.** It read
+    # `tools/build_pages.py` for "The <word> companies below", and the 1.1 port
+    # moved that sentence out of the builder and into
+    # `web/src/components/DemoNotice.tsx`. The regex then matched nothing, the
+    # loop body never ran, and the assertion was green while the copy it guards
+    # said "four" over a gallery of seven — a gate that can match nothing is
+    # not a gate, which is 7.4a's lesson in a drift test rather than a media
+    # query. So: scan wherever the sentence actually lives, and fail if it
+    # lives nowhere.
+    surfaces = [ROOT / "tools" / "build_pages.py",
+                *sorted((ROOT / "web" / "src").rglob("*.tsx"))]
+    found = 0
+    for path in surfaces:
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for stated in re.findall(
+                r"(?:The )?(\w+) (?:companies below|finished companies)", text):
+            if stated.lower() in ("finished", "the"):
+                continue
+            found += 1
+            assert stated.lower() in (words.get(n), str(n)), (
+                f"{path.name} says '{stated}' companies; gallery has {n}")
+
+    # And the one surface that shows a number derives it, so it cannot drift
+    # again the way it just did. A count typed beside the list that produces it
+    # is a second copy of a fact, and this is the copy that was wrong.
+    home = (ROOT / "web" / "src" / "views" / "Home.tsx").read_text(encoding="utf-8")
+    assert "${samples.length} finished companies" in home, (
+        "the samples card no longer counts the gallery it links to")
+    assert found or "${samples.length} finished companies" in home, (
+        "nothing states the sample count any more — this check now guards "
+        "nothing, which is how it went quiet last time")
 
 
 def test_pages_workflow_verifies_every_sample() -> None:

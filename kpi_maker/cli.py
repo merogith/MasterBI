@@ -130,6 +130,18 @@ def load_spec(path: Path) -> RunSpec:
     return RunSpec(**raw)
 
 
+def _ui_bundle_exists() -> bool:
+    """Is there a compiled front end for the server to serve?
+
+    Asked the same way `api/server.py` asks it, and deliberately by importing
+    that module's own constant rather than restating the path: two copies of
+    where the bundle lives is exactly the drift that would make this check pass
+    while the mount it is warning about does not exist.
+    """
+    from .api.server import UI_DIST_DIR
+    return (UI_DIST_DIR / "index.html").is_file()
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="kpi-maker",
@@ -168,6 +180,30 @@ def main(argv: Optional[List[str]] = None) -> int:
         import uvicorn
         url = f"http://{args.host}:{args.port}"
         print(f"KPI Dashboard Maker  ->  {url}")
+
+        # The front end is a build artifact and is not in the repository, so a
+        # fresh checkout has none. `api/server.py` answers `/` with a 500 whose
+        # body says what to run — which is the right answer to a request and
+        # the wrong thing to open a browser onto: `start.command` and
+        # `start.bat` pass `--open`, so the first thing a user saw after "your
+        # browser opens by itself in a moment" was a page of raw JSON. README's
+        # "That is the whole procedure" made this the documented path.
+        #
+        # Say it here, where there is a console to say it in, and do not open a
+        # browser onto a page that cannot work. The server still starts: the
+        # API is fully functional without a bundle, which is what `--reload`
+        # development and `curl` both rely on.
+        if not _ui_bundle_exists():
+            print()
+            print("  The front end has not been built, so the app will not")
+            print("  render. The API is up; the browser UI is not.")
+            print()
+            print("    npm --prefix web ci && npm --prefix web run build")
+            print()
+            print("  Then start this again. (The released executables and the")
+            print("  Docker image ship the bundle inside them.)")
+            print()
+            args.open_browser = False
 
         if args.open_browser:
             # uvicorn.run blocks, so the opener waits on the port from a side

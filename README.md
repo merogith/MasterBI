@@ -67,12 +67,21 @@ runs the same check on all three platforms before attaching anything.
 
 **Double-click `start.bat`** (Windows) or **`start.command`** (macOS, Linux).
 That is the whole procedure. It finds Python, builds the environment, installs
-the dependencies, starts the server and opens your browser — and on a network
-that intercepts TLS it retries pip with the trusted-host flags rather than
-dying on a certificate error. Only the first run is slow.
+the dependencies, compiles the front end, starts the server and opens your
+browser — and on a network that intercepts TLS it retries pip with the
+trusted-host flags rather than dying on a certificate error. Only the first run
+is slow.
 
-Needs Python 3.11 or newer. If it is missing, the launcher says so and where to
-get it.
+Needs Python 3.11 or newer, and Node 18 or newer for that one build step.
+`web/` compiles to `kpi_maker/ui_dist/`, which is a build artifact and so is not
+in the repository: without it the server runs but has no UI to serve. The
+launcher builds it on the first run and says so if it cannot; `serve` says the
+same before it starts, rather than opening a browser onto a page that cannot
+render. If either is missing the launcher says which, and where to get it.
+
+**None of that applies to the downloads above** — the released executables and
+the Docker image carry the interpreter, the dependencies and the compiled front
+end inside them.
 
 <details>
 <summary>By hand, if you would rather</summary>
@@ -98,8 +107,10 @@ Three modes on the home screen:
 | **3 · Bring your data** | Working — upload, see what it was read as, correct the field mapping, see what it will and will not produce, then run | Free |
 | **Surprise me** | Working — random self-consistent company | Free |
 
-Results open in a workspace with five tabs: Overview (findings), Dashboard
-(embedded), Scorecard (filterable), Data (every fact table), Downloads.
+Results open on one screen: the headline tiles, the findings, the full
+filterable scorecard with every KPI's record sheet behind its name, and the
+nine downloads. The dashboard opens in its own tab; the fact tables are in the
+workbook and in `data/`.
 
 ## The hosted app (GitHub Pages)
 
@@ -107,7 +118,7 @@ Results open in a workspace with five tabs: Overview (findings), Dashboard
 
 | | Nothing running locally | Local server running |
 |---|---|---|
-| Four sample companies | yes, pre-rendered | yes |
+| Every sample company | yes, pre-rendered | yes |
 | The Studio | read-only — every panel shows what the run was built from | fully editable |
 | Build your own · Bring your data · Surprise me | explained, not offered | yes |
 | Where runs are stored | nowhere — read only | your `runs/` folder |

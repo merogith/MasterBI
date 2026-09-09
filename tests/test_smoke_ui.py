@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -419,6 +420,16 @@ def test_bringing_data_walks_the_funnel_to_a_finished_run(page, tmp_path):
     assert "KPI" in gate, gate[:400]
     assert "monthly_financials" in gate
 
+    # The promise, kept to compare against the delivery below. This is the one
+    # screen where the product's central claim is a number, and until this
+    # walk read it back nothing checked the two agreed: on a 36-month P&L the
+    # gate said 6 and the run computed 2, because the count came from a
+    # table-granular map and the engine is column-granular. `test_upload_run`
+    # pins that server-side; this pins that the two screens a user actually
+    # sees say the same thing.
+    promised = int(re.search(r"(\d+)\s+KPIs?\s+from what you supplied",
+                             gate).group(1))
+
     # Step 4 — only the questions the file could not answer.
     page.click("#to-questions")
     page.wait_for_selector("#run-upload")
@@ -436,6 +447,26 @@ def test_bringing_data_walks_the_funnel_to_a_finished_run(page, tmp_path):
     # Names the company *this funnel* was told about, so the results cannot be
     # some other run that happened to be on screen.
     assert "Wayfarer Freight" in page.locator("#res-company").inner_text()
+
+    # The delivery, against the promise two screens earlier.
+    count_line = page.locator("#res-kpi-count").inner_text()
+    delivered = int(re.search(r"(\d+)\s+of\s+\d+\s+computed", count_line).group(1))
+    assert delivered == promised, (
+        f"the gate promised {promised} KPIs and the results screen reports "
+        f"{delivered} computed — {count_line!r}")
+
+    # And that number is the scorecard's own, not the selected total. It read
+    # "1 headline KPIs of 25 computed" over a scorecard where 23 rows said
+    # "not computed": `summary.kpis` is every selected row, so the sentence
+    # named one number and printed another. True by accident on a sample, where
+    # every KPI computes, and false on exactly this screen — a partial upload,
+    # which is the case the whole funnel exists to be honest about.
+    rows = page.locator(".scorecard tbody tr")
+    blank = sum(1 for i in range(rows.count())
+                if "not computed" in rows.nth(i).inner_text())
+    assert delivered == rows.count() - blank, (
+        f"the line says {delivered} computed and the scorecard shows "
+        f"{rows.count() - blank} of {rows.count()} rows with a value")
 
 
 def test_the_funnel_goes_backwards_without_losing_the_file(page, tmp_path):

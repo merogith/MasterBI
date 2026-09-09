@@ -146,9 +146,15 @@ export function Home() {
                 onClick={() => navigate('/samples')}>
           <span class="mode-num">03</span>
           <h2>Browse the samples</h2>
-          <p>Four finished companies with real stories — a churn problem, a cash
-             problem, a concentration risk, a margin problem. Read what to watch
-             for before you run one.</p>
+          {/* Counted, not typed. The gallery shipped four companies when this
+              card was written and ships seven now, and the card still said
+              four — over a grid that visibly holds seven. A number in prose
+              beside a list that produces it is a copy of a fact, and this one
+              had already drifted. */}
+          <p>{samples ? `${samples.length} finished companies` : 'Finished companies'}
+             {' '}with real stories — a churn problem, a cash problem, a
+             concentration risk, a margin problem. Read what to watch for before
+             you run one.</p>
           <span class="mode-meta">Instant · No input needed</span>
           <span class="mode-go" aria-hidden="true">→</span>
         </button>

@@ -34,6 +34,10 @@ export function Results({ summary }: { summary: Summary }) {
   const shown = allFindings ? findings : findings.slice(0, FINDINGS_SHOWN);
   const hidden = findings.length - shown.length;
 
+  // How many of the selected KPIs the run could actually compute. The
+  // scorecard says so per row; the line above it used to imply all of them.
+  const computed = summary.kpis.filter((k) => k.computed).length;
+
   return (
     <section class="view" id="view-results">
       <div class="res-head">
@@ -87,10 +91,21 @@ export function Results({ summary }: { summary: Summary }) {
 
       {/* The tiles are the top-tier KPIs, not the whole scorecard — a
           deliberate edit rather than a truncation. Saying which, and how many
-          there are in total, is the difference between an edit and a loss. */}
+          there are in total, is the difference between an edit and a loss.
+
+          `summary.kpis` is every row of facts.csv — the whole *selected*
+          scorecard, computed or not — so "of {kpis.length} computed" was a
+          claim about a different number. On a sample it is accidentally true
+          (25 selected, 25 computed) and nobody could see it; on a partial
+          upload it read "1 headline KPIs of 25 computed" over a scorecard
+          where 23 rows said "not computed". A false sentence about how much
+          was computed, on the screen whose whole argument is that this product
+          says what it does and does not have. Both numbers are stated
+          separately now, and each is the one it names. */}
       {summary.kpis.length > summary.tiles.length && (
         <p class="section-sub" id="res-kpi-count">
-          {summary.tiles.length} headline KPIs of {summary.kpis.length} computed.
+          {summary.tiles.length} headline KPI{summary.tiles.length === 1 ? '' : 's'},
+          {' '}{computed} of {summary.kpis.length} computed.
           The full scorecard is below.
         </p>
       )}

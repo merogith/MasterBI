@@ -77,6 +77,32 @@ if errorlevel 1 (
   echo.
 )
 
+REM ---- the front end ------------------------------------------------------
+REM `kpi_maker\ui_dist\` is a build artifact and is gitignored, so a fresh
+REM checkout has no UI and the server answers / with a JSON 500. This script
+REM passed --open regardless, so "your browser opens by itself" opened onto
+REM that. Build it if there is an npm to build it with.
+if not exist "kpi_maker\ui_dist\index.html" (
+  where npm >nul 2>nul
+  if errorlevel 1 (
+    echo.
+    echo   No front end, and no npm to build one. The app will not render.
+    echo   Install Node.js from https://nodejs.org/ and run this again, or
+    echo   download a ready-made build from the project's Releases page.
+    echo.
+  ) else (
+    echo   First run. Building the front end...
+    call npm --prefix web ci --silent
+    call npm --prefix web run build --silent
+    if not exist "kpi_maker\ui_dist\index.html" (
+      echo.
+      echo   The front-end build failed. The error is above.
+      echo   The server will start, but the browser UI will not load.
+      echo.
+    )
+  )
+)
+
 REM ---- go -----------------------------------------------------------------
 echo   Starting. Your browser opens by itself in a moment.
 echo   Leave this window open while you use the app; close it to stop.

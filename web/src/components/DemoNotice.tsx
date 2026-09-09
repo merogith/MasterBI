@@ -13,7 +13,12 @@ export function DemoNotice() {
 
   return (
     <div class="notice static-notice" style={{ margin: '0 0 28px' }}>
-      <strong>Demo mode.</strong> The four companies below are pre-rendered and
+      {/* No count. `pages.yml` pre-renders every entry in `samples/gallery.json`
+          — seven of them, and it checks all seven by name — while this said
+          four, which was true when the gallery held four. This component has no
+          list to count, and a number it cannot derive is a number it will get
+          wrong again. The grid underneath says how many there are. */}
+      <strong>Demo mode.</strong> The companies below are pre-rendered and
       fully explorable — dashboard, scorecard, every fact table, every download.
       Building your own, uploading a spreadsheet and <em>Surprise me</em> run a
       Python pipeline, which a static host cannot do. Start the app on your own

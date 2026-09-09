@@ -669,6 +669,24 @@ export function OutputsPanel({ spec, options, onChange }: PanelProps) {
 
 // -- AI --------------------------------------------------------------------
 
+/** `availability().reason` as its own sentence.
+ *
+ * The server writes it as a lowercase clause wrapped in Markdown backticks —
+ * "the `anthropic` package is not installed — pip install -r
+ * requirements-ai.txt" — which is right for the console and the 503 body it
+ * also serves. Dropped verbatim into prose after a full stop it rendered as a
+ * lowercase sentence with two literal backticks in it, on the panel a reader
+ * opens to find out why the feature is off. The server's wording is for its
+ * callers; the presentation is this panel's. No trailing full stop is added:
+ * the clause ends in a filename, and `requirements-ai.txt.` is a worse thing
+ * to copy than a missing period.
+ */
+function asSentence(reason?: string): string {
+  const plain = (reason ?? '').replace(/`/g, '').trim();
+  if (!plain) return 'Not configured.';
+  return plain.charAt(0).toUpperCase() + plain.slice(1);
+}
+
 export function AiPanel({ spec, onChange, status, runId, onApplied }: PanelProps & {
   status: { available: boolean; reason?: string; default_model?: string;
             narratable_sections?: string[] };
@@ -683,7 +701,7 @@ export function AiPanel({ spec, onChange, status, runId, onApplied }: PanelProps
     return (
       <Section title="AI"
                blurb={`Off, and the pipeline does not need it — every artifact is
-                       produced without a model. ${status.reason ?? 'Not configured.'}`}>
+                       produced without a model. ${asSentence(status.reason)}`}>
         <pre class="ai-setup">{'pip install -r requirements-ai.txt\nexport ANTHROPIC_API_KEY=…'}</pre>
       </Section>
     );

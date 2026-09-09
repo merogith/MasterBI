@@ -101,7 +101,8 @@ def build_report(tables: Dict[str, pd.DataFrame], profile,
     report.schema_problems = problems
 
     report.kpis_available, report.kpis_blocked = _kpi_counts(
-        [entry["table"] for entry in report.tables_missing], profile)
+        [entry["table"] for entry in report.tables_missing], profile,
+        tables, origins)
     return report
 
 
@@ -153,25 +154,64 @@ def _kpis_needing(table: str, profile) -> tuple:
     return relevant, len(relevant)
 
 
-def _kpi_counts(missing: List[str], profile) -> tuple:
+def _kpi_counts(missing: List[str], profile,
+                tables: Optional[Dict[str, pd.DataFrame]] = None,
+                origins: Optional[Dict[str, str]] = None) -> tuple:
     """(available, blocked) for this profile's scorecard.
 
-    Counted from what is **missing**, not from what is present, and the
-    difference is not a refactor. A KPI needing both the P&L and the orders file
-    appears under both, so counting the union of present tables called it
-    available on the strength of the P&L alone — while `tables_missing` on the
-    same screen said supplying orders would unlock it. The report contradicted
-    itself: four missing tables, thirteen KPIs named against them, and "0
-    blocked" printed underneath.
+    **Computed over the supplied tables, not predicted from the table map**, and
+    that is the whole point of this function. The screen above it says "this is
+    what the dashboard will contain", which is a statement about the run that is
+    about to happen — so the only defensible way to produce it is to ask the
+    engine that will produce that run.
 
-    One missing dependency blocks a KPI. That is what the map means, and it is
-    what the user sees when the tile is absent from the dashboard.
+    Measured on a P&L export mapped to `monthly_financials`: the map said 6 KPIs
+    available and 19 blocked, and the run computed 2. The four it overstated
+    were `arr`, `arr_growth_yoy`, `billings` and `crpo_growth`, and they share a
+    cause. `TABLE_KPIS` is table-granular and the engine is column-granular: all
+    four read `arr`, `mrr`, `rpo` or `crpo` — columns of `monthly_financials`
+    that the generator emits and a P&L export does not carry. The table was
+    present, so nothing marked them blocked; the columns were absent, so the run
+    reported "insufficient data" on four rows the user had been promised. A
+    number that is an upper bound must not be printed as a fact, and this is the
+    same "second copy of a fact the engine already owns" that
+    `tools/gen_table_kpis.py` exists to stop, one level up: the map answers the
+    *predictive* question correctly ("what would the headcount roster get me?"),
+    and this is not that question.
+
+    It costs one `compute` over data that is already in memory — 0.23s on a
+    36-month upload — on a request the user is already waiting on. That is what
+    makes reporting affordable where predicting was necessary in
+    `_kpis_needing`, which asks about tables nobody has supplied and so has
+    nothing to compute over.
+
+    The map is still the fallback, because a report that answers is better than
+    one that raises: `compute` sees a user's own file, and a number that is
+    slightly optimistic beats a screen that will not render. The fallback keeps
+    the rule it was given and the reason is still good — it counts from what is
+    **missing**, not from what is present, because a KPI needing both the P&L
+    and the orders file appears under both, and counting the union of present
+    tables called it available on the strength of the P&L alone while
+    `tables_missing` on the same screen said supplying orders would unlock it.
+    Four missing tables, thirteen KPIs named against them, and "0 blocked"
+    printed underneath. One missing dependency blocks a KPI; that rule was
+    right, and the defect above is that a *table* is the wrong unit for it.
     """
     try:
         from ..kpi.selection import select
-        selected = {k.id for k in select(profile).kpis}
+        kpi_set = select(profile)
+        selected = {k.id for k in kpi_set.kpis}
     except Exception:                                       # noqa: BLE001
         return 0, 0
+
+    if tables:
+        try:
+            from ..metrics.engine import compute
+            results = compute(kpi_set, tables, profile, origins=origins or {})
+            available = sum(1 for r in results if r.computed)
+            return available, len(selected) - available
+        except Exception:                                   # noqa: BLE001
+            pass
 
     blocked = set()
     for table in missing:

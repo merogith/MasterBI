@@ -322,6 +322,53 @@ def test_the_gate_answers_before_a_run_exists(api, export):
     assert report["plans"][0]["table"] == "monthly_financials"
 
 
+def test_the_promised_kpi_count_is_the_count_the_run_delivers(tmp_path, export,
+                                                              retailer, api):
+    """"This is what the dashboard will contain" has to be true.
+
+    It was an upper bound printed as a fact. Measured on a 36-month P&L mapped
+    to `monthly_financials`: the screen promised **6 KPIs from what you
+    supplied, 19 waiting on data you have not sent**, and the run computed
+    **2**. The four it overstated were `arr`, `arr_growth_yoy`, `billings` and
+    `crpo_growth`, and they share one cause — `TABLE_KPIS` is table-granular
+    and the metrics engine is column-granular. All four read `arr`, `mrr`,
+    `rpo` or `crpo`: columns of `monthly_financials` that the generator emits
+    and no P&L export carries. The table was present, so nothing marked them
+    blocked; the columns were absent, so the run put "insufficient data" on
+    four rows the user had just been promised.
+
+    Invisible on a synthetic table, which is why it survived: hand the report
+    the generator's own `monthly_financials` and the map's 6 is exactly right.
+    Only a real, partially-populated upload separates the two numbers, and this
+    fixture is one.
+
+    Pinned against the run rather than against 2, because the number that
+    matters is not any particular number — it is that these two agree.
+    """
+    from kpi_maker.ingest.quality import build_report
+
+    # Through the endpoint's own reader, not `_canonical`. `_uploaded_tables`
+    # maps *and* derives, and the run does too; a fixture that only maps was
+    # the first thing this test got wrong, and it reproduced the gap
+    # `test_the_preview_does_not_report_problems_the_run_then_fixes` closed one
+    # layer down — a preview reading the file differently from the run.
+    read = api._uploaded_tables([export.name])
+    report = build_report(read["tables"], retailer)
+    _result, computed = _run(tmp_path, export, retailer)
+
+    assert report.kpis_available == len(computed), (
+        f"the gate promised {report.kpis_available} KPIs and the run computed "
+        f"{len(computed)}: {sorted(computed)}")
+    assert report.kpis_available + report.kpis_blocked == \
+        len(_selected_ids(retailer)), \
+        "available and blocked must still partition the scorecard"
+
+
+def _selected_ids(profile):
+    from kpi_maker.kpi.selection import select
+    return {k.id for k in select(profile).kpis}
+
+
 def test_the_preview_does_not_report_problems_the_run_then_fixes(api, export):
     """A gate that disagrees with the run is worse than no gate.
 

@@ -57,6 +57,30 @@ if ! "$VPY" -c "import fastapi, pandas, plotly, kaleido, fpdf, pptx, docx, xlsxw
   echo
 fi
 
+# ---- the front end --------------------------------------------------------
+# `kpi_maker/ui_dist/` is a build artifact and is gitignored, so a fresh
+# checkout has no UI at all and the server answers `/` with a JSON 500. This
+# script passed --open regardless, so "your browser opens by itself in a
+# moment" opened onto that — while the README called this whole file "the
+# procedure". Build it if there is an npm to build it with.
+if [ ! -f "kpi_maker/ui_dist/index.html" ]; then
+  if command -v npm >/dev/null 2>&1; then
+    echo "  First run. Building the front end..."
+    if ! (npm --prefix web ci --silent && npm --prefix web run build --silent); then
+      echo
+      echo "  The front-end build failed. The error is above."
+      echo "  The server will start, but the browser UI will not load."
+      echo
+    fi
+  else
+    echo
+    echo "  No front end, and no npm to build one. The app will not render."
+    echo "  Install Node.js from https://nodejs.org/ and run this again, or"
+    echo "  download a ready-made build from the project's Releases page."
+    echo
+  fi
+fi
+
 # ---- go -------------------------------------------------------------------
 echo "  Starting. Your browser opens by itself in a moment."
 echo "  Leave this window open while you use the app; close it to stop."
