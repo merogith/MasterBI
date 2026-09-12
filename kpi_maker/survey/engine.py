@@ -285,7 +285,8 @@ def build_profile(answers: Dict[str, Any], *, name: Optional[str] = None,
         },
         intent={
             "primary_objective": objective,
-            "secondary": [],
+            "secondary": list(dict.fromkeys(answers.get("secondary") or [])),
+            "question": answers.get("question", ""),
             "horizon_months": 12,
             "audience": audience,
         },
@@ -338,9 +339,6 @@ def random_answers(seed: Optional[int] = None) -> Dict[str, Any]:
                    if o["value"] != UNKNOWN and not o.get("disabled")]
         if choices:
             answers[q["id"]] = rng.choice(choices)
-    # Only the SaaS generator exists; picking anything else would fail loudly
-    # further down, which is a worse experience than quietly staying in scope.
-    answers["business_model"] = "saas"
     return answers
 
 

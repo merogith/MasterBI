@@ -122,7 +122,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pypdf
+          pip install pytest pypdf "starlette[full]"
 
       - name: Test
         # `faulthandler_timeout` in pyproject.toml turns a hang into a stack

@@ -153,7 +153,7 @@ def test_off_is_off(tmp: Path) -> None:
 
     spec = RunSpec.for_profile(load_profile(SAAS))
     check("ai is disabled on a default spec", spec.ai.enabled is False)
-    check("the default model is Opus 5", spec.ai.model == "claude-opus-5")
+    check("the default model is OpenAI Standard", spec.ai.model == "gpt-5.6-luna")
 
     guard = ExplodingFactory()
     previous = ai_client.use_factory(guard)
@@ -575,13 +575,13 @@ def test_degradation(tmp: Path, spine) -> None:
     # Availability reports a reason rather than a bare false.
     import os
     saved = {k: os.environ.pop(k, None)
-             for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+             for k in ("OPENAI_API_KEY",)}
     try:
         state = ai_client.availability()
         check("no key is reported as unavailable", state["available"] is False)
         check("with a reason the user can act on",
-              "ANTHROPIC_API_KEY" in state["reason"] or
-              "anthropic" in state["reason"], state["reason"])
+              "OPENAI_API_KEY" in state["reason"] or
+              "openai" in state["reason"], state["reason"])
     finally:
         for k, v in saved.items():
             if v is not None:

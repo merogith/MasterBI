@@ -672,7 +672,7 @@ export function OutputsPanel({ spec, options, onChange }: PanelProps) {
 /** `availability().reason` as its own sentence.
  *
  * The server writes it as a lowercase clause wrapped in Markdown backticks —
- * "the `anthropic` package is not installed — pip install -r
+ * "the `openai` package is not installed — pip install -r
  * requirements-ai.txt" — which is right for the console and the 503 body it
  * also serves. Dropped verbatim into prose after a full stop it rendered as a
  * lowercase sentence with two literal backticks in it, on the panel a reader
@@ -702,7 +702,7 @@ export function AiPanel({ spec, onChange, status, runId, onApplied }: PanelProps
       <Section title="AI"
                blurb={`Off, and the pipeline does not need it — every artifact is
                        produced without a model. ${asSentence(status.reason)}`}>
-        <pre class="ai-setup">{'pip install -r requirements-ai.txt\nexport ANTHROPIC_API_KEY=…'}</pre>
+        <pre class="ai-setup">{'pip install -r requirements-ai.txt\nexport OPENAI_API_KEY=…'}</pre>
       </Section>
     );
   }
@@ -726,6 +726,13 @@ export function AiPanel({ spec, onChange, status, runId, onApplied }: PanelProps
         </span>
       </label>
 
+      <label>Model
+        <select value={String(ai['model'] ?? 'gpt-5.6-luna')}
+                onChange={e => onChange(setPath(spec, 'ai.model', e.currentTarget.value))}>
+          <option value="gpt-5.6-luna">Standard · GPT-5.6 Luna · low cost</option>
+          <option value="gpt-6-astra">Advanced · GPT-6 Astra · higher cost</option>
+        </select>
+      </label>
       <h3 class="studio-sub">Sections to narrate</h3>
       <div class="toggle-grid">
         {narratable.map((section) => (

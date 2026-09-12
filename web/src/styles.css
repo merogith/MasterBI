@@ -1254,3 +1254,45 @@ th[aria-sort="descending"] .th-sort { color: var(--text-primary); }
   /* An outline that was a hint becomes a boundary. */
   .tile, .card, .option, .panel { border-width: 2px; }
 }
+
+/* Domain-neutral workspace: compact dashboard, readable Studio, mobile stacking. */
+.explore { max-width: 1440px; margin: auto; }
+.explore-heading, .explore-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.explore h1 { font-size: clamp(28px, 3vw, 44px); letter-spacing: -.04em; }
+.explore-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; margin-top: 24px; align-items: start; }
+.explore-panel { background: var(--surface, #fff); border: 1px solid var(--border, #dce2eb); border-radius: 16px; padding: 24px; margin-bottom: 20px; min-width: 0; }
+.explore-panel h2 { font-size: 21px; margin-top: 0; }
+.explore-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+.explore-kpis strong { font-size: 30px; display: block; margin: 12px 0; font-variant-numeric: tabular-nums; }
+.explore-kpis small { display: block; opacity: .7; line-height: 1.5; }
+.explore label { display: block; font-size: 14px; margin-bottom: 14px; }
+.explore input:not([type=checkbox]):not([type=file]), .explore select, .explore textarea { width: 100%; margin-top: 6px; min-height: 40px; }
+.explore input[type=color] { max-width: 100px; }
+.explore input[type=checkbox] { margin-right: 8px; }
+.explore-fields { border: 0; padding: 0; margin: 0; }
+.explore-fields h3 { margin-top: 28px; }
+.explore-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.explore-metric { border: 1px solid var(--border, #dce2eb); border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+.explore-tabs, .explore-downloads { display: flex; gap: 8px; flex-wrap: wrap; }
+.explore-downloads a { font-size: 13px; padding: 8px 12px; border: 1px solid var(--border, #dce2eb); border-radius: 8px; text-decoration: none; }
+.explore-chart { display: block; width: 100%; max-height: 660px; margin: 20px 0; fill: currentColor; }
+.explore-chart text { font: 13px system-ui; }
+.explore-scroll { overflow-x: auto; }
+.explore table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.explore th, .explore td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border, #dce2eb); max-width: 240px; overflow-wrap: anywhere; }
+.explore caption { text-align: left; font-weight: 600; padding: 10px 0; }
+.explore-conversation { max-height: 420px; overflow: auto; margin: 16px 0; font-size: 14px; }
+.explore-message { padding: 12px 0; border-bottom: 1px solid var(--border, #dce2eb); }
+.explore-message p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.explore-message.user { padding-left: 12px; border-left: 3px solid #2563eb; }
+.explore-notice, .explore-error { padding: 16px; border: 1px solid var(--border, #dce2eb); border-radius: 10px; font-size: 14px; }
+.explore-error { border-color: #c2410c; }
+.explore-proposal { border: 1px solid #2563eb; border-radius: 10px; padding: 14px; margin: 16px 0; overflow-wrap: anywhere; font-size: 13px; }
+.explore-proposal button { margin-top: 8px; }
+.explore-upload { border: 2px dashed var(--border, #dce2eb); border-radius: 18px; padding: 32px; margin: 24px 0 36px; text-align: center; }
+.explore-file { display: inline-block !important; position: relative; padding: 12px 24px; cursor: pointer; }
+.explore-file input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
+.explore-file:focus-within { outline: 3px solid #2563eb; outline-offset: 3px; }
+.explore-recent { display: flex; flex-wrap: wrap; gap: 10px; }
+@media (max-width: 1000px) { .explore-layout { grid-template-columns: 1fr; } .explore-assistant { max-width: none; } }
+@media (max-width: 550px) { .explore-panel { padding: 16px; } .explore-pair { grid-template-columns: 1fr; gap: 0; } .topnav { flex-wrap: wrap; } }

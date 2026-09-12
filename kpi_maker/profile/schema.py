@@ -263,6 +263,7 @@ class OrgCulture(BaseModel):
 
 
 class Intent(BaseModel):
+    question: str = Field(default="", max_length=600)
     primary_objective: Objective
     secondary: List[Objective] = Field(default_factory=list)
     horizon_months: int = 12

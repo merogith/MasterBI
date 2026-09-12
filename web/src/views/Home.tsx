@@ -74,7 +74,7 @@ export function Home() {
     <section class="view" id="view-home">
       <div class="hero">
         <p class="eyebrow">Performance reporting, generated</p>
-        <h1>Turn a business into a board pack.</h1>
+        <h1>Turn data into a story you can use.</h1>
         <p class="lede">
           The right KPIs for a company's sector, size and objective — then the
           dashboard, the report, the deck and the data behind them. Every number
@@ -131,13 +131,12 @@ export function Home() {
           <span class="mode-go" aria-hidden="true">→</span>
         </button>
 
-        <button class="mode-card" data-nav="builder"
-                onClick={() => navigate('/data')}>
+        <button class="mode-card" data-nav="explore"
+                onClick={() => navigate('/explore')}>
           <span class="mode-num">02</span>
           <h2>Bring your data</h2>
-          <p>Upload a spreadsheet. We work out which fact table it is, show you
-             the field mapping with a confidence score, and tell you exactly what
-             it will and will not produce before anything runs.</p>
+          <p>Upload CSV or Excel, explore the columns, and shape a dashboard with
+             Studio and OpenAI. Export a matching summary and presentation.</p>
           <span class="mode-meta">CSV or Excel · Nothing runs until you approve it</span>
           <span class="mode-go" aria-hidden="true">→</span>
         </button>
@@ -159,6 +158,8 @@ export function Home() {
           <span class="mode-go" aria-hidden="true">→</span>
         </button>
       </div>
+
+      <p><button class="ghost" data-nav="builder" onClick={() => navigate('/data')}>Use the business import and mapping workflow →</button></p>
 
       <div class="surprise-row">
         <div>

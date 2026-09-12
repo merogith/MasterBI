@@ -319,7 +319,7 @@ class AISpec(SpecModel):
     number.
     """
     enabled: bool = False
-    model: str = "claude-opus-5"
+    model: str = "gpt-5.6-luna"
     # None -> NARRATABLE_SECTIONS. A list selects; an empty list narrates
     # nothing, which is a legitimate way to buy the planner without the
     # narrator.

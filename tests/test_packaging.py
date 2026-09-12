@@ -216,7 +216,8 @@ def test_the_legacy_upload_route_is_gone() -> None:
     """
     from kpi_maker.api.server import app
 
-    paths = {route.path for route in app.routes}
+    # OpenAPI includes mounted APIRouters as well as directly registered routes.
+    paths = set(app.openapi()["paths"])
     assert "/api/upload" not in paths, "the superseded upload route is still registered"
     assert "/api/ingest/profile" in paths
 
@@ -426,7 +427,7 @@ def test_every_screen_has_a_route() -> None:
     """
     router = (ROOT / "web" / "src" / "lib" / "router.ts").read_text(encoding="utf-8")
     declared = set(re.findall(r"\['/[^']*',\s*'([a-z-]+)'\]", router))
-    assert declared == {"home", "samples", "survey", "builder", "run", "studio"}, (
+    assert declared == {"home", "samples", "survey", "builder", "run", "studio", "explore"}, (
         f"routes are now {sorted(declared)} — if a screen was added or removed, "
         "update this list and the README's front-end section together")
 

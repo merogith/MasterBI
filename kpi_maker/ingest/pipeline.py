@@ -228,13 +228,11 @@ def derive_pl_columns(frame: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
         out["gross_profit"] = out["revenue"] - out["cogs"]
         added.append("gross_profit")
 
-    # total_opex = sum of opex lines. A missing line is zero rather than a
-    # refusal: an export with no R&D column is a business with no R&D line,
-    # not an unanswerable question.
+    # Missing cost categories are unknown, not zero. Require the complete set.
     opex_lines = ["sales_cost", "marketing_cost", "rnd_cost", "ga_cost"]
-    if "total_opex" not in out.columns and any(c in out.columns for c in opex_lines):
+    if "total_opex" not in out.columns and all(c in out.columns for c in opex_lines):
         present = [c for c in opex_lines if c in out.columns]
-        out["total_opex"] = out[present].sum(axis=1)
+        out["total_opex"] = out[present].sum(axis=1, min_count=len(present))
         added.append("total_opex")
 
     # ebitda = gross_profit - total_opex
@@ -244,7 +242,7 @@ def derive_pl_columns(frame: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:
 
     if "gross_margin_pct" not in out.columns and have("gross_profit", "revenue"):
         out["gross_margin_pct"] = (out["gross_profit"] / out["revenue"]
-                                   .replace(0, pd.NA)).fillna(0.0)
+                                   .replace(0, float("nan")))
         added.append("gross_margin_pct")
 
     return out, added

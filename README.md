@@ -1,12 +1,17 @@
-# KPI Dashboard Maker
+# MasterBI
 
-Profile-driven KPI selection, synthetic data, dashboards and reports.
+A personal BI portfolio: case studies, guided business reports, and a general-data
+workspace with OpenAI-assisted editing, dashboards, PDF and PowerPoint exports.
+
+**Start with [the portfolio quickstart and demo walkthrough](PORTFOLIO.md).**
+The browser gallery is free to host; uploads and AI run through your local server.
+The new workspace is at `/explore`; existing business workflows remain available.
 
 The design rationale — question framework, KPI selection theory, the three
 product modes, effort estimates — is in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 This file is how to run what exists today.
 
-## Status: M0 + M1 complete (SaaS)
+## Existing business-report pipeline
 
 Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 
@@ -322,6 +327,10 @@ out/
 an address and every run is a link you can send someone. It replaced a single
 2,000-line `app.js` with no build step and no URL for anything: every screen
 change flipped a `hidden` attribute, so Back left the app entirely.
+
+The general-data workspace lives at `/explore` and `/explore/:projectId`, with
+a dashboard, Studio, data preview and persistent chat. The existing business
+import remains at `/data`.
 
 Every screen lives here — home,
 samples, survey, Bring-your-data, running, results, the history drawer and all
