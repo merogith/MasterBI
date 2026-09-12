@@ -1101,7 +1101,7 @@ def catalog_options(run_id: Optional[str] = None) -> Dict[str, Any]:
     archetype = None
     if run_id:
         try:
-            archetype = _load_spec(_run_dir(run_id)).resolve_archetype()
+            archetype = _load_spec(run_id).resolve_archetype()
         except Exception:                                # noqa: BLE001
             # A missing or unreadable spec is not a reason to fail the whole
             # catalogue — the union is a worse answer, not a broken one.
