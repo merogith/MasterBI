@@ -78,6 +78,9 @@ def build(out_dir: Path) -> int:
         "narratable_sections": [],
     })
 
+    from tools.build_explore_examples import build as build_explore
+    build_explore(site)
+
     index: List[Dict[str, Any]] = []
 
     for entry in gallery:

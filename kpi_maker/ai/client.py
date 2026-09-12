@@ -1,30 +1,4 @@
-"""The Anthropic client, wrapped thinly and imported lazily.
-
-Three things this file exists to get right:
-
-**The import is lazy.** `anthropic` lives in `requirements-ai.txt`, not in
-`requirements.txt`, and is imported inside the function that needs it. A
-machine without the package runs the entire pipeline unchanged; the only thing
-it cannot do is turn `spec.ai.enabled` on. Importing at module scope would make
-an optional dependency mandatory the moment anything touched `kpi_maker.ai`,
-and `spec/schema.py` touches it by way of the studio.
-
-**The failure is named.** A missing key and a missing package are the two most
-likely ways this goes wrong on someone else's machine, and both produce
-`AIUnavailable` with a sentence saying what to do — not an ImportError from
-four frames down, and not a silent fall-through that leaves the user wondering
-why their report has no prose.
-
-**There is a seam for tests.** `CLIENT_FACTORY` is the single place a client is
-constructed, so `tests/ai.py` swaps in a transcript player and the whole suite
-runs offline. It is also what lets the no-regression test assert something
-stronger than "no tokens were spent": with `ai.enabled` false the factory is
-never called at all.
-
-Model parameters follow the Opus 5 contract: adaptive thinking, structured
-output via `output_config.format`, and none of `temperature`, `top_p`,
-`top_k` or `thinking.budget_tokens`, all of which are 400s on this model.
-"""
+"""Optional OpenAI Responses adapter. No key or network needed with AI off."""
 from __future__ import annotations
 
 import json
@@ -32,16 +6,15 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
-# Streaming is not about showing progress here — nothing watches the stream.
-# It is about not tripping the request timeout: a narrator writing five
-# sections of prose with adaptive thinking in front of it is exactly the
-# long-output shape non-streaming requests fall over on.
+# Bounded synchronous requests; refusal and incomplete results never apply edits.
 MAX_OUTPUT_TOKENS = 8_000
 
 # Prose and a spec patch are both judgement calls over a compact input, which
 # is what this setting is for. It is not a knob the user sees; a run that wants
 # to spend less should use a smaller model, which `AISpec.model` allows.
-EFFORT = "high"
+EFFORT = "low"
+DEFAULT_MODEL = "gpt-5.6-luna"
+MODEL_TIERS = {"standard": DEFAULT_MODEL, "advanced": "gpt-6-astra"}
 
 
 class AIUnavailable(RuntimeError):
@@ -94,19 +67,18 @@ def availability() -> Dict[str, Any]:
     Answered without constructing anything, because the studio asks on every
     page load and a run that never enables AI should not pay for the question.
     """
-    key = bool(os.environ.get("ANTHROPIC_API_KEY")
-               or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+    key = bool(os.environ.get("OPENAI_API_KEY"))
     try:
-        import anthropic  # noqa: F401
+        import openai  # noqa: F401
         package = True
     except ImportError:
         package = False
 
     if not package:
-        reason = ("the `anthropic` package is not installed — "
+        reason = ("the `openai` package is not installed — "
                   "pip install -r requirements-ai.txt")
     elif not key:
-        reason = ("no ANTHROPIC_API_KEY in the environment — "
+        reason = ("no OPENAI_API_KEY in the environment — "
                   "export one and restart the server")
     else:
         reason = ""
@@ -133,87 +105,65 @@ class Client:
     """
 
     def __init__(self, model: str):
-        import anthropic
+        from openai import OpenAI
+        if model not in MODEL_TIERS.values():
+            raise AIUnavailable("Choose Standard or Advanced in Studio; this saved model is no longer supported.")
         self.model = model
-        self._api = anthropic.Anthropic()
+        # No automatic paid retries; the user decides whether to try again.
+        self._api = OpenAI(timeout=120.0, max_retries=0)
         self.calls: List[Call] = []
-
-    # -- the one request shape this codebase makes -------------------------
 
     def json(self, *, system: str, user: str, schema: Dict[str, Any],
              purpose: str, max_tokens: int = MAX_OUTPUT_TOKENS) -> Dict[str, Any]:
-        """A schema-constrained object, streamed.
-
-        `output_config.format` rather than an assistant-turn prefill: prefills
-        are a 400 on this model, and a compiled schema is a stronger guarantee
-        than "please reply with JSON" plus a regex to fish it back out.
-        """
         import time
 
-        import anthropic
+        import openai
 
+        from .meter import cost_usd
+
+        # Conservative byte-based estimate, including the schema. This is a
+        # local spending guard, not a promise about the provider's invoice.
+        estimated = self.count(system=system, user=user + json.dumps(schema))
+        limit = float(os.environ.get("MASTERBI_AI_MAX_CALL_USD", "0.50"))
+        if cost_usd(Usage(input_tokens=estimated, output_tokens=max_tokens), self.model) > limit:
+            raise AIUnavailable(f"This request exceeds the ${limit:.2f} per-call estimate limit. Use Standard or shorten the request.")
         started = time.perf_counter()
         try:
-            with self._api.messages.stream(
-                model=self.model,
-                max_tokens=max_tokens,
-                system=system,
-                messages=[{"role": "user", "content": user}],
-                thinking={"type": "adaptive"},
-                output_config={
-                    "effort": EFFORT,
-                    "format": {"type": "json_schema", "schema": schema},
-                },
-            ) as stream:
-                message = stream.get_final_message()
-        except anthropic.APIError as exc:
-            # Everything the SDK can raise arrives here as one named failure,
-            # because every caller does the same thing with it: fall back to
-            # the deterministic path and say so.
-            raise AIUnavailable(f"the API call failed: {exc}") from exc
-
-        usage = Usage(
-            input_tokens=getattr(message.usage, "input_tokens", 0) or 0,
-            output_tokens=getattr(message.usage, "output_tokens", 0) or 0,
-            cache_read_tokens=getattr(message.usage, "cache_read_input_tokens", 0) or 0,
-        )
+            response = self._api.responses.create(
+                model=self.model, instructions=system, input=user,
+                max_output_tokens=max_tokens, store=False,
+                reasoning={"effort": EFFORT},
+                text={"format": {"type": "json_schema", "name": "masterbi_response",
+                                 "strict": True, "schema": schema}},
+            )
+        except openai.APIError as exc:
+            # Do not echo provider request bodies or credentials to browsers.
+            raise AIUnavailable(f"OpenAI request failed ({type(exc).__name__}). Check the server configuration and try again.") from exc
+        raw = response.usage
+        cached = getattr(getattr(raw, "input_tokens_details", None), "cached_tokens", 0) or 0
+        usage = Usage(input_tokens=max(0, (getattr(raw, "input_tokens", 0) or 0) - cached),
+                      output_tokens=getattr(raw, "output_tokens", 0) or 0,
+                      cache_read_tokens=cached)
         self.calls.append(Call(purpose=purpose, model=self.model, usage=usage,
-                               stop_reason=message.stop_reason or "",
+                               stop_reason=response.status,
                                seconds=round(time.perf_counter() - started, 2)))
-
-        # Checked BEFORE `content` is read. On a refusal the content blocks do
-        # not honour the schema, so parsing first would produce a confusing
-        # JSON error in place of the real reason.
-        if message.stop_reason == "refusal":
-            detail = getattr(message, "stop_details", None)
-            raise Refused("the model declined to answer"
-                          + (f": {detail.explanation}" if detail else ""))
-        if message.stop_reason == "max_tokens":
-            raise AIUnavailable(
-                f"the response hit the {max_tokens}-token ceiling and is "
-                f"incomplete")
-
-        text = "".join(b.text for b in message.content if b.type == "text")
+        for item in response.output:
+            for part in getattr(item, "content", []):
+                if getattr(part, "type", "") == "refusal":
+                    raise Refused("The model declined to answer. Try rephrasing your request.")
+        if response.status != "completed":
+            raise AIUnavailable("The OpenAI response was incomplete; no changes were applied.")
         try:
-            return json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise AIUnavailable(f"the response was not valid JSON: {exc}") from exc
+            result = json.loads(response.output_text)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise AIUnavailable("The response was not valid JSON; no changes were applied.") from exc
+        if not isinstance(result, dict):
+            raise AIUnavailable("The response was not an object; no changes were applied.")
+        return result
 
     def count(self, *, system: str, user: str) -> int:
-        """Input tokens for a request, before spending anything on it.
-
-        This is what lets the studio show a cost before the user commits, which
-        is the difference between an opt-in and a surprise.
-        """
-        import anthropic
-        try:
-            counted = self._api.messages.count_tokens(
-                model=self.model, system=system,
-                messages=[{"role": "user", "content": user}],
-            )
-        except anthropic.APIError as exc:
-            raise AIUnavailable(f"could not count tokens: {exc}") from exc
-        return int(counted.input_tokens)
+        """Conservative local estimate; makes no network request."""
+        return len((system + user).encode("utf-8")) + 1024
 
     @property
     def usage(self) -> Usage:

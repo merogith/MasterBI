@@ -28,6 +28,9 @@ interface Draft {
   answers: Record<string, string>;
   name: string;
   index: number;
+  secondary?: string[];
+  question?: string;
+  outputs?: string[];
 }
 
 function loadDraft(): Draft | null {
@@ -155,12 +158,15 @@ function Question({ question, answer, onAnswer }: {
   );
 }
 
-function Review({ asked, answers, name, onName, onEdit }: {
+function Review({ asked, answers, name, onName, onEdit, secondary, onSecondary, question, onQuestion, outputs, onOutputs }: {
   asked: SurveyQuestion[];
   answers: Record<string, string>;
   name: string;
   onName: (value: string) => void;
   onEdit: (questionId: string) => void;
+  secondary: string[]; onSecondary: (v: string[]) => void;
+  question: string; onQuestion: (v: string) => void;
+  outputs: string[]; onOutputs: (v: string[]) => void;
 }) {
   return (
     <>
@@ -172,6 +178,19 @@ function Review({ asked, answers, name, onName, onEdit }: {
         <input class="name-input" id="company-name" maxLength={60}
                placeholder="e.g. Northwind Analytics"
                value={name} onInput={(e) => onName(e.currentTarget.value)} />
+      </div>
+      <div class="question">
+        <div class="question-text">Any other priorities? <small>Optional · select several</small></div>
+        <div class="options">{asked.find(q => q.id === 'objective')?.options.filter(o => o.value !== UNKNOWN && o.value !== answers['objective']).map(o =>
+          <label class="option" key={o.value}><input type="checkbox" checked={secondary.includes(o.value)} onChange={() => onSecondary(secondary.includes(o.value) ? secondary.filter(v => v !== o.value) : [...secondary,o.value])} /><span>{o.label}</span></label>)}</div>
+      </div>
+      <div class="question">
+        <label class="question-text" for="survey-reader-question">What question should this report help you answer?</label>
+        <p class="question-help">Optional. Saved as your question in the report; it is not treated as a measured fact.</p>
+        <textarea id="survey-reader-question" maxLength={600} rows={3} value={question} onInput={e => onQuestion(e.currentTarget.value)} placeholder="For example: where should we investigate the margin decline?" />
+      </div>
+      <div class="question"><div class="question-text">Which outputs would you like?</div>
+        <div class="options">{[['dashboard','Dashboard'],['report_pdf','Executive PDF'],['deck_pptx','Presentation'],['doc_docx','Word report'],['workbook','Excel workbook']].map(([id,label]) => <label class="option" key={id}><input type="checkbox" checked={outputs.includes(id!)} onChange={() => onOutputs(outputs.includes(id!) ? outputs.filter(v => v !== id) : [...outputs,id!])} /><span>{label}</span></label>)}</div>
       </div>
       <div class="question">
         <div class="question-text">Your answers</div>
@@ -214,6 +233,9 @@ export function Survey() {
   const [answers, setAnswers] = useState<Record<string, string>>(
     restored?.answers ?? {});
   const [name, setName] = useState(restored?.name ?? '');
+  const [secondary, setSecondary] = useState<string[]>(restored?.secondary ?? []);
+  const [question, setQuestion] = useState(restored?.question ?? '');
+  const [outputs, setOutputs] = useState<string[]>(restored?.outputs ?? ['dashboard','report_pdf','deck_pptx']);
   const [index, setIndex] = useState(restored?.index ?? 0);
   const [error, setError] = useState<string | null>(null);
   const [missing, setMissing] = useState(0);
@@ -229,8 +251,8 @@ export function Survey() {
   // Saved on every change rather than on navigation: the tab that gets closed
   // is closed mid-question, not on the way to the next step.
   useEffect(() => {
-    if (survey) saveDraft({ answers, name, index });
-  }, [answers, name, index, survey]);
+    if (survey) saveDraft({ answers, name, index, secondary, question, outputs });
+  }, [answers, name, index, survey, secondary, question, outputs]);
 
   if (error) {
     return (
@@ -277,7 +299,8 @@ export function Survey() {
       try {
         const run = await createRun({
           mode: 'survey',
-          answers,
+          answers: { ...answers, secondary: secondary.filter(v => v !== answers['objective']), question },
+          spec: { outputs: { artifacts: [...outputs, 'facts_csv', 'json_dumps'] } },
           ...(name.trim() ? { company_name: name.trim() } : {}),
           seed: Math.floor(Math.random() * 1e7),
         });
@@ -326,7 +349,7 @@ export function Survey() {
           <button class="linkish" type="button" onClick={() => {
             clearDraft();
             setAnswers({});
-            setName('');
+            setName(''); setSecondary([]); setQuestion(''); setOutputs(['dashboard','report_pdf','deck_pptx']);
             setIndex(0);
             setResumed(false);
           }}>Start again</button>
@@ -356,7 +379,8 @@ export function Survey() {
           )}
           {step.review
             ? <Review asked={asked} answers={answers} name={name} onName={setName}
-                      onEdit={goToQuestion} />
+                      onEdit={goToQuestion} secondary={secondary} onSecondary={setSecondary}
+                      question={question} onQuestion={setQuestion} outputs={outputs} onOutputs={setOutputs} />
             : step.questions.map((question) => (
               <Question key={question.id} question={question}
                         answer={answers[question.id]}

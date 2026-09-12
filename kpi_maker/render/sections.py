@@ -340,6 +340,8 @@ def _exec_summary(ctx: SectionContext, limit: int = 5) -> SectionContent:
         intro="Every statement below is computed directly from the underlying "
               "data. Figures in this section reconcile to the scorecard that "
               "follows.")
+    if ctx.profile.intent.question:
+        content.notes.append("Reader question (user supplied): " + ctx.profile.intent.question)
     basis_of = {r.kpi.id: r.basis for r in ctx.results if r.computed}
     content.bullets = [
         Bullet(label=SEVERITY_WORD.get(f.severity, ""), title=f.title,

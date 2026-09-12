@@ -32,6 +32,8 @@ const ROUTES: ReadonlyArray<readonly [pattern: string, name: string]> = [
   ['/samples', 'samples'],
   ['/survey', 'survey'],
   ['/data', 'builder'],
+  ['/explore', 'explore'],
+  ['/explore/:projectId', 'explore'],
   ['/runs/:runId', 'run'],
   ['/runs/:runId/studio', 'studio'],
 ];

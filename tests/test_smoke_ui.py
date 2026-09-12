@@ -1966,3 +1966,29 @@ def test_the_run_shows_what_has_already_been_applied(page):
         f"the row does not say who made this version: {first!r}"
     assert "sample" in first.lower(), \
         f"the row does not say what it was: {first!r}"
+
+
+def test_general_workspace_edits_undo_and_persist(page):
+    """The non-business case follows the same calculation and persistence contract."""
+    page.click('[data-nav="explore"]')
+    page.wait_for_selector('#view-explore')
+    page.locator('.mode-card').filter(has_text='Pokemon VGC').click()
+    page.wait_for_selector('.explore-kpis')
+    assert page.locator('.explore-kpis strong').all_text_contents() == ['0.5', '160']
+    page.get_by_role('button', name='Studio', exact=True).click()
+    page.get_by_label('Group by', exact=True).select_option('event')
+    with page.expect_response(lambda r: '/api/explore/projects/' in r.url and r.request.method == 'PUT'):
+        page.get_by_role('button', name='Apply and recalculate').click()
+    page.get_by_role('button', name='Dashboard', exact=True).click()
+    assert page.locator('.explore-scroll tbody tr').count() == 5
+    page.reload()
+    page.wait_for_selector('.explore-kpis')
+    assert page.locator('.explore-scroll tbody tr').count() == 5
+    page.get_by_role('button', name='Studio', exact=True).click()
+    with page.expect_response(lambda r: r.url.endswith('/undo')):
+        page.get_by_role('button', name='Undo last edit').click()
+    page.get_by_role('button', name='Dashboard', exact=True).click()
+    assert page.locator('.explore-scroll tbody tr').count() == 4
+    with page.expect_download() as download:
+        page.get_by_role('link', name='PDF ↓', exact=True).click()
+    assert download.value.suggested_filename.endswith('.pdf')

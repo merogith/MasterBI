@@ -167,3 +167,19 @@ def test_the_studio_opens_read_only(page, base):
     theme = page.locator('[data-spec="design.theme"]')
     assert theme.is_disabled(), "a read-only Studio must not accept edits"
     assert theme.input_value(), "the panel shows nothing about the actual run"
+
+
+def test_general_gallery_has_portable_outputs(page, base):
+    page.goto(f'{base}/explore', wait_until='domcontentloaded')
+    page.locator('.mode-card').filter(has_text='Pokemon VGC').click()
+    page.wait_for_selector('.explore-kpis')
+    assert page.locator('.explore-kpis strong').all_text_contents() == ['0.5', '160']
+    assert 'Prebuilt gallery' in page.locator('.explore-heading').inner_text()
+    links = page.locator('.explore-downloads a')
+    assert links.count() == 4
+    for i in range(links.count()):
+        response = page.request.get(links.nth(i).get_attribute('href'))
+        assert response.status == 200
+        assert len(response.body()) > 100
+    page.get_by_role('button', name='Studio', exact=True).click()
+    assert page.get_by_role('button', name='Apply and recalculate').is_disabled()

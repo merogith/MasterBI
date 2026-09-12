@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { href, navigate, useRoute } from './lib/router';
 import { Builder } from './views/Builder';
+import { Explore } from './views/Explore';
 import { Home } from './views/Home';
 import { RunView } from './views/RunView';
 import { Samples } from './views/Samples';
@@ -25,10 +26,11 @@ export function App() {
       <header class="topbar">
         <a class="brand" href={href('/')} onClick={(e) => { e.preventDefault(); navigate('/'); }}>
           <span class="brand-mark" aria-hidden="true" />
-          <span class="brand-name">KPI Dashboard Maker</span>
+          <span class="brand-name">MasterBI</span>
         </a>
         <nav class="topnav">
           <button class="ghost" onClick={() => navigate('/')}>Home</button>
+          <button class="ghost" onClick={() => navigate('/explore')}>Data workspace</button>
           <button class="ghost" id="btn-history" onClick={() => setHistoryOpen(true)}>
             Recent runs
           </button>
@@ -44,6 +46,7 @@ export function App() {
 
       <main id="app">
         {route.name === 'home' && <Home />}
+        {route.name === 'explore' && <Explore projectId={route.params['projectId']} />}
         {route.name === 'samples' && <Samples />}
         {route.name === 'survey' && <Survey />}
         {route.name === 'builder' && <Builder />}

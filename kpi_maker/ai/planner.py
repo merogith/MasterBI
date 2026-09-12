@@ -323,7 +323,7 @@ def build_request(spec: RunSpec, cat: Dict[str, Any],
     the CLI and anything else that calls the agent directly, and the two agree
     because they read one constant.
     """
-    goal = (goal or "").strip()[:GOAL_MAX_CHARS]
+    goal = (goal or spec.profile.intent.question or "").strip()[:GOAL_MAX_CHARS]
     profile = spec.profile
     current = spec.model_dump(mode="json")
     current.pop("profile", None)              # shown separately, and unpatchable

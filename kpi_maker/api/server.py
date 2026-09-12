@@ -11,6 +11,8 @@ rather than re-parsing artifacts on every poll.
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
 import tempfile
 import traceback
@@ -104,9 +106,12 @@ ARTIFACT_LABELS = [
     ("kpi_set.json", "KPI selection", "json", "What was chosen and why"),
 ]
 
+ALLOWED_ORIGINS = ["https://merogith.github.io", "http://localhost:5173", "http://127.0.0.1:5173"]
+ALLOWED_ORIGINS += [o.strip() for o in os.environ.get("MASTERBI_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+
 app = FastAPI(title="KPI Dashboard Maker", version="0.2.0")
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+    CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:[0-9]+)?", allow_methods=["*"], allow_headers=["*"],
 )
 
 
@@ -123,8 +128,12 @@ async def allow_private_network(request, call_next):
     Loopback-only by nature: the server binds 127.0.0.1 unless told otherwise,
     so this widens what the *browser* permits, not what the network exposes.
     """
+    origin = request.headers.get("origin")
+    allowed = not origin or origin in ALLOWED_ORIGINS or re.fullmatch(r"http://(localhost|127\.0\.0\.1)(:[0-9]+)?", origin)
+    if not allowed:
+        return JSONResponse({"detail": "This origin is not allowed to access your local workspace."}, 403)
     response = await call_next(request)
-    if request.headers.get("access-control-request-private-network"):
+    if origin and request.headers.get("access-control-request-private-network"):
         response.headers["Access-Control-Allow-Private-Network"] = "true"
     return response
 
@@ -176,8 +185,25 @@ def _deep_merge(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _run_dir(run_id: str) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,80}", run_id):
+        raise HTTPException(404, "Run not found")
+    directory = (RUNS_DIR / run_id).resolve()
+    if directory.parent != RUNS_DIR.resolve():
+        raise HTTPException(404, "Run not found")
+    return directory
+
+
+def _check_upload_names(names) -> None:
+    for name in names:
+        if not name or Path(name).name != name or "/" in name or "\\" in name or name in (".", ".."):
+            raise HTTPException(422, "Uploads must reference files uploaded through this app.")
+        if (UPLOADS_DIR / name).resolve().parent != UPLOADS_DIR.resolve():
+            raise HTTPException(422, "Upload is outside the workspace.")
+
+
 def _load_spec(run_id: str) -> RunSpec:
-    path = RUNS_DIR / run_id / "spec.json"
+    path = _run_dir(run_id) / "spec.json"
     if not path.exists():
         raise HTTPException(404, f"Run {run_id!r} has no spec on disk")
     return RunSpec(**json.loads(path.read_text(encoding="utf-8")))
@@ -366,7 +392,7 @@ def _submit(run_id: str, spec: RunSpec) -> None:
 
 
 def _execute(run_id: str, spec: RunSpec, cancel: Event) -> None:
-    run_dir = RUNS_DIR / run_id
+    run_dir = _run_dir(run_id)
     # Every stage the run has reported on, newest state per stage, in the order
     # the engine reached them. A dict rather than a list because a stage
     # reports twice — running, then done or reused — and the second report
@@ -511,6 +537,7 @@ def create_run(req: RunRequest) -> Dict[str, Any]:
             # preset can be launched already customised.
             merged = _deep_merge(json.loads(spec.model_dump_json()), req.spec)
             spec = RunSpec(**merged)
+        _check_upload_names(spec.source.uploads)
     except HTTPException:
         raise
     except Exception as exc:                             # noqa: BLE001
@@ -542,6 +569,7 @@ def put_spec(run_id: str, spec: Dict[str, Any]) -> Dict[str, Any]:
     """Replace the spec and report what a re-run would rebuild."""
     try:
         validated = RunSpec(**spec)
+        _check_upload_names(validated.source.uploads)
     except Exception as exc:                             # noqa: BLE001
         raise HTTPException(422, str(exc))
 
@@ -553,7 +581,7 @@ def put_spec(run_id: str, spec: Dict[str, Any]) -> Dict[str, Any]:
         raise HTTPException(
             422, f"Unknown KPI id(s) in the metrics spec: {', '.join(unknown)}")
 
-    run_dir = RUNS_DIR / run_id
+    run_dir = _run_dir(run_id)
     if not run_dir.exists():
         raise HTTPException(404, "Run not found")
     (run_dir / "spec.json").write_text(
@@ -594,14 +622,14 @@ def get_plan(run_id: str) -> Dict[str, Any]:
     The studio calls this on every edit so the action bar can say "3 stages,
     ~4s" before the user commits to waiting.
     """
-    return plan_rerun(_load_spec(run_id), RUNS_DIR / run_id)
+    return plan_rerun(_load_spec(run_id), _run_dir(run_id))
 
 
 @app.post("/api/runs/{run_id}/rerun")
 def rerun(run_id: str) -> Dict[str, Any]:
     """Re-run the stages the current spec has invalidated."""
     spec = _load_spec(run_id)
-    report = plan_rerun(spec, RUNS_DIR / run_id)
+    report = plan_rerun(spec, _run_dir(run_id))
     _set(run_id, status="queued", mode="rerun",
          company=spec.profile.identity.name, started_at=_now(), progress=None)
     # The re-run is about to overwrite the artifacts the previous spec produced,
@@ -734,7 +762,7 @@ _KNOWN = pd.Series(dtype="float64")   # sentinel: "this name resolves"
 
 
 def _load_run_tables(run_id: str) -> Dict[str, pd.DataFrame]:
-    data_dir = RUNS_DIR / run_id / "data"
+    data_dir = _run_dir(run_id) / "data"
     if not data_dir.exists():
         return {}
     return {p.stem: pd.read_csv(p) for p in sorted(data_dir.glob("*.csv"))}
@@ -835,8 +863,14 @@ async def ingest_profile(file: UploadFile = File(...)) -> Dict[str, Any]:
     it could become — and every suggestion is an offer, not a change.
     """
     suffix = Path(file.filename or "upload").suffix.lower()
+    if suffix not in {".csv", ".tsv", ".txt", ".xls", ".xlsx", ".xlsm"}:
+        raise HTTPException(422, "Choose CSV or Excel data.")
     stored = UPLOADS_DIR / f"{uuid.uuid4().hex[:8]}{suffix}"
-    stored.write_bytes(await file.read())
+    data = await file.read(10 * 1024 * 1024 + 1)
+    await file.close()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(422, "Maximum file size is 10 MB.")
+    stored.write_bytes(data)
 
     try:
         result = read_any(stored)
@@ -945,6 +979,9 @@ def _uploaded_tables(names: List[str]) -> Dict[str, Any]:
     pipeline will key and type them. A screen that previewed a different
     reading from the one the run performs would be worse than no preview.
     """
+    if any(Path(name).name != name or name in (".", "..") for name in names):
+        raise HTTPException(422, "Invalid upload name")
+    _check_upload_names(names)
     paths = [UPLOADS_DIR / name for name in names]
     missing = [p.name for p in paths if not p.exists()]
     if missing:
@@ -1064,7 +1101,7 @@ def catalog_options(run_id: Optional[str] = None) -> Dict[str, Any]:
     archetype = None
     if run_id:
         try:
-            archetype = _load_spec(RUNS_DIR / run_id).resolve_archetype()
+            archetype = _load_spec(_run_dir(run_id)).resolve_archetype()
         except Exception:                                # noqa: BLE001
             # A missing or unreadable spec is not a reason to fail the whole
             # catalogue — the union is a worse answer, not a broken one.
@@ -1130,7 +1167,8 @@ def ai_status() -> Dict[str, Any]:
     state = availability()
     return {**state, "prices": {m: {"input": i, "output": o}
                                 for m, (i, o) in PRICES.items()},
-            "default_model": "claude-opus-5",
+            "default_model": "gpt-5.6-luna",
+            "models": {"standard": "gpt-5.6-luna", "advanced": "gpt-6-astra"},
             "narratable_sections": list(NARRATABLE_SECTIONS)}
 
 
@@ -1288,7 +1326,7 @@ def ai_apply(run_id: str, body: ApplyRequest) -> Dict[str, Any]:
 @app.get("/api/ai/usage/{run_id}")
 def ai_usage(run_id: str) -> Dict[str, Any]:
     """What this run actually spent, or an empty report if it spent nothing."""
-    path = RUNS_DIR / run_id / "ai.json"
+    path = _run_dir(run_id) / "ai.json"
     if not path.exists():
         return {"calls": 0, "total_tokens": 0, "estimated_cost_usd": 0.0,
                 "notes": [], "detail": []}
@@ -1308,7 +1346,7 @@ def _run_inputs(run_id: str, spec: RunSpec) -> Dict[str, Any]:
     from ..render.sections import SectionContext
     from ..render.sections import build as build_sections
 
-    run_dir = RUNS_DIR / run_id
+    run_dir = _run_dir(run_id)
     if not run_dir.exists():
         raise FileNotFoundError("Run not found")
     # `json_dumps` is what pulls `analyse` into the walk. Asking for
@@ -1582,7 +1620,7 @@ def list_runs() -> List[Dict[str, Any]]:
             # run cannot read as queued while its first stage is running.
             row = {**row, **{k: v for k, v in state.items()
                              if k in STORE_COLUMNS}}
-        elif not (RUNS_DIR / run_id).exists():
+        elif not (_run_dir(run_id)).exists():
             # The artifacts were deleted from underneath the index. Say so; a
             # run that quietly vanishes from history is the bug being fixed.
             row["status"] = "missing"
@@ -1610,7 +1648,7 @@ def _run_row(run_id: str, source: Dict[str, Any]) -> Dict[str, Any]:
         # A re-run reads `spec.json`, so a run that failed before writing one
         # cannot be resumed. The server knows; offering the button anyway and
         # letting it 404 would be a working-looking control that does nothing.
-        "resumable": (RUNS_DIR / run_id / "spec.json").exists(),
+        "resumable": (_run_dir(run_id) / "spec.json").exists(),
     }
 
 
@@ -1620,7 +1658,7 @@ def get_run(run_id: str) -> Dict[str, Any]:
     if state is not None:
         return state
 
-    summary_path = RUNS_DIR / run_id / "summary.json"
+    summary_path = _run_dir(run_id) / "summary.json"
     if summary_path.exists():
         return {"run_id": run_id, "status": "done",
                 "summary": json.loads(summary_path.read_text(encoding="utf-8"))}
@@ -1652,7 +1690,7 @@ def cancel_run(run_id: str) -> Dict[str, Any]:
 
 @app.delete("/api/runs/{run_id}")
 def delete_run(run_id: str) -> Dict[str, str]:
-    run_dir = RUNS_DIR / run_id
+    run_dir = _run_dir(run_id)
     if run_dir.exists():
         shutil.rmtree(run_dir, ignore_errors=True)
     # Before the row, so a crash between the two leaves a row pointing at no
@@ -1673,7 +1711,9 @@ def delete_run(run_id: str) -> Dict[str, str]:
 @app.get("/api/runs/{run_id}/table/{table}")
 def get_table(run_id: str, table: str, limit: int = 200) -> Dict[str, Any]:
     """Preview a fact table for the Data tab."""
-    path = RUNS_DIR / run_id / "data" / f"{table}.csv"
+    if Path(table).name != table or "\\" in table or not 1 <= limit <= 2000:
+        raise HTTPException(422, "Choose a valid table and preview limit (1–2000).")
+    path = _run_dir(run_id) / "data" / f"{table}.csv"
     if not path.exists():
         raise HTTPException(404, f"No table {table!r} in this run")
     df = pd.read_csv(path)
@@ -1688,7 +1728,7 @@ def get_table(run_id: str, table: str, limit: int = 200) -> Dict[str, Any]:
 
 @app.get("/api/runs/{run_id}/tables")
 def list_tables(run_id: str) -> List[Dict[str, Any]]:
-    data_dir = RUNS_DIR / run_id / "data"
+    data_dir = _run_dir(run_id) / "data"
     if not data_dir.exists():
         return []
     out = []
@@ -1704,10 +1744,12 @@ def list_tables(run_id: str) -> List[Dict[str, Any]]:
 
 @app.get("/files/{run_id}/{path:path}")
 def serve_file(run_id: str, path: str):
-    run_dir = (RUNS_DIR / run_id).resolve()
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", run_id):
+        raise HTTPException(404, "Not found")
+    run_dir = (_run_dir(run_id)).resolve()
     target = (run_dir / path).resolve()
     # Path traversal guard: the resolved target must stay inside the run dir.
-    if not str(target).startswith(str(run_dir)) or not target.is_file():
+    if run_dir not in target.parents or not target.is_file():
         raise HTTPException(404, "Not found")
     return FileResponse(target)
 
@@ -1715,6 +1757,11 @@ def serve_file(run_id: str, path: str):
 @app.get("/api/health")
 def health() -> Dict[str, Any]:
     return {"status": "ok", "runs": len(_STATE), "ui": UI_DIST_DIR.exists()}
+
+
+from ..explore.api import router as explore_router
+
+app.include_router(explore_router)
 
 
 if UI_DIST_DIR.exists():
@@ -1731,7 +1778,7 @@ if UI_DIST_DIR.exists():
         """
         root = UI_DIST_DIR.resolve()
         target = (root / path).resolve()
-        if path and target.is_file() and str(target).startswith(str(root)):
+        if path and target.is_file() and root in target.parents:
             return FileResponse(target)
         return FileResponse(root / "index.html")
 

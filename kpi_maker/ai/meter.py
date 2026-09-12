@@ -28,18 +28,15 @@ from .client import Call, Usage
 # USD per million tokens, input / output. Cache reads are billed at roughly a
 # tenth of input, which matters here because the narrator's facts block is
 # identical across a retry.
-PRICES = {
-    "claude-opus-5": (5.00, 25.00),
-    "claude-opus-4-8": (5.00, 25.00),
-    "claude-sonnet-5": (3.00, 15.00),
-    "claude-haiku-4-5": (1.00, 5.00),
-}
+# Standard processing, USD / 1M tokens; verified 2026-09-12.
+# https://developers.openai.com/api/docs/pricing
+PRICES = {"gpt-5.6-luna": (0.20, 1.20), "gpt-6-astra": (10.00, 50.00)}
 CACHE_READ_DISCOUNT = 0.10
 
 # What a model is assumed to cost when it is not in the table above. Priced at
 # the most expensive thing we ship rather than at zero, so an unknown model
 # over-states rather than under-states.
-FALLBACK_PRICE = (5.00, 25.00)
+FALLBACK_PRICE = (10.00, 50.00)
 
 
 def cost_usd(usage: Usage, model: str) -> float:
@@ -196,6 +193,7 @@ def estimate(client: Any, requests: Dict[str, Dict[str, str]],
                     output_tokens=MAX_OUTPUT_TOKENS * max(len(requests), 1))
     return {
         "input_tokens": input_total,
+        "estimate_method": "conservative UTF-8 byte estimate; output at ceiling",
         "assumed_output_tokens": assumed.output_tokens,
         "worst_case_tokens": assumed.total,
         "worst_case_cost_usd": cost_usd(assumed, model),

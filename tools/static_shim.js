@@ -57,7 +57,7 @@
   const fail = (detail, status = 501) => json({ detail }, status);
 
   const OFFLINE_NOTE =
-    'This is the hosted showcase, which serves three pre-built companies. ' +
+    'This is the hosted showcase, which serves pre-built case studies. ' +
     'Generating a new one runs the Python pipeline, so it needs the app ' +
     'running on your own machine — press "Run locally" in the header for the ' +
     'two commands. This page picks it up automatically once it is running.';
@@ -70,6 +70,12 @@
   }
 
   function staticRoute(path, method, init, query) {
+    if (path === '/api/explore/projects' && method === 'GET') return prebuilt('data/explore/projects.json');
+    const demo = path.match(/^\/api\/explore\/demo\/(retail|saas|pokemon)$/);
+    if (demo && method === 'POST') return prebuilt(`data/explore/${demo[1]}.json`);
+    const project = path.match(/^\/api\/explore\/projects\/([a-f0-9]{12})$/);
+    if (project && method === 'GET') return prebuilt(`data/explore/${project[1]}.json`);
+    if (path.startsWith('/api/explore/')) return Promise.resolve(fail('Open the app locally to use the data workspace. ' + OFFLINE_NOTE));
     if (path === '/api/samples') return prebuilt('data/samples.json');
     if (path === '/api/survey')  return prebuilt('data/survey.json');
     if (path === '/api/runs' && method === 'GET') return prebuilt('data/runs.json');
