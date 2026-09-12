@@ -136,7 +136,7 @@ export function Explore({ projectId }: { projectId?: string }) {
           <label>Report title<input value={draft.title} maxLength={100} onInput={e => update({ title: e.currentTarget.value })} /></label>
           <label>What does this data describe?<textarea value={draft.context} maxLength={2000} onInput={e => update({ context: e.currentTarget.value })} placeholder="One row is… Units are… My question is…" /></label>
           <label>Table<select value={draft.table} onChange={e => update({ table: e.currentTarget.value, dimension: '', filters: [], measures: [metric()], date_grain: 'original' })}>{project.tables.map(t => <option value={t.id}>{t.name} · {t.rows} rows</option>)}</select></label>
-          <div class="explore-pair"><label>Group by<select value={draft.dimension} onChange={e => update({ dimension: e.currentTarget.value, date_grain: 'original' })}><option value="">All records</option>{table?.columns.map(c => <option>{c}</option>)}</select></label>
+          <div class="explore-pair"><label>Group by<select aria-label="Group by" value={draft.dimension} onChange={e => update({ dimension: e.currentTarget.value, date_grain: 'original' })}><option value="">All records</option>{table?.columns.map(c => <option>{c}</option>)}</select></label>
           <label>Date grouping<select value={draft.date_grain} onChange={e => update({ date_grain: e.currentTarget.value })}>{['original', 'day', 'month', 'year'].map(v => <option>{v}</option>)}</select></label></div>
           <h3>Metrics</h3>{draft.measures.map((m, i) => {
             const change = (v: Partial<Measure>) => update({ measures: draft.measures.map((item, j) => j === i ? { ...item, ...v } : item) });

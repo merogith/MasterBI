@@ -1980,15 +1980,15 @@ def test_general_workspace_edits_undo_and_persist(page):
     with page.expect_response(lambda r: '/api/explore/projects/' in r.url and r.request.method == 'PUT'):
         page.get_by_role('button', name='Apply and recalculate').click()
     page.get_by_role('button', name='Dashboard', exact=True).click()
-    assert page.locator('.explore-scroll tbody tr').count() == 5
+    _playwright.expect(page.locator('.explore-scroll tbody tr')).to_have_count(5)
     page.reload()
     page.wait_for_selector('.explore-kpis')
-    assert page.locator('.explore-scroll tbody tr').count() == 5
+    _playwright.expect(page.locator('.explore-scroll tbody tr')).to_have_count(5)
     page.get_by_role('button', name='Studio', exact=True).click()
     with page.expect_response(lambda r: r.url.endswith('/undo')):
         page.get_by_role('button', name='Undo last edit').click()
     page.get_by_role('button', name='Dashboard', exact=True).click()
-    assert page.locator('.explore-scroll tbody tr').count() == 4
+    _playwright.expect(page.locator('.explore-scroll tbody tr')).to_have_count(4)
     with page.expect_download() as download:
         page.get_by_role('link', name='PDF ↓', exact=True).click()
     assert download.value.suggested_filename.endswith('.pdf')
