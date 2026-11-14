@@ -471,10 +471,15 @@ def _diagnostic(ctx: SectionContext) -> SectionContent:
 
 
 def _diagnostic_intro(ctx: SectionContext) -> str:
-    if any(e.id in DIAGNOSTIC_EXHIBITS for e in diagnostic_exhibits(ctx)):
+    shown = {e.id for e in diagnostic_exhibits(ctx)}
+    if set(DIAGNOSTIC_EXHIBITS) <= shown:
         return ("Where the period's performance actually came from. The "
                 "bridge decomposes the movement in the North Star; the "
                 "cohort view shows how much of it persists.")
+    if "arr_bridge" in shown:
+        return "How recorded movements reconcile to the reported change in ARR."
+    if "cohort_heatmap" in shown:
+        return "How much recurring revenue each acquisition cohort retains."
     return ("Where the period's performance actually came from, decomposed "
             "into the parts of the business that moved it.")
 
@@ -488,9 +493,10 @@ def diagnostic_exhibits(ctx: SectionContext) -> List[Exhibit]:
     the decomposition appear in both sections at once.
     """
     bridge = next((f for f in ctx.findings if f.id == "arr_bridge"), None)
+    bridge_spec = next((spec for spec in ctx.specs if spec.id == "arr_bridge"), None)
     candidates = [
         Exhibit(id="arr_bridge", title="ARR bridge, last 12 months",
-                caption="Blue adds, red subtracts",
+                caption=bridge_spec.note if bridge_spec else "",
                 # The bridge's own finding is its footnote here rather than a
                 # separate observation — the diagnostic section is two named
                 # exhibits, not the deep-dive treatment.

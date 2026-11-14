@@ -3,9 +3,21 @@
 A personal BI portfolio: case studies, guided business reports, and a general-data
 workspace with OpenAI-assisted editing, dashboards, PDF and PowerPoint exports.
 
-**Start with [the portfolio quickstart and demo walkthrough](PORTFOLIO.md).**
-The browser gallery is free to host; uploads and AI run through your local server.
-The new workspace is at `/explore`; existing business workflows remain available.
+**[Open the public sample gallery](https://merogith.github.io/MasterBI/)**.
+It runs in the browser with precomputed, synthetic data. For the Northwind
+Analytics example, open the [interactive dashboard](https://merogith.github.io/MasterBI/files/northwind_saas/dashboard.html)
+or download the [executive PDF](https://merogith.github.io/MasterBI/files/northwind_saas/report.pdf),
+[PowerPoint deck](https://merogith.github.io/MasterBI/files/northwind_saas/deck.pptx),
+or [KPI facts CSV](https://merogith.github.io/MasterBI/files/northwind_saas/facts.csv).
+
+| | Public gallery | Local app |
+|---|---|---|
+| Explore examples and download outputs | Yes | Yes |
+| Edit analyses, build reports, or upload CSV/Excel | | Yes |
+| OpenAI assistance | | Optional with your API key |
+
+See the [quickstart and walkthrough](PORTFOLIO.md) to run the local app.
+The general-data workspace is at `/explore`, alongside the business reports.
 
 The design rationale — question framework, KPI selection theory, the three
 product modes, effort estimates — is in **[ARCHITECTURE.md](ARCHITECTURE.md)**.
@@ -136,8 +148,9 @@ nothing, it serves the pre-rendered samples. A loopback address is a
 trustworthy origin, so HTTPS→`http://127.0.0.1` is not mixed content; the
 server answers the Private Network Access preflight Chrome additionally wants.
 
-Nothing needs configuring and nothing is uploaded — the hosted page is the
-front end, the user's own machine is the engine, and their data never leaves it.
+The hosted gallery serves only sample data. With a local server connected,
+file uploads go to that server. Optional OpenAI features send the context
+needed for the requested task to OpenAI, as described in the [portfolio guide](PORTFOLIO.md#openai-and-cost).
 
 Three constraints shaped the design:
 

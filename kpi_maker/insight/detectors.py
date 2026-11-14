@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from ..fmt import fmt_percent, fmt_value
+from ..metrics.arr_bridge import trailing_arr_bridge
 from ..metrics.engine import MetricResult
 from ..profile.schema import CompanyProfile
 from .seasonality import deseasonalise
@@ -131,7 +132,7 @@ def detect_all(results: List[MetricResult], tables: Dict[str, pd.DataFrame],
         "trend_breaks": lambda: _trend_breaks(results),
         "segment_outliers": lambda: _segment_outliers(tables, profile),
         "operating_leverage": lambda: _operating_leverage(by_id, tables),
-        "arr_bridge": lambda: _arr_bridge(tables, profile),
+        "arr_bridge": lambda: _arr_bridge(tables),
         "channel_efficiency": lambda: _channel_efficiency(tables),
         "runway": lambda: _runway(by_id),
         "driver_decomposition": lambda: _driver_decomposition(results),
@@ -576,22 +577,26 @@ def _operating_leverage(by_id: Dict[str, MetricResult],
     return []
 
 
-def _arr_bridge(tables: Dict[str, pd.DataFrame], profile: CompanyProfile) -> List[Finding]:
+def _arr_bridge(tables: Dict[str, pd.DataFrame]) -> List[Finding]:
     """Decompose the last 12 months of ARR movement — the core diagnostic."""
-    mov = tables["mrr_movements"]
-    months = sorted(mov["month"].unique())[-12:]
-    recent = mov[mov["month"].isin(months)]
-    parts = recent.groupby("movement_type")["delta_mrr"].sum() * 12
-
-    new = float(parts.get("new", 0.0))
-    expansion = float(parts.get("expansion", 0.0))
-    churn = float(abs(parts.get("churn", 0.0)))
-    contraction = float(abs(parts.get("contraction", 0.0)))
-    gross_add = new + expansion
+    bridge = trailing_arr_bridge(tables)
+    if bridge is None:
+        return []
+    parts = bridge.movements
+    new = parts.get("new", 0.0)
+    expansion = parts.get("expansion", 0.0)
+    reactivation = parts.get("reactivation", 0.0)
+    churn = abs(parts.get("churn", 0.0))
+    contraction = abs(parts.get("contraction", 0.0))
+    gross_add = new + expansion + reactivation
     if gross_add <= 0:
         return []
 
     leak = (churn + contraction) / gross_add
+    additions = (f"{_fmt(new, 'currency')} of new-logo ARR and "
+                 f"{_fmt(expansion, 'currency')} of expansion")
+    if reactivation:
+        additions += f", plus {_fmt(reactivation, 'currency')} of reactivation"
     critical_leak = _param("arr_bridge", "critical_leak")
     high_leak = _param("arr_bridge", "high_leak")
     severity = ("critical" if leak > critical_leak
@@ -599,17 +604,15 @@ def _arr_bridge(tables: Dict[str, pd.DataFrame], profile: CompanyProfile) -> Lis
     return [Finding(
         id="arr_bridge",
         severity=severity,
-        title=f"{_pct(leak, 0)} of gross new ARR is lost to churn and contraction",
+        title=f"{_pct(leak, 0)} of gross ARR additions went to churn and contraction",
         statement=(
-            f"Over the last twelve months the business added "
-            f"{_fmt(new, 'currency')} of new-logo ARR and {_fmt(expansion, 'currency')} "
-            f"of expansion, against {_fmt(churn, 'currency')} lost to churn and "
-            f"{_fmt(contraction, 'currency')} to contraction. Net new ARR was "
-            f"{_fmt(gross_add - churn - contraction, 'currency')}, meaning {_pct(leak, 0)} of "
-            f"everything won was given back."
+            f"Over the last twelve months the business added {additions}, against "
+            f"{_fmt(churn, 'currency')} lost to churn and "
+            f"{_fmt(contraction, 'currency')} to contraction. Recorded net movements "
+            f"were {_fmt(bridge.net_movement, 'currency')}."
         ),
         evidence={"new": new, "expansion": expansion, "churn": churn,
-                  "contraction": contraction, "leakage_ratio": leak},
+                  "contraction": contraction, "reactivation": reactivation, "leakage_ratio": leak},
         kpi_ids=["net_new_arr", "nrr", "grr"],
         recommendation=(
             "Retention work compounds faster than acquisition work at this leakage "

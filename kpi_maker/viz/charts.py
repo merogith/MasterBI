@@ -28,6 +28,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from ..fmt import CURRENCY_SYMBOL, fmt_value
+from ..metrics.arr_bridge import trailing_arr_bridge
 from ..metrics.engine import MetricResult
 from .theme import (
     FONT_STACK,
@@ -794,27 +795,27 @@ def arr_trend(results: List[MetricResult]) -> Optional[ChartSpec]:
 
 @chart("arr_bridge", order=2, takes=("tables",))
 def arr_bridge(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
-    """The single most useful diagnostic in a subscription business."""
-    mov = tables["mrr_movements"]
-    months = sorted(mov["month"].unique())
-    if len(months) < 13:
+    """Explain the change between the two ARR snapshots used in the scorecard."""
+    bridge = trailing_arr_bridge(tables)
+    if bridge is None:
         return None
-    window = months[-12:]
-    opening = mov[mov["month"] < window[0]]["delta_mrr"].sum() * 12
-    recent = mov[mov["month"].isin(window)]
-    parts = recent.groupby("movement_type")["delta_mrr"].sum() * 12
 
-    labels = ["Opening ARR", "New", "Expansion", "Contraction", "Churn", "Closing ARR"]
-    values = [
-        opening,
-        float(parts.get("new", 0.0)),
-        float(parts.get("expansion", 0.0)),
-        -abs(float(parts.get("contraction", 0.0))),
-        -abs(float(parts.get("churn", 0.0))),
-        0,
-    ]
-    measures = ["absolute", "relative", "relative", "relative", "relative", "total"]
-    closing = sum(values)
+    labels = ["Opening ARR", "New", "Expansion", "Contraction", "Churn"]
+    kinds = ("new", "expansion", "contraction", "churn")
+    values = [bridge.opening, *(bridge.movements.get(kind, 0.0) for kind in kinds)]
+    reactivation = bridge.movements.get("reactivation", 0.0)
+    if reactivation:
+        labels.insert(3, "Reactivation")
+        values.insert(3, reactivation)
+    note = "Opening and closing use the reported ARR snapshots."
+    residual = bridge.residual
+    if residual:
+        labels.append("Unexplained")
+        values.append(residual)
+        note += " Unexplained is the difference left after recorded movements."
+    labels.append("Closing ARR")
+    values.append(0)
+    measures = ["absolute", *(["relative"] * (len(values) - 2)), "total"]
 
     fig = go.Figure(go.Waterfall(
         orientation="v", measure=measures, x=labels, y=values,
@@ -823,7 +824,7 @@ def arr_bridge(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
         # which left the opening bar carrying a figure and the closing one,
         # the number the whole exhibit builds to, asking the reader to squint
         # at an axis.
-        text=[_money(abs(v)) if m != "total" else _money(closing)
+        text=[_money(v) if m != "total" else _money(bridge.closing)
               for v, m in zip(values, measures)],
         textposition="outside",
         textfont=dict(color=LIGHT["text_primary"], size=11),
@@ -839,7 +840,7 @@ def arr_bridge(tables: Dict[str, pd.DataFrame]) -> Optional[ChartSpec]:
         id="arr_bridge", title="ARR bridge, last 12 months", about=("net_new_arr",),
         subtitle="Where the year's ARR movement came from", figure=fig,
         tab="overview", width="full",
-        note="Blue adds, red subtracts. The gap between gross additions and closing ARR is leakage.",
+        note=note,
     )
 
 

@@ -323,6 +323,59 @@ def test_both_waterfalls_label_their_closing_total(runs):
         assert built.figure.data[0].text[-1].strip()
 
 
+def test_arr_bridge_uses_scorecard_boundaries(runs):
+    profile, results = runs["northwind_saas"]
+    spec = RunSpec(profile=profile)
+    tables = GENERATORS[spec.resolve_archetype()](profile, spec.source.generator).tables
+    arr = next(result for result in results if result.kpi.id == "arr")
+
+    bridge = C.arr_bridge(tables)
+    assert bridge is not None
+    trace = bridge.figure.data[0]
+    assert trace.y[0] == pytest.approx(arr.prior_year)
+    assert sum(trace.y) == pytest.approx(arr.current)
+    assert "Unexplained" not in trace.x
+    assert trace.text[-1] == C._money(arr.current)
+
+
+def test_arr_bridge_reports_unexplained_change_instead_of_attributing_it(runs):
+    import pandas as pd
+
+    from kpi_maker.insight.detectors import detect_all
+
+    tables = {
+        "monthly_financials": pd.DataFrame({
+            "month": ["2025-01", "2024-01", "2025-02"],
+            "arr": [19000.0, 10000.0, float("nan")],
+        }),
+        "mrr_movements": pd.DataFrame({
+            "month": ["2024-01", "2024-03", "2024-06", "2025-01", "2025-02"],
+            "movement_type": ["new", "new", "reactivation", "churn", "new"],
+            "delta_mrr": [600.0, 500.0, 200.0, -100.0, 1000.0],
+        }),
+    }
+    bridge = C.arr_bridge(tables)
+    assert bridge is not None
+    trace = bridge.figure.data[0]
+    bars = dict(zip(trace.x, trace.y))
+    assert bars["Opening ARR"] == 10000
+    assert bars["New"] == 6000
+    assert bars["Reactivation"] == 2400
+    assert bars["Churn"] == -1200
+    assert bars["Unexplained"] == 1800
+    assert sum(trace.y) == 19000
+    assert "Unexplained" in bridge.note
+
+    profile, _ = runs["northwind_saas"]
+    findings = detect_all([], tables, profile, watched={"arr_bridge"})
+    finding = next(result for result in findings if result.id == "arr_bridge")
+    assert finding.evidence["reactivation"] == 2400
+    assert "Recorded net movements were $7.2K" in finding.statement
+
+    tables["monthly_financials"] = tables["monthly_financials"].iloc[:1]
+    assert C.arr_bridge(tables) is None
+
+
 # --------------------------------------------------------------------------
 # Anomalies on the time axis (5.3b)
 # --------------------------------------------------------------------------
