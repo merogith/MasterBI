@@ -1,4 +1,4 @@
-# MasterBI
+# MasterBI — Reporting Automation
 
 A personal BI portfolio: case studies, guided business reports, and a general-data
 workspace with OpenAI-assisted editing, dashboards, PDF and PowerPoint exports.
