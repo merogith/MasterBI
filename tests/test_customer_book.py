@@ -112,7 +112,8 @@ def test_near_threshold_prose_explains_equal_rounded_values(subscription_sample,
 
 
 def test_recruiter_demo_pins_its_inputs():
-    spec = RunSpec.model_validate_json((ROOT / "samples/specs/northwind_demo.json").read_text())
+    spec = RunSpec.model_validate_json((ROOT / "samples/demos/northwind_demo.json").read_text())
     assert spec.source.generator.history_end == "2026-10"
     assert spec.profile.seed == 20250806
     assert spec.ai.enabled is False
+    assert spec.profile == load_profile(ROOT / "samples/northwind_saas.json")

@@ -42,12 +42,15 @@ environment before starting it. Do not put the key in frontend code or commit it
 
 ```sh
 # With the environment active; Windows PowerShell uses the same command.
-python -m kpi_maker run --spec samples/specs/northwind_demo.json --out out/northwind_demo
+python -m kpi_maker run --spec samples/demos/northwind_demo.json --out out/northwind_demo
 ```
 
 The spec pins the seed and report month, so a run next month uses the same source
 data. A normal sample run instead ends at the last completed month. Outputs are
 generated locally; no prebuilt desktop download is required.
+
+Pinned demonstrations live in `samples/demos/`. Budget examples in
+`samples/specs/` additionally carry an explicit plan and show variance to it.
 
 ## A five-minute demonstration
 
