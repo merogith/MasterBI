@@ -161,7 +161,9 @@ SUBSCRIPTION_SCHEMAS: Dict[str, pa.DataFrameSchema] = {
             "is_active": pa.Column(bool, coerce=True),
         },
         strict=False, unique=["customer_id"], name="customers",
-        description="One row per customer. No month column — entity grain.",
+        description=("One row per customer. No month column — entity grain. "
+                     "final_acv and is_active are the closing snapshot as of "
+                     "the last reported month."),
     ),
 
     "mrr_movements": pa.DataFrameSchema(

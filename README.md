@@ -53,11 +53,13 @@ Working end to end. Roadmap for everything else: **[ROADMAP.md](ROADMAP.md)**.
 
 ## Run it
 
-**Download the app** from [Releases](https://github.com/merogith/MasterBI/releases)
-— `MasterBI-windows-x86_64.exe`, `MasterBI-macos-arm64`, or
-`MasterBI-linux-x86_64` — and open it. It picks a free port, starts, and opens
-your browser. No Python, no virtualenv, no pip: the interpreter and every
-dependency are inside the file.
+For an immediate preview, [open the finished Northwind reporting pack](https://merogith.github.io/MasterBI/runs/northwind_saas)
+or use the dashboard, PDF and PowerPoint links above. No account, installation
+or API key is needed to explore the synthetic examples.
+
+To upload data or edit reports, run from source with **Python 3.11 or 3.12**
+and **Node.js 22.12 or newer**. Packaged desktop executables are not currently
+published; the build instructions below are for developers making their own.
 
 Your runs are saved outside the app, so they survive closing it and upgrading
 it: `%LOCALAPPDATA%\MasterBI` on Windows, `~/Library/Application Support/MasterBI`
@@ -82,31 +84,37 @@ runs the same check on all three platforms before attaching anything.
 
 ### From source
 
-**Double-click `start.bat`** (Windows) or **`start.command`** (macOS, Linux).
-That is the whole procedure. It finds Python, builds the environment, installs
+After cloning or extracting the repository, run **`start.bat`** (Windows) or
+**`bash start.command`** (macOS, Linux). It finds Python, builds the environment, installs
 the dependencies, compiles the front end, starts the server and opens your
 browser — and on a network that intercepts TLS it retries pip with the
 trusted-host flags rather than dying on a certificate error. Only the first run
 is slow.
 
-Needs Python 3.11 or newer, and Node 18 or newer for that one build step.
+Needs Python 3.11 or 3.12, and Node.js 22.12 or newer for the build step.
 `web/` compiles to `kpi_maker/ui_dist/`, which is a build artifact and so is not
 in the repository: without it the server runs but has no UI to serve. The
 launcher builds it on the first run and says so if it cannot; `serve` says the
 same before it starts, rather than opening a browser onto a page that cannot
 render. If either is missing the launcher says which, and where to get it.
 
-**None of that applies to the downloads above** — the released executables and
-the Docker image carry the interpreter, the dependencies and the compiled front
-end inside them.
+The Docker build includes the interpreter, dependencies and compiled frontend.
 
 <details>
 <summary>By hand, if you would rather</summary>
 
 ```bash
-py -3 -m venv .venv
-./.venv/Scripts/python.exe -m pip install -r requirements.txt
-./.venv/Scripts/python.exe -m kpi_maker serve --open
+# macOS / Linux (use python3.12 or python3.11)
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+npm --prefix web ci
+npm --prefix web run build
+.venv/bin/python -m kpi_maker serve --open
+
+# Windows PowerShell: use these Python paths instead
+# py -3.12 -m venv .venv
+# .venv\Scripts\python.exe -m pip install -r requirements.txt
+# .venv\Scripts\python.exe -m kpi_maker serve --open
 ```
 
 Behind a TLS-intercepting proxy, pip needs
@@ -123,6 +131,8 @@ Three modes on the home screen:
 | **2 · Build your own** | Working — 14 core questions, 5 optional; fewer where a sector makes one irrelevant. Saved as you go, and every answer editable from the review step | Free |
 | **3 · Bring your data** | Working — upload, see what it was read as, correct the field mapping, see what it will and will not produce, then run | Free |
 | **Surprise me** | Working — random self-consistent company | Free |
+
+For a reproducible first run, use the [five-minute Northwind walkthrough](PORTFOLIO.md#five-minute-northwind-reporting-demo).
 
 Results open on one screen: the headline tiles, the findings, the full
 filterable scorecard with every KPI's record sheet behind its name, and the
@@ -282,6 +292,11 @@ library KPI replaces it — recorded, not silent.
 The same language writes **calculated columns** on a fact table
 (`final_acv - initial_acv` on `customers`), which KPIs can then aggregate over.
 Time functions are refused there, because a row has no time axis.
+
+For subscription data, the customer table's `final_acv` and `is_active` describe
+the closing snapshot at the last reported month. The monthly customer book
+uses that snapshot and the movement history to recover opening balances;
+customers acquired before the reporting window remain in the book.
 
 Three table grains, three behaviours — this is the rule worth knowing:
 

@@ -262,21 +262,21 @@
 
   const ZIP = 'https://github.com/merogith/MasterBI/archive/refs/heads/main.zip';
 
-  /* Three terminal commands is not "simple" for most of the people who reach
-   * this dialog. The download path needs no terminal at all; the commands stay
-   * as a second option for those who would rather type them. */
   const EASY = [
-    ['Download the app', `<a class="primary" href="${ZIP}" download style="display:inline-block;margin-top:8px;text-decoration:none">Download MasterBI.zip</a>`],
+    ['Install Python 3.11 or 3.12 and Node.js 22.12 or newer',
+     'These are needed for the source app. The finished samples work without installation.'],
+    ['Download the source', `<a class="primary" href="${ZIP}" download style="display:inline-block;margin-top:8px;text-decoration:none">Download MasterBI source.zip</a>`],
     ['Unzip it', 'Right-click the downloaded file &rarr; <em>Extract All</em>.'],
     ['Open the folder and double-click <b>start.bat</b>',
-     'On a Mac, double-click <b>start.command</b> instead. The first run installs what it needs and takes a few minutes; after that it starts in seconds. Your browser opens on its own.'],
+     'On macOS or Linux, open a terminal in the extracted folder and run <code>bash start.command</code>. The first run installs dependencies and builds the frontend before opening your browser.'],
   ];
 
   const TYPED = [
     'git clone https://github.com/merogith/MasterBI.git',
     'cd MasterBI',
-    'pip install -r requirements.txt',
-    'python -m kpi_maker serve --open',
+    '# Windows: start.bat',
+    '# macOS / Linux:',
+    'bash start.command',
   ];
 
   function injectStyles() {
@@ -334,7 +334,7 @@
     pill.querySelector('.bridge-text').textContent = text;
     pill.title = {
       on: `Connected to ${live} — every mode works and runs are saved on your machine.`,
-      off: 'Showing three pre-built companies. Click for the commands that unlock everything.',
+      off: 'Showing pre-built sample companies. Click for local setup instructions.',
       pending: 'Your local app is running. Click to switch to it — this reloads the page.',
     }[stateName];
 

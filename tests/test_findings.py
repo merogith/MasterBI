@@ -225,6 +225,19 @@ def test_parts_that_do_not_sum_produce_a_dispersion_claim_only():
     assert all(part.share_of_move == 0.0 for part in found.parts)
 
 
+def test_stable_blended_retention_does_not_hide_a_segment_gap():
+    result = _Result(
+        series=_series([1.0] * 13), current=1.0,
+        by_segment={"segment": {
+            "healthy": _series([1.10] * 13),
+            "leaking": _series([0.75] * 13),
+        }})
+    found = decompose(result, "segment")
+    assert found is not None and found.kind == "dispersion"
+    assert found.leader.segment == "leaking"
+    assert worth_reporting(found)
+
+
 def test_a_move_spread_evenly_is_not_a_cause():
     """Naming the largest of five near-identical contributors as *the* cause
     would be picking a scapegoat out of noise."""
@@ -245,7 +258,8 @@ def test_a_move_too_small_to_discuss_is_skipped():
         series=_series([100.0 + i * 0.01 for i in range(months)]),
         current=100.12,
         by_segment={"segment": {
-            "a": _series([60.0] * months), "b": _series([40.0] * months)}})
+            "a": _series([60.0 + i * 0.006 for i in range(months)]),
+            "b": _series([40.0 + i * 0.004 for i in range(months)])}})
     assert decompose(flat, "segment") is None
 
 
