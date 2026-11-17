@@ -29,7 +29,7 @@ import plotly.graph_objects as go
 
 from ..fmt import CURRENCY_SYMBOL, fmt_value
 from ..metrics.arr_bridge import trailing_arr_bridge
-from ..metrics.engine import MetricResult
+from ..metrics.engine import MetricResult, customer_mrr_matrix
 from .theme import (
     FONT_STACK,
     SCENARIO_NOTATION,
@@ -999,9 +999,8 @@ def cac_payback(results: List[MetricResult]) -> Optional[ChartSpec]:
 def cohort_heatmap(tables: Dict[str, pd.DataFrame], quarters: int = 8,
                    horizon: int = 12) -> Optional[ChartSpec]:
     """Revenue retention by acquisition cohort. Sequential single hue."""
-    mov, cust = tables["mrr_movements"], tables["customers"]
-    matrix = mov.pivot_table(index="month", columns="customer_id", values="delta_mrr",
-                             aggfunc="sum", fill_value=0.0).cumsum().clip(lower=0.0)
+    cust = tables["customers"]
+    matrix = customer_mrr_matrix(tables)
     if matrix.empty:
         return None
 
@@ -1014,10 +1013,10 @@ def cohort_heatmap(tables: Dict[str, pd.DataFrame], quarters: int = 8,
         ids = [c for c in cust.loc[cust["cohort_q"] == q, "customer_id"] if c in matrix.columns]
         if not ids:
             continue
-        start = q.asfreq("M", how="start")
+        # Start after the acquisition quarter is complete. Using its first
+        # month counts later signups in that quarter as retention/expansion.
+        start = q.asfreq("M", how="end")
         if start not in matrix.index:
-            start = matrix.index[matrix.index >= start][0] if (matrix.index >= start).any() else None
-        if start is None:
             continue
         base = matrix.loc[start, ids].sum()
         if base <= 0:
@@ -1045,9 +1044,11 @@ def cohort_heatmap(tables: Dict[str, pd.DataFrame], quarters: int = 8,
     _base_layout(fig, height=300)
     fig.update_yaxes(autorange="reversed")
     return ChartSpec(
-        id="cohort_heatmap", title="Revenue retention by acquisition cohort",
-        about=("grr",),
-        subtitle="% of the cohort's initial ARR still held, by month since signup",
+        id="cohort_heatmap", title="Net revenue retention by acquisition cohort",
+        # Its own acquisition-quarter baseline differs from a trailing NRR
+        # KPI; a generic KPI finding would headline a different comparison.
+        about=(),
+        subtitle="% of quarter-end ARR retained; months since acquisition quarter end",
         figure=fig, tab="customer", width="full",
         colorscale_tokens=["seq_1", "seq_2", "seq_3", "seq_4", "seq_5"],
         note="Above 100% means the cohort's expansion outran its churn.",

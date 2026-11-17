@@ -39,6 +39,38 @@ MODELLED = "modelled"
 MIXED = "mixed"
 
 
+def customer_mrr_matrix(tables: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Month-end customer balances, anchored to the closing customer snapshot.
+
+    The reported movements can start after a customer's acquisition. Summing
+    that window from zero loses its opening balance. The customer entity table
+    supplies final ACV as of the last reported month, so subtracting the window's
+    net movements recovers the opening book without inventing transactions.
+    """
+    movements = tables["mrr_movements"]
+    months = tables["monthly_financials"]["month"].sort_values().unique()
+    pivot = movements.pivot_table(
+        index="month", columns="customer_id", values="delta_mrr",
+        aggfunc="sum", fill_value=0.0,
+    ).reindex(months, fill_value=0.0)
+    balances = pivot.cumsum()
+    customers = tables.get("customers")
+    if (len(balances.index) and customers is not None
+            and {"customer_id", "final_acv"} <= set(customers.columns)):
+        closing = customers.set_index("customer_id")["final_acv"] / 12.0
+        if "is_active" in customers.columns:
+            closing = closing.where(
+                customers.set_index("customer_id")["is_active"].astype(bool), 0.0)
+        balances = balances.reindex(columns=closing.index.union(balances.columns),
+                                    fill_value=0.0)
+        opening = closing.reindex(balances.columns).fillna(
+            balances.iloc[-1]) - balances.iloc[-1]
+        balances = balances.add(opening, axis="columns")
+    # Cancellation of a churn movement can leave a tiny positive balance.
+    # Such dust is not a paying customer; retain real sub-cent balances.
+    return balances.mask(np.isclose(balances, 0.0, atol=1e-8, rtol=0.0), 0.0).clip(lower=0.0)
+
+
 class TrackedTables(dict):
     """A table dict that remembers which tables were read.
 
@@ -122,11 +154,7 @@ class MetricContext:
     def customer_mrr_matrix(self) -> pd.DataFrame:
         """month x customer_id MRR. The basis for all cohort retention maths."""
         if not hasattr(self, "_matrix"):
-            pivot = self.mov.pivot_table(
-                index="month", columns="customer_id", values="delta_mrr",
-                aggfunc="sum", fill_value=0.0,
-            )
-            self._matrix = pivot.cumsum().clip(lower=0.0)
+            self._matrix = customer_mrr_matrix(self.tables)
         return self._matrix
 
     def fte(self) -> pd.Series:

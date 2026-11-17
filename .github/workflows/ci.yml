@@ -287,6 +287,23 @@ jobs:
           PY
           done
 
+      - name: Every pinned demonstration produces every artifact
+        # Pinned demos have no asserted budget. Keep their output gate as
+        # strict as the profile gate without weakening the plan-spec gate.
+        run: |
+          set -e
+          for spec in samples/demos/*.json; do
+            name=$(basename "$spec" .json)
+            python -m kpi_maker run --spec "$spec" --out "out/demo-$name" --quiet
+            for f in dashboard.html report.pdf deck.pptx report.docx \
+                     workbook.xlsx facts.csv findings.json profile.json kpi_set.json; do
+              test -s "out/demo-$name/$f" || { echo "$name: missing or empty $f"; exit 1; }
+            done
+            count=$(ls "out/demo-$name"/charts/*.png 2>/dev/null | wc -l)
+            test "$count" -gt 0 || { echo "$name: no chart PNGs"; exit 1; }
+            echo "$name: 9 artifacts, $count charts"
+          done
+
       - name: Every KPI pack passes its own linter
         # 4.3a's gate. Phase 4 authors ~600 record sheets, and the failures
         # that matter are invisible in a diff: a driver_parent pointing at a

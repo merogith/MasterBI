@@ -111,13 +111,20 @@ def decompose(result, dimension: str, months_back: int = 12
         return None
 
     total_change = blended_now - blended_then
-    if abs(total_change) / max(abs(blended_then), 1e-9) < MIN_RELATIVE_MOVE:
-        return None
-
     now = {name: _at(series, 0) for name, series in per_segment.items()}
     then = {name: _at(series, months_back) for name, series in per_segment.items()}
 
     additive = (is_additive(blended_now, now) and is_additive(blended_then, then))
+    if additive:
+        if abs(total_change) / max(abs(blended_then), 1e-9) < MIN_RELATIVE_MOVE:
+            return None
+    else:
+        # Different segment rates matter even when their company blend is
+        # stable. Gate the dispersion on its gap, not on a year-on-year move.
+        gap = max((abs(value - blended_now) for value in now.values()
+                   if value is not None), default=0.0)
+        if gap / max(abs(blended_now), 1e-9) < MIN_RELATIVE_MOVE:
+            return None
 
     parts: List[Contribution] = []
     for name in per_segment:

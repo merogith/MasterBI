@@ -6,22 +6,51 @@ backend is required for the gallery.
 
 ## Start locally
 
-Use Python 3.11+ and Node for the initial frontend build:
+Use Python 3.11 or 3.12 and Node.js 22.12 or newer for the initial frontend build:
 
 ```sh
-python -m venv .venv
+python3.12 -m venv .venv
 # macOS / Linux
 source .venv/bin/activate
 # Windows PowerShell instead: .venv\Scripts\Activate.ps1
-pip install -r requirements.txt -r requirements-ai.txt
+pip install -r requirements.txt
 npm --prefix web ci
 npm --prefix web run build
 python -m uvicorn kpi_maker.api.server:app --host 127.0.0.1 --port 8000
 ```
 
+On Windows, create the environment with `py -3.12 -m venv .venv` instead.
+Optional AI features also need `pip install -r requirements-ai.txt`.
+
 Open **http://127.0.0.1:8000/explore**. The dashboard, Studio, demonstrations and
 exports work without an API key. To enable AI, set `OPENAI_API_KEY` in the server's
 environment before starting it. Do not put the key in frontend code or commit it.
+
+## Five-minute Northwind reporting demo
+
+1. [Open the finished Northwind pack](https://merogith.github.io/MasterBI/runs/northwind_saas).
+   Inspect the scorecard, then open the dashboard, PDF and PowerPoint. They share
+   one computed facts table. The company data and benchmark figures are illustrative.
+2. To reproduce a fixed snapshot locally without an API key, run the command below
+   after installing the source dependencies. It writes a standalone dashboard,
+   `report.pdf`, `deck.pptx`, `facts.csv` and the underlying tables to `out/northwind_demo/`.
+3. Compare **Active Customers** in `facts.csv` with the customer-concentration
+   chart. Both count the closing active book. The gallery's customer target is
+   the profile input; the simulation calibrates towards it within its stated tolerance.
+4. Read the retention finding, then locate the same evidence in the dashboard
+   and deck. Cohort net retention includes expansion; gross retention excludes it.
+
+```sh
+# With the environment active; Windows PowerShell uses the same command.
+python -m kpi_maker run --spec samples/demos/northwind_demo.json --out out/northwind_demo
+```
+
+The spec pins the seed and report month, so a run next month uses the same source
+data. A normal sample run instead ends at the last completed month. Outputs are
+generated locally; no prebuilt desktop download is required.
+
+Pinned demonstrations live in `samples/demos/`. Budget examples in
+`samples/specs/` additionally carry an explicit plan and show variance to it.
 
 ## A five-minute demonstration
 

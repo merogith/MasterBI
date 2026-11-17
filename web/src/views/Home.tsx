@@ -36,7 +36,7 @@ function stats(sample: Sample): string {
   return [
     sample.revenue ? money(sample.revenue, sample.currency ?? 'USD') : null,
     sample.headcount ? `${sample.headcount} people` : null,
-    sample.customers ? `${sample.customers.toLocaleString()} customers` : null,
+    sample.customers ? `${sample.customers.toLocaleString()} customer target` : null,
   ].filter(Boolean).join(' · ');
 }
 

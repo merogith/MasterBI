@@ -251,8 +251,9 @@ def test_a_blended_number_can_hide_a_segment(run):
 
     `northwind_saas`'s own story is "a third of everything won is given
     straight back — and the churn is concentrated in one segment the blended
-    number completely hides". Blended NRR reads 103%; SMB is at 81%. Until
-    this item the engine could not express that at all.
+    number understates". SMB retention sits well below the blend. Until
+    this item the engine could not express that at all. The corrected opening
+    book puts blended NRR near 99%, rather than the old incomplete-book 103%.
     """
     archetype, profile, tables, kpis = run
     if archetype != "saas":
@@ -263,8 +264,9 @@ def test_a_blended_number_can_hide_a_segment(run):
     assert nrr is not None and nrr.segmented, "NRR was not sliced by segment"
 
     per_segment = nrr.current_by_segment("segment")
-    assert nrr.current is not None and nrr.current > 1.0, \
-        "the blended figure should look healthy — that is the point"
+    assert nrr.current is not None
+    assert nrr.current - min(per_segment.values()) > 0.15, \
+        "the blended rate should understate the weakest segment's leakage"
     assert min(v for v in per_segment.values() if v is not None) < 0.95, \
         f"no segment is materially worse than the blend: {per_segment}"
 

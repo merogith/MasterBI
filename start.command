@@ -17,10 +17,10 @@ die() { echo; echo "  $1"; echo; read -r -p "  Press Enter to close." _; exit 1;
 
 # ---- find a Python --------------------------------------------------------
 PYCMD=""
-for candidate in python3 python; do
+for candidate in python3.12 python3.11 python3 python; do
   if command -v "$candidate" >/dev/null 2>&1; then
     # macOS ships a python3 stub that only prompts to install the tools.
-    if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)' >/dev/null 2>&1; then
+    if "$candidate" -c 'import sys; sys.exit(0 if (3,11) <= sys.version_info < (3,13) else 1)' >/dev/null 2>&1; then
       PYCMD="$candidate"; break
     fi
   fi
@@ -28,7 +28,7 @@ done
 # 3.11 is the floor in pyproject.toml, and this gate has to agree with it: on
 # 3.9 the launcher used to build a venv, run pip, and fail somewhere inside a
 # dependency resolution the user cannot read. Refusing up front says why.
-[ -n "$PYCMD" ] || die "Python 3.11 or newer is not installed. Get it from https://www.python.org/downloads/ then double-click this file again."
+[ -n "$PYCMD" ] || die "Python 3.11 or newer, below 3.13, is required. Install Python 3.11 or 3.12 from https://www.python.org/downloads/ then run this file again."
 
 # ---- private environment --------------------------------------------------
 if [ ! -x ".venv/bin/python" ]; then
@@ -69,15 +69,12 @@ if [ ! -f "kpi_maker/ui_dist/index.html" ]; then
     if ! (npm --prefix web ci --silent && npm --prefix web run build --silent); then
       echo
       echo "  The front-end build failed. The error is above."
-      echo "  The server will start, but the browser UI will not load."
-      echo
+      die "Fix the front-end build error above, then run this file again."
     fi
   else
     echo
     echo "  No front end, and no npm to build one. The app will not render."
-    echo "  Install Node.js from https://nodejs.org/ and run this again, or"
-    echo "  download a ready-made build from the project's Releases page."
-    echo
+    die "Install Node.js 22.12 or newer from https://nodejs.org/ and run this again."
   fi
 fi
 

@@ -298,13 +298,17 @@ def _status_breaches(results: List[MetricResult]) -> List[Finding]:
                 crossed = (f"{side} the {_fmt(low, k.unit)}–{_fmt(high, k.unit)} "
                            f"range the middle half of its cohort sits in")
         elif r.status == "red":
+            edge = _fmt(red, k.unit)
+            qualifier = "just " if _fmt(r.current, k.unit) == edge else ""
             crossed = (
-                f"{direction} the red threshold of {_fmt(red, k.unit)}"
+                f"{qualifier}{direction} the red threshold of {edge}"
             )
             threshold = red
         else:
+            edge = _fmt(green, k.unit)
+            qualifier = "just " if _fmt(r.current, k.unit) == edge else ""
             crossed = (
-                f"{direction} the green threshold of {_fmt(green, k.unit)}, "
+                f"{qualifier}{direction} the green threshold of {edge}, "
                 f"but not yet at the red threshold of {_fmt(red, k.unit)}"
             )
             threshold = green

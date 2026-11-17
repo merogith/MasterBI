@@ -18,12 +18,15 @@ REM The py launcher ships with python.org installs and picks the newest
 REM version; plain `python` on PATH is the fallback. The Microsoft Store stub
 REM is also called python.exe but fails on -V, so the check has to run it.
 set "PYCMD="
-py -3 -V >nul 2>nul && set "PYCMD=py -3"
+py -3.12 -V >nul 2>nul && set "PYCMD=py -3.12"
 if not defined PYCMD (
-  python -V >nul 2>nul && set "PYCMD=python"
+  py -3.11 -V >nul 2>nul && set "PYCMD=py -3.11"
 )
 if not defined PYCMD (
-  echo   Python is not installed, or not on your PATH.
+  python -c "import sys; sys.exit(0 if (3,11) <= sys.version_info < (3,13) else 1)" >nul 2>nul && set "PYCMD=python"
+)
+if not defined PYCMD (
+  echo   Python 3.11 or 3.12 is required and must be on your PATH.
   echo.
   echo   Install it from https://www.python.org/downloads/
   echo   IMPORTANT: tick "Add python.exe to PATH" in the installer.
@@ -87,9 +90,9 @@ if not exist "kpi_maker\ui_dist\index.html" (
   if errorlevel 1 (
     echo.
     echo   No front end, and no npm to build one. The app will not render.
-    echo   Install Node.js from https://nodejs.org/ and run this again, or
-    echo   download a ready-made build from the project's Releases page.
-    echo.
+    echo   Install Node.js 22.12 or newer from https://nodejs.org/ and run this again.
+    pause
+    exit /b 1
   ) else (
     echo   First run. Building the front end...
     call npm --prefix web ci --silent
@@ -97,8 +100,9 @@ if not exist "kpi_maker\ui_dist\index.html" (
     if not exist "kpi_maker\ui_dist\index.html" (
       echo.
       echo   The front-end build failed. The error is above.
-      echo   The server will start, but the browser UI will not load.
-      echo.
+      echo   Fix the build error above, then run this file again.
+      pause
+      exit /b 1
     )
   )
 )
