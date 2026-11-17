@@ -268,7 +268,7 @@ EXHIBIT_HINTS = {
     "arr_bridge": ("net_new_arr", "Diagnostic", "diagnostic"),
     "retention": ("nrr", "Retention", "deep_dives"),
     "segment_churn": ("logo_churn_rate", "Retention", "deep_dives"),
-    "cohort_heatmap": ("grr", "Retention", "diagnostic"),
+    "cohort_heatmap": (None, "Retention", "diagnostic"),
     "cac_payback": ("cac_payback_months", "Efficiency", "deep_dives"),
     "channel_cost": ("blended_cac", "Efficiency", "deep_dives"),
     "indexed_growth": ("arr_per_fte", "Leverage", "deep_dives"),

@@ -16,6 +16,7 @@ from kpi_maker.metrics.engine import (
     compute,
     customer_mrr_matrix,
 )
+from kpi_maker.render.deck import _exhibit_slides
 from kpi_maker.render.sections import finding_for_exhibit
 from kpi_maker.spec.schema import RunSpec
 from kpi_maker.viz.charts import cohort_heatmap
@@ -62,7 +63,7 @@ def test_sample_customer_kpis_and_concentration_use_the_same_closing_book(subscr
 
 
 def test_net_retention_cohort_chart_cannot_take_a_gross_retention_headline(subscription_sample):
-    _, tables, results = subscription_sample
+    profile, tables, results = subscription_sample
     chart = cohort_heatmap(tables)
     assert chart is not None
     grr = next(r for r in results if r.kpi.id == "grr")
@@ -70,6 +71,17 @@ def test_net_retention_cohort_chart_cannot_take_a_gross_retention_headline(subsc
     assert finding_for_exhibit(chart, [finding]) is None
     assert chart.about == ()
     assert chart.title == "Net revenue retention by acquisition cohort"
+
+    class CaptureDeck:
+        locale = None
+
+        def exhibit_slide(self, headline, *args, **kwargs):
+            self.headline = headline
+
+    deck = CaptureDeck()
+    _exhibit_slides(deck, select(profile), results, [finding], [chart],
+                    {chart.id: b"png"}, {"diagnostic"}, "USD")
+    assert deck.headline == chart.title
 
 
 def test_cohort_retention_does_not_count_later_signups_as_expansion():
